@@ -1,0 +1,15 @@
+{"type":"QMainWindow","key":"main","props":{"windowTitle":"Tinox IDE","size":[1200,800]},"children":[
+ {"type":"QToolBar","key":"toolbar","props":{"title":"Main","movable":false}},
+ {"type":"QDockWidget","key":"dockFiles","place":{"area":"left"},"props":{"title":"Files"},"children":[
+   {"type":"QTreeView","key":"fileTree","props":{"headerHidden":true}}]},
+ {"type":"QDockWidget","key":"dockOutput","place":{"area":"bottom"},"props":{"title":"Output"},"children":[
+   {"type":"QPlainTextEdit","key":"log","props":{"readOnly":true,"text":"ready","maximumBlockCount":1000}}]},
+ {"type":"QSplitter","key":"split","props":{"orientation":"horizontal"},"children":[
+   {"type":"QTabWidget","key":"tabs","props":{"tabsClosable":true,"currentIndex":1},"children":[
+     {"type":"QLabel","key":"welcome","place":{"tab":{"title":"Welcome"}},"props":{"text":"Hello"}},
+     {"type":"QLabel","key":"main.tnx","place":{"tab":{"title":"main.tnx","icon":"text-x-generic"}},"props":{"text":"editor goes here"}}]},
+   {"type":"QStackedWidget","key":"side","props":{"currentIndex":0},"children":[
+     {"type":"QLabel","key":"outline","props":{"text":"Outline"}},
+     {"type":"QLabel","key":"problems","props":{"text":"Problems"}}]}]},
+ {"type":"QStatusBar","key":"status","props":{"message":"Ready"}}
+]}

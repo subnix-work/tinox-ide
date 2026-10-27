@@ -19,19 +19,20 @@ include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Widgets)
-find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n Crash DBusAddons TextEditor SyntaxHighlighting)
+find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n Crash DBusAddons TextEditor SyntaxHighlighting Config)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GC REQUIRED IMPORTED_TARGET bdw-gc)
 find_package(Threads REQUIRED)
 
 add_library(tinoxkde SHARED
     src/abi.cpp src/bridge.cpp
-    src/editor/editor.cpp src/editor/diagnostics.cpp src/editor/completion.cpp src/editor/viewfeatures.cpp)
+    src/editor/editor.cpp src/editor/diagnostics.cpp src/editor/completion.cpp src/editor/viewfeatures.cpp
+    src/widget/widget.cpp)
 target_include_directories(tinoxkde PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}>)
 target_include_directories(tinoxkde PRIVATE src common)
-target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets KF6::CoreAddons KF6::I18n KF6::Crash KF6::DBusAddons KF6::TextEditor KF6::SyntaxHighlighting PkgConfig::GC)
+target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets KF6::CoreAddons KF6::I18n KF6::Crash KF6::DBusAddons KF6::TextEditor KF6::SyntaxHighlighting KF6::ConfigCore PkgConfig::GC)
 set_target_properties(tinoxkde PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION 1   # equals TKDE_ABI_VERSION (docs/abi.md, versioning)
@@ -75,6 +76,14 @@ if(BUILD_TESTING)
     target_compile_options(editor_test PRIVATE -UQT_NO_CAST_FROM_ASCII -UQT_NO_CAST_TO_ASCII)
     add_test(NAME editor COMMAND editor_test)
     set_tests_properties(editor PROPERTIES TIMEOUT 180)
+
+    add_executable(widget_test tests/widget_test.cpp)
+    target_link_libraries(widget_test PRIVATE tinoxkde Qt6::Core Qt6::Gui Threads::Threads PkgConfig::GC)
+    set_target_properties(widget_test PROPERTIES AUTOMOC OFF)
+    target_compile_options(widget_test PRIVATE -UQT_NO_CAST_FROM_ASCII -UQT_NO_CAST_TO_ASCII)
+    target_compile_definitions(widget_test PRIVATE TKDE_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/widget")
+    add_test(NAME widget COMMAND widget_test)
+    set_tests_properties(widget PROPERTIES TIMEOUT 180)
 
     add_executable(bench_queue tests/bench_queue.cpp)   # not a test: `make bench`
     target_link_libraries(bench_queue PRIVATE tinoxkde Threads::Threads PkgConfig::GC)

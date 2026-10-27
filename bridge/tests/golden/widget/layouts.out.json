@@ -1,0 +1,155 @@
+{
+    "children": [
+        {
+            "children": [
+                {
+                    "children": [
+                    ],
+                    "class": "QLineEdit",
+                    "enabled": true,
+                    "hidden": false,
+                    "key": "name",
+                    "objectName": "name",
+                    "placeholder": "project name",
+                    "text": "tinox",
+                    "type": "QLineEdit"
+                },
+                {
+                    "children": [
+                    ],
+                    "class": "QComboBox",
+                    "currentIndex": 1,
+                    "enabled": true,
+                    "hidden": false,
+                    "items": [
+                        "app",
+                        "lib",
+                        "plugin"
+                    ],
+                    "key": "kind",
+                    "objectName": "kind",
+                    "type": "QComboBox"
+                },
+                {
+                    "checked": true,
+                    "children": [
+                    ],
+                    "class": "QCheckBox",
+                    "enabled": true,
+                    "hidden": false,
+                    "key": "git",
+                    "objectName": "git",
+                    "text": "Initialise a repository",
+                    "type": "QCheckBox"
+                }
+            ],
+            "class": "QWidget",
+            "enabled": true,
+            "hidden": false,
+            "key": "form",
+            "layout": {
+                "class": "QFormLayout",
+                "count": 6
+            },
+            "objectName": "form",
+            "type": "QWidget"
+        },
+        {
+            "children": [
+                {
+                    "cell": [
+                        0,
+                        0,
+                        1,
+                        1
+                    ],
+                    "children": [
+                    ],
+                    "class": "QLabel",
+                    "enabled": true,
+                    "hidden": false,
+                    "key": "a",
+                    "objectName": "a",
+                    "text": "A",
+                    "type": "QLabel"
+                },
+                {
+                    "cell": [
+                        0,
+                        1,
+                        1,
+                        1
+                    ],
+                    "children": [
+                    ],
+                    "class": "QLabel",
+                    "enabled": true,
+                    "hidden": false,
+                    "key": "b",
+                    "objectName": "b",
+                    "text": "B",
+                    "type": "QLabel"
+                },
+                {
+                    "cell": [
+                        1,
+                        0,
+                        1,
+                        2
+                    ],
+                    "checked": false,
+                    "children": [
+                    ],
+                    "class": "QPushButton",
+                    "enabled": true,
+                    "hidden": false,
+                    "key": "wide",
+                    "objectName": "wide",
+                    "text": "Wide",
+                    "type": "QPushButton"
+                }
+            ],
+            "class": "QWidget",
+            "enabled": true,
+            "hidden": false,
+            "key": "grid",
+            "layout": {
+                "class": "QGridLayout",
+                "count": 3
+            },
+            "objectName": "grid",
+            "type": "QWidget"
+        },
+        {
+            "children": [
+                {
+                    "children": [
+                    ],
+                    "class": "QLabel",
+                    "enabled": false,
+                    "hidden": false,
+                    "key": "long",
+                    "objectName": "long",
+                    "text": "<b>rich</b>",
+                    "type": "QLabel"
+                }
+            ],
+            "class": "QScrollArea",
+            "enabled": true,
+            "hidden": false,
+            "key": "scroll",
+            "objectName": "scroll",
+            "type": "QScrollArea"
+        }
+    ],
+    "class": "QWidget",
+    "enabled": true,
+    "hidden": true,
+    "key": "root",
+    "layout": {
+        "class": "QBoxLayout",
+        "count": 3
+    },
+    "objectName": "root",
+    "type": "QWidget"
+}
