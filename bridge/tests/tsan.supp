@@ -1,0 +1,17 @@
+# ThreadSanitizer suppressions for the bridge tests.
+#
+# libQt6Core is not instrumented and QObject posts events across threads with
+# futex-based locks, which TSan cannot see. The objects handed over that way (the
+# queued std::function and what it captured) are therefore reported as racing
+# between the posting thread and the UI thread although Qt orders them.
+# Everything the bridge shares itself (the event queue, flags, the waiter state)
+# uses std::mutex / std::atomic and stays fully checked: no suppression covers it.
+race:libQt6Core.so
+race:QtPrivate::QCallableObject
+race:QtPrivate::FunctorCall
+race:QtPrivate::detail::StorageByValue
+race:tkde::Bridge::post
+race:tkde::Bridge::query
+race:tkde::Bridge::release
+race:tkde::Bridge::runOnUi
+race:tkde::Bridge::runOnUiAndWait

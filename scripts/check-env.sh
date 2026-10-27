@@ -46,6 +46,8 @@ pkg() {
         arch:TextEditor) echo ktexteditor ;;          debian:TextEditor) echo libkf6texteditor-dev ;;    fedora:TextEditor) echo kf6-ktexteditor-devel ;;
         arch:SyntaxHighlighting) echo syntax-highlighting ;; debian:SyntaxHighlighting) echo libkf6syntaxhighlighting-dev ;; fedora:SyntaxHighlighting) echo kf6-syntax-highlighting-devel ;;
         arch:KIO) echo kio ;;                         debian:KIO) echo libkf6kio-dev ;;                  fedora:KIO) echo kf6-kio-devel ;;
+        arch:Crash) echo kcrash ;;                    debian:Crash) echo libkf6crash-dev ;;              fedora:Crash) echo kf6-kcrash-devel ;;
+        arch:DBusAddons) echo kdbusaddons ;;          debian:DBusAddons) echo libkf6dbusaddons-dev ;;    fedora:DBusAddons) echo kf6-kdbusaddons-devel ;;
         arch:Notifications) echo knotifications ;;    debian:Notifications) echo libkf6notifications-dev ;; fedora:Notifications) echo kf6-knotifications-devel ;;
         arch:cmake) echo cmake ;;                     debian:cmake) echo cmake ;;                        fedora:cmake) echo cmake ;;
         arch:ninja) echo ninja ;;                     debian:ninja) echo ninja-build ;;                  fedora:ninja) echo ninja-build ;;
@@ -131,7 +133,7 @@ cmake_has() { # label, min version, find_package arguments...
 if command -v cmake >/dev/null 2>&1; then
     cmake_has "ECM >= $MIN_KF" "$MIN_KF" ecm ECM "$MIN_KF" NO_MODULE
     cmake_has "Qt6 >= $MIN_QT (Core, Widgets)" "$MIN_QT" qt6-base Qt6 "$MIN_QT" COMPONENTS Core Widgets
-    for comp in Config CoreAddons I18n XmlGui TextEditor SyntaxHighlighting KIO Notifications; do
+    for comp in Config CoreAddons I18n Crash DBusAddons XmlGui TextEditor SyntaxHighlighting KIO Notifications; do
         cmake_has "KF6 $comp >= $MIN_KF" "$MIN_KF" "$comp" KF6 "$MIN_KF" COMPONENTS "$comp"
     done
 fi

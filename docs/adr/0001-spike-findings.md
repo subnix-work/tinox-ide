@@ -20,8 +20,10 @@ through `[native]`?
   stamps events with), replaces the editor text, asks for memory use and quits.
   Every round allocates 300 strings on the Tinox side as GC pressure.
 
-Run it with `make spike` (offscreen), `make spike-platforms` (virtual KWin on
-Wayland plus XWayland on X11, nothing appears on your desktop), or
+The spike was replaced by the real bridge core (issue #8) and removed from the
+tree; it is kept at the git tag `spike-v1`. To reproduce: `git checkout spike-v1`,
+then `make spike` (offscreen), `make spike-platforms` (virtual KWin on Wayland
+plus XWayland on X11, nothing appears on your desktop), or
 `TKDE_SPIKE_ROUNDS=15000000 scripts/run-spike.sh` for the soak.
 
 ## Measurements

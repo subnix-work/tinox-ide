@@ -8,6 +8,8 @@
 
 #include "tinoxkde_mock.h"
 
+#include "event_queue.h"
+
 #include <gc.h>
 
 #include <algorithm>
@@ -413,15 +415,6 @@ int64_t nowNs()
     return int64_t(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
 }
 
-struct Event {
-    int64_t seq = 0;
-    std::string json;
-    // an overflow marker stands for the dropped events seq..lastSeq
-    bool overflow = false;
-    int64_t dropped = 0;
-    int64_t lastSeq = 0;
-};
-
 struct Script {
     J reply = J::object();
     std::string event;
@@ -429,7 +422,6 @@ struct Script {
 
 struct State {
     std::mutex m;
-    std::condition_variable eventCv;
     std::condition_variable quitCv;
     std::condition_variable commandCv;
 
@@ -440,9 +432,7 @@ struct State {
     int64_t exitCode = 0;
     std::thread::id uiThread;
 
-    std::deque<Event> events;
-    int64_t nextSeq = 1;
-    int64_t droppedTotal = 0;
+    tkde::EventQueue events;
 
     std::deque<std::string> commands;
     std::map<std::string, Script> scripts;
@@ -501,62 +491,29 @@ void recordLine(State &st, const char *dir, const std::string &json)
     }
 }
 
-// Caller holds st.m. Adds seq / t_ns when missing, enforces the bound.
+// Caller holds st.m. Adds seq / t_ns when missing; the shared queue enforces the bound.
 void pushEventLocked(State &st, J ev, bool fromReplay = false)
 {
     if (st.replaying && !fromReplay) {
         return; // a replay delivers exactly what was recorded
     }
-    int64_t seq;
+    int64_t forced = 0;
     if (const J *s = ev.get("seq"); s && s->isInt()) {
-        seq = s->asInt();
-        st.nextSeq = std::max(st.nextSeq, seq + 1);
-    } else {
-        seq = st.nextSeq++;
-        ev.set("seq", J::num(seq));
+        forced = s->asInt();
     }
-    if (!ev.get("t_ns")) {
-        ev.set("t_ns", J::num(nowNs()));
-    }
-    std::string json = dump(ev);
-    if (!fromReplay) {
-        recordLine(st, "event", json);
-    }
-    if (st.events.size() >= kEventCapacity) {
-        // Drop from the oldest end; the loss stays visible as ONE core.overflow
-        // marker at the front that stands for the whole dropped seq range.
-        if (!st.events.front().overflow) {
-            Event marker;
-            marker.overflow = true;
-            marker.seq = marker.lastSeq = st.events.front().seq;
-            marker.dropped = 1;
-            st.events.front() = marker;
-            ++st.droppedTotal;
-        }
-        if (st.events.size() > 1) {
-            int64_t droppedSeq = st.events[1].seq;
-            st.events.erase(st.events.begin() + 1); // invalidates references: re-read the front
-            st.events.front().dropped += 1;
-            st.events.front().lastSeq = droppedSeq;
-            ++st.droppedTotal;
-        }
-    }
-    Event e;
-    e.seq = seq;
-    e.json = std::move(json);
-    st.events.push_back(std::move(e));
-    st.eventCv.notify_all();
-}
-
-std::string overflowJson(const Event &e)
-{
-    J j = J::object();
-    j.set("type", J::str("core.overflow"));
-    j.set("seq", J::num(e.seq));
-    j.set("t_ns", J::num(nowNs()));
-    j.set("dropped", J::num(e.dropped));
-    j.set("last_seq", J::num(e.lastSeq));
-    return dump(j);
+    st.events.push(
+        [&](int64_t seq) {
+            ev.set("seq", J::num(seq));
+            if (!ev.get("t_ns")) {
+                ev.set("t_ns", J::num(nowNs()));
+            }
+            std::string json = dump(ev);
+            if (!fromReplay) {
+                recordLine(st, "event", json);
+            }
+            return json;
+        },
+        forced);
 }
 
 void pushType(State &st, const char *type, J extra = J::object())
@@ -737,6 +694,7 @@ int64_t tkde_exec(void)
     pushType(*st, "core.shutdown");
     st->shutdown = true;
     st->running = false;
+    st->events.close();
     return st->exitCode;
 }
 
@@ -794,23 +752,16 @@ const char *tkde_query(const char *json)
 const char *tkde_next_event(int64_t timeout_ms)
 {
     auto st = state();
-    std::unique_lock<std::mutex> lock(st->m);
-    auto ready = [&] { return !st->events.empty() || st->shutdown; };
-    if (timeout_ms < 0) {
-        st->eventCv.wait(lock, ready);
-    } else {
-        st->eventCv.wait_for(lock, std::chrono::milliseconds(timeout_ms), ready);
-    }
-    if (st->events.empty()) {
+    std::string json;
+    if (!st->events.pop(timeout_ms, json)) {
         return "";
     }
-    Event e = std::move(st->events.front());
-    st->events.pop_front();
-    std::string json = e.overflow ? overflowJson(e) : e.json;
     if (st->replaying && json.find("\"core.shutdown\"") != std::string::npos) {
         // a replayed run ends where the recorded one did
+        std::lock_guard<std::mutex> lock(st->m);
         st->shutdown = true;
         st->quit = true;
+        st->events.close();
         st->quitCv.notify_all();
     }
     return gcCopy(json);
@@ -947,7 +898,7 @@ int64_t mock_dropped_events(void)
 {
     auto st = state();
     std::lock_guard<std::mutex> lock(st->m);
-    return st->droppedTotal;
+    return st->events.dropped();
 }
 
 void mock_close_last_window(void)
