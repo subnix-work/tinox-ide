@@ -1,0 +1,27 @@
+class Literals
+{
+    fnc main() -> Int32
+    {
+        const dec = 1_000_000
+        const hex = 0xFF_aa + 0X10
+        const oct = 0o755
+        const bin = 0b1010_0101
+        const suffixed = 42i32 + 7u8 + 9_u64
+        const real = 3.14 + 1.0e-3 + 2.5E+4 + 6.0f32
+        const member = 5.toString()
+        const plain = "tab\there \"quoted\" \\ \x41 \u{1F600} \U0001F600"
+        const interp = "n=${count + 1} and ${items.len()} and ${ { nested } } done"
+        const multi = "line ${first}
+second line"
+        const raw0 = r"C:\no\escapes"
+        const raw1 = r#"has "quotes" inside"#
+        const raw2 = r##"even "# inside"##
+        const ch = 'x'
+        const esc = '\n'
+        const uni = '\u{263A}'
+        const byte = b'a'
+        const yes = true
+        const nothing = null
+        return 0
+    }
+}

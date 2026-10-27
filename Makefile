@@ -5,12 +5,13 @@
 #   make test     bridge tests (ctest) and Tinox tests
 #   make fmt      clang-format the bridge, tinox fmt the sources
 #   make check-env  verify the toolchain and dependencies
+#   make install-resources  install the syntax definition and MIME types for this user
 
 TINOX ?= $(shell command -v tinox 2>/dev/null || echo ../tinox/target/release/tinox)
 BUILD_DIR := bridge/build
 OUT := build/tinox-ide
 
-.PHONY: all bridge ide run test fmt clean check-env
+.PHONY: all bridge ide run test fmt clean check-env install-resources
 
 all: ide
 
@@ -27,6 +28,7 @@ run: ide
 
 test: bridge
 	scripts/test-check-env.sh
+	scripts/test-syntax.sh
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
 	$(TINOX) test
 
@@ -39,3 +41,6 @@ clean:
 
 check-env:
 	scripts/check-env.sh
+
+install-resources:
+	scripts/install-resources.sh

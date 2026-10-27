@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE language SYSTEM "language.dtd">
+<!--
+  KSyntaxHighlighting definition for Tinox (https://github.com/subnix-work/tinox).
+  Lexical rules follow docs/SPEC.md of the language: keywords, integer literals
+  with 0x/0o/0b prefixes and optional suffixes, floats with digits on both sides
+  of the dot, "..." strings with ${...} interpolation, r"..." / r#"..."# raw
+  strings, '.' characters, // and /* */ comments (/** */ are doc comments).
+-->
+<language name="Tinox" version="1" kateversion="5.62" section="Sources"
+          extensions="*.tnx" mimetype="text/x-tinox" casesensitive="true"
+          indenter="cstyle" author="Tino Gohl" license="MIT">
+  <highlighting>
+    <list name="control">
+      <item>if</item>
+      <item>else</item>
+      <item>while</item>
+      <item>for</item>
+      <item>loop</item>
+      <item>return</item>
+      <item>break</item>
+      <item>continue</item>
+      <item>match</item>
+      <item>case</item>
+      <item>throw</item>
+      <item>try</item>
+      <item>catch</item>
+      <item>finally</item>
+      <item>defer</item>
+      <item>spawn</item>
+      <item>await</item>
+      <item>select</item>
+      <item>send</item>
+      <item>recv</item>
+      <item>default</item>
+    </list>
+    <list name="declarations">
+      <item>class</item>
+      <item>interface</item>
+      <item>trait</item>
+      <item>enum</item>
+      <item>immutable</item>
+      <item>extends</item>
+      <item>implements</item>
+      <item>fn</item>
+      <item>fnc</item>
+      <item>async</item>
+      <item>throws</item>
+      <item>var</item>
+      <item>val</item>
+      <item>let</item>
+      <item>const</item>
+      <item>mut</item>
+      <item>module</item>
+      <item>namespace</item>
+      <item>import</item>
+      <item>export</item>
+      <item>extern</item>
+      <item>unsafe</item>
+      <item>channel</item>
+      <item>new</item>
+    </list>
+    <list name="modifiers">
+      <item>public</item>
+      <item>private</item>
+      <item>protected</item>
+      <item>package</item>
+      <item>static</item>
+      <item>final</item>
+      <item>abstract</item>
+      <item>override</item>
+      <item>readonly</item>
+    </list>
+    <list name="operatorWords">
+      <item>as</item>
+      <item>in</item>
+      <item>is</item>
+      <item>where</item>
+      <item>cast</item>
+      <item>sizeof</item>
+      <item>typeof</item>
+      <item>ref</item>
+    </list>
+    <list name="selfRefs">
+      <item>this</item>
+      <item>super</item>
+      <item>self</item>
+      <item>Self</item>
+    </list>
+    <list name="constants">
+      <item>true</item>
+      <item>false</item>
+      <item>null</item>
+    </list>
+    <list name="types">
+      <item>Nothing</item>
+      <item>Never</item>
+      <item>Any</item>
+      <item>Int8</item>
+      <item>Int16</item>
+      <item>Int32</item>
+      <item>Int64</item>
+      <item>UInt8</item>
+      <item>UInt16</item>
+      <item>UInt32</item>
+      <item>UInt64</item>
+      <item>Float32</item>
+      <item>Float64</item>
+      <item>Bool</item>
+      <item>Char</item>
+      <item>String</item>
+      <item>List</item>
+      <item>Map</item>
+      <item>Set</item>
+      <item>Array</item>
+      <item>Option</item>
+      <item>Result</item>
+      <item>Task</item>
+      <item>Channel</item>
+    </list>
+
+    <contexts>
+      <context name="Normal" attribute="Normal Text" lineEndContext="#stay">
+        <!-- comments first: `//` and `/*` must win over the `/` operator -->
+        <Detect2Chars char="/" char1="/" attribute="Comment" context="LineComment"/>
+        <RegExpr String="/\*\*(?!/)" attribute="Doc Comment" context="DocComment" beginRegion="Comment"/>
+        <Detect2Chars char="/" char1="*" attribute="Comment" context="BlockComment" beginRegion="Comment"/>
+
+        <!-- strings -->
+        <StringDetect String="r###&quot;" attribute="String" context="RawString3"/>
+        <StringDetect String="r##&quot;" attribute="String" context="RawString2"/>
+        <StringDetect String="r#&quot;" attribute="String" context="RawString1"/>
+        <StringDetect String="r&quot;" attribute="String" context="RawString0"/>
+        <DetectChar char="&quot;" attribute="String" context="String"/>
+        <RegExpr String="b?'(\\([ntr0\\&quot;']|x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|U[0-9a-fA-F]{8})|[^'\\\n])'" attribute="Char"/>
+
+        <!-- annotations: @Name or @Name(...) -->
+        <RegExpr String="@[A-Za-z_][A-Za-z0-9_]*" attribute="Annotation"/>
+
+        <!-- numbers: prefixed integers, floats (digits on both sides of the dot), integers; all with optional suffix -->
+        <RegExpr String="\b0[xX][0-9a-fA-F_]+(_?([ui](8|16|32|64)|size|usize))?\b" attribute="Hex"/>
+        <RegExpr String="\b0[oO][0-7_]+(_?([ui](8|16|32|64)|size|usize))?\b" attribute="Octal"/>
+        <RegExpr String="\b0[bB][01_]+(_?([ui](8|16|32|64)|size|usize))?\b" attribute="Binary"/>
+        <RegExpr String="\b\d[\d_]*\.\d[\d_]*([eE][+-]?\d+)?(_?f(32|64))?\b" attribute="Float"/>
+        <RegExpr String="\b\d[\d_]*(_?([ui](8|16|32|64)|size|usize))?\b" attribute="Decimal"/>
+
+        <!-- keywords -->
+        <keyword String="control" attribute="Control Flow"/>
+        <keyword String="declarations" attribute="Keyword"/>
+        <keyword String="modifiers" attribute="Keyword"/>
+        <keyword String="operatorWords" attribute="Keyword"/>
+        <keyword String="selfRefs" attribute="Self"/>
+        <keyword String="constants" attribute="Constant"/>
+        <keyword String="types" attribute="Data Type"/>
+
+        <!-- Capitalised names are types; lower-case names followed by `(` are calls -->
+        <RegExpr String="\b[A-Z][A-Za-z0-9_]*\b" attribute="Type"/>
+        <RegExpr String="\b[A-Za-z_][A-Za-z0-9_]*(?=\s*\()" attribute="Function"/>
+
+        <!-- structure -->
+        <DetectChar char="{" attribute="Symbol" beginRegion="Brace"/>
+        <DetectChar char="}" attribute="Symbol" endRegion="Brace"/>
+        <AnyChar String="()[]" attribute="Symbol"/>
+
+        <!-- operators -->
+        <RegExpr String="(-&gt;|=&gt;|::|\.\.\.?|\?\?|\?:|&amp;&amp;|\|\||&lt;&lt;=?|&gt;&gt;&gt;?=?|\+\+|--|[-+*/%&amp;|^~!=&lt;&gt;]=?|\?)" attribute="Operator"/>
+      </context>
+
+      <context name="LineComment" attribute="Comment" lineEndContext="#pop">
+        <IncludeRules context="##Alerts"/>
+      </context>
+      <context name="BlockComment" attribute="Comment" lineEndContext="#stay">
+        <Detect2Chars char="*" char1="/" attribute="Comment" context="#pop" endRegion="Comment"/>
+        <IncludeRules context="##Alerts"/>
+      </context>
+      <context name="DocComment" attribute="Doc Comment" lineEndContext="#stay">
+        <Detect2Chars char="*" char1="/" attribute="Doc Comment" context="#pop" endRegion="Comment"/>
+        <IncludeRules context="##Alerts"/>
+      </context>
+
+      <context name="String" attribute="String" lineEndContext="#stay">
+        <DetectChar char="&quot;" attribute="String" context="#pop"/>
+        <RegExpr String="\\([ntr0\\&quot;']|x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|U[0-9a-fA-F]{8})" attribute="Escape"/>
+        <Detect2Chars char="$" char1="{" attribute="Interpolation" context="Interpolation"/>
+      </context>
+      <!-- the expression of `${ ... }`: ordinary code until the matching brace -->
+      <context name="Interpolation" attribute="Normal Text" lineEndContext="#stay">
+        <DetectChar char="}" attribute="Interpolation" context="#pop"/>
+        <DetectChar char="{" attribute="Symbol" context="InterpolationBraces"/>
+        <IncludeRules context="Normal"/>
+      </context>
+      <!-- braces inside the expression (blocks, literals) must not end it -->
+      <context name="InterpolationBraces" attribute="Normal Text" lineEndContext="#stay">
+        <DetectChar char="}" attribute="Symbol" context="#pop"/>
+        <DetectChar char="{" attribute="Symbol" context="InterpolationBraces"/>
+        <IncludeRules context="Normal"/>
+      </context>
+
+      <context name="RawString0" attribute="String" lineEndContext="#stay">
+        <DetectChar char="&quot;" attribute="String" context="#pop"/>
+      </context>
+      <context name="RawString1" attribute="String" lineEndContext="#stay">
+        <StringDetect String="&quot;#" attribute="String" context="#pop"/>
+      </context>
+      <context name="RawString2" attribute="String" lineEndContext="#stay">
+        <StringDetect String="&quot;##" attribute="String" context="#pop"/>
+      </context>
+      <context name="RawString3" attribute="String" lineEndContext="#stay">
+        <StringDetect String="&quot;###" attribute="String" context="#pop"/>
+      </context>
+    </contexts>
+
+    <itemDatas>
+      <itemData name="Normal Text" defStyleNum="dsNormal" spellChecking="false"/>
+      <itemData name="Keyword" defStyleNum="dsKeyword" spellChecking="false"/>
+      <itemData name="Control Flow" defStyleNum="dsControlFlow" spellChecking="false"/>
+      <itemData name="Data Type" defStyleNum="dsDataType" spellChecking="false"/>
+      <itemData name="Type" defStyleNum="dsDataType" spellChecking="false"/>
+      <itemData name="Self" defStyleNum="dsKeyword" italic="true" spellChecking="false"/>
+      <itemData name="Constant" defStyleNum="dsConstant" spellChecking="false"/>
+      <itemData name="Function" defStyleNum="dsFunction" spellChecking="false"/>
+      <itemData name="Annotation" defStyleNum="dsAttribute" spellChecking="false"/>
+      <itemData name="Decimal" defStyleNum="dsDecVal" spellChecking="false"/>
+      <itemData name="Hex" defStyleNum="dsBaseN" spellChecking="false"/>
+      <itemData name="Octal" defStyleNum="dsBaseN" spellChecking="false"/>
+      <itemData name="Binary" defStyleNum="dsBaseN" spellChecking="false"/>
+      <itemData name="Float" defStyleNum="dsFloat" spellChecking="false"/>
+      <itemData name="Char" defStyleNum="dsChar" spellChecking="false"/>
+      <itemData name="String" defStyleNum="dsString"/>
+      <itemData name="Escape" defStyleNum="dsSpecialChar" spellChecking="false"/>
+      <itemData name="Interpolation" defStyleNum="dsSpecialChar" spellChecking="false"/>
+      <itemData name="Comment" defStyleNum="dsComment"/>
+      <itemData name="Doc Comment" defStyleNum="dsComment" italic="true"/>
+      <itemData name="Operator" defStyleNum="dsOperator" spellChecking="false"/>
+      <itemData name="Symbol" defStyleNum="dsNormal" spellChecking="false"/>
+    </itemDatas>
+  </highlighting>
+
+  <general>
+    <comments>
+      <comment name="singleLine" start="//"/>
+      <comment name="multiLine" start="/*" end="*/" region="Comment"/>
+    </comments>
+    <keywords casesensitive="1" weakDeliminator=""/>
+  </general>
+</language>
