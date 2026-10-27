@@ -2,6 +2,7 @@
 
 #include "tinoxkde.h"
 
+#include "action/action.h"
 #include "editor/editor.h"
 #include "widget/widget.h"
 
@@ -166,6 +167,7 @@ int64_t Bridge::init(const QString &appName, const QString &displayName)
     registerCoreCommands();
     tkde::editor::registerCommands(*this);
     tkde::widget::registerCommands(*this);
+    tkde::action::registerCommands(*this);
 
     QObject::connect(m_app, &QGuiApplication::lastWindowClosed, m_context, [this] { requestQuit(0); });
 

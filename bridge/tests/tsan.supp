@@ -22,3 +22,7 @@ race:tkde::Bridge::runOnUiAndWait
 # takes none of those locks.
 thread:QThread::start
 deadlock:libdbus-1.so
+
+# The action test simulates key presses with QTest; QWindowSystemInterface hands its event
+# objects over inside the uninstrumented libQt6Gui, where TSan only sees the allocator calls.
+race:libQt6Gui.so

@@ -18,8 +18,8 @@ include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 
-find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Widgets)
-find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n Crash DBusAddons TextEditor SyntaxHighlighting Config)
+find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Widgets Xml)
+find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n Crash DBusAddons TextEditor SyntaxHighlighting Config ConfigWidgets XmlGui WidgetsAddons)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GC REQUIRED IMPORTED_TARGET bdw-gc)
 find_package(Threads REQUIRED)
@@ -27,12 +27,12 @@ find_package(Threads REQUIRED)
 add_library(tinoxkde SHARED
     src/abi.cpp src/bridge.cpp
     src/editor/editor.cpp src/editor/diagnostics.cpp src/editor/completion.cpp src/editor/viewfeatures.cpp
-    src/widget/widget.cpp)
+    src/widget/widget.cpp src/action/action.cpp)
 target_include_directories(tinoxkde PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}>)
 target_include_directories(tinoxkde PRIVATE src common)
-target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets KF6::CoreAddons KF6::I18n KF6::Crash KF6::DBusAddons KF6::TextEditor KF6::SyntaxHighlighting KF6::ConfigCore PkgConfig::GC)
+target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets Qt6::Xml KF6::CoreAddons KF6::I18n KF6::Crash KF6::DBusAddons KF6::TextEditor KF6::SyntaxHighlighting KF6::ConfigCore KF6::ConfigWidgets KF6::XmlGui KF6::WidgetsAddons PkgConfig::GC)
 set_target_properties(tinoxkde PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION 1   # equals TKDE_ABI_VERSION (docs/abi.md, versioning)
@@ -84,6 +84,14 @@ if(BUILD_TESTING)
     target_compile_definitions(widget_test PRIVATE TKDE_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/widget")
     add_test(NAME widget COMMAND widget_test)
     set_tests_properties(widget PROPERTIES TIMEOUT 180)
+
+    find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Test)
+    add_executable(action_test tests/action_test.cpp)
+    target_link_libraries(action_test PRIVATE tinoxkde Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test Threads::Threads PkgConfig::GC)
+    set_target_properties(action_test PROPERTIES AUTOMOC OFF)
+    target_compile_options(action_test PRIVATE -UQT_NO_CAST_FROM_ASCII -UQT_NO_CAST_TO_ASCII)
+    add_test(NAME action COMMAND action_test)
+    set_tests_properties(action PROPERTIES TIMEOUT 180)
 
     add_executable(bench_queue tests/bench_queue.cpp)   # not a test: `make bench`
     target_link_libraries(bench_queue PRIVATE tinoxkde Threads::Threads PkgConfig::GC)

@@ -138,7 +138,7 @@ Until then the namespace is not in `core.capabilities`.
 |---|---|---|
 | `editor` | #12 | **implemented**, see [editor.md](editor.md): KTextEditor documents and views, edits, diagnostics, completion, hover |
 | `widget` | #9 | **implemented**, see [widget.md](widget.md): declarative widget tree, layouts, docks, tabs, widget events |
-| `action` | #10 | actions, menus, toolbars, shortcuts, command palette backend |
+| `action` | #10 | **implemented**, see [action.md](action.md): actions, menus, toolbars, shortcuts, command palette backend |
 | `model` | #11 | list/tree/table models, lazy children, selection |
 | `dialog`, `config` | #13 | file/message dialogs, KConfig settings, notifications |
 | `term` | #14 | embedded terminal |

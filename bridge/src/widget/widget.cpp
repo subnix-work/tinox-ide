@@ -1143,6 +1143,7 @@ Reply mount(Bridge &b, const QJsonObject &cmd)
     auto *m = new Mount(b);
     m->root = build(b, tree);
     m->rootWidget = m->root->widget;
+    m->setProperty("tkdeRoot", QVariant::fromValue(m->rootWidget.data())); // for other namespaces (action)
     if (parent) {
         m->rootWidget->setParent(parent);
     }

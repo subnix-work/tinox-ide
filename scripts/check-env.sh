@@ -132,8 +132,8 @@ cmake_has() { # label, min version, find_package arguments...
 }
 if command -v cmake >/dev/null 2>&1; then
     cmake_has "ECM >= $MIN_KF" "$MIN_KF" ecm ECM "$MIN_KF" NO_MODULE
-    cmake_has "Qt6 >= $MIN_QT (Core, Widgets)" "$MIN_QT" qt6-base Qt6 "$MIN_QT" COMPONENTS Core Widgets
-    for comp in Config CoreAddons I18n Crash DBusAddons XmlGui TextEditor SyntaxHighlighting KIO Notifications; do
+    cmake_has "Qt6 >= $MIN_QT (Core, Widgets, Xml, Test)" "$MIN_QT" qt6-base Qt6 "$MIN_QT" COMPONENTS Core Widgets Xml Test
+    for comp in Config ConfigWidgets WidgetsAddons CoreAddons I18n Crash DBusAddons XmlGui TextEditor SyntaxHighlighting KIO Notifications; do
         cmake_has "KF6 $comp >= $MIN_KF" "$MIN_KF" "$comp" KF6 "$MIN_KF" COMPONENTS "$comp"
     done
 fi
