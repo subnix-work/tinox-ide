@@ -196,14 +196,30 @@ private:
             }
             char e = m_in[m_i++];
             switch (e) {
-            case '"': out += '"'; break;
-            case '\\': out += '\\'; break;
-            case '/': out += '/'; break;
-            case 'b': out += '\b'; break;
-            case 'f': out += '\f'; break;
-            case 'n': out += '\n'; break;
-            case 'r': out += '\r'; break;
-            case 't': out += '\t'; break;
+            case '"':
+                out += '"';
+                break;
+            case '\\':
+                out += '\\';
+                break;
+            case '/':
+                out += '/';
+                break;
+            case 'b':
+                out += '\b';
+                break;
+            case 'f':
+                out += '\f';
+                break;
+            case 'n':
+                out += '\n';
+                break;
+            case 'r':
+                out += '\r';
+                break;
+            case 't':
+                out += '\t';
+                break;
             case 'u': {
                 unsigned cp;
                 if (!hex4(cp)) {
@@ -223,7 +239,8 @@ private:
                 utf8(out, cp);
                 break;
             }
-            default: return false;
+            default:
+                return false;
             }
         }
         return false;
@@ -319,7 +336,8 @@ private:
         if (m_in[m_i] == '-') {
             ++m_i;
         }
-        while (m_i < m_in.size() && (std::isdigit(static_cast<unsigned char>(m_in[m_i])) || m_in[m_i] == '.' || m_in[m_i] == 'e' || m_in[m_i] == 'E' || m_in[m_i] == '+' || m_in[m_i] == '-')) {
+        while (m_i < m_in.size() && (std::isdigit(static_cast<unsigned char>(m_in[m_i])) || m_in[m_i] == '.' || m_in[m_i] == 'e' ||
+                                     m_in[m_i] == 'E' || m_in[m_i] == '+' || m_in[m_i] == '-')) {
             ++m_i;
         }
         if (m_i == start || (m_i == start + 1 && m_in[start] == '-')) {
@@ -336,11 +354,21 @@ void escapeInto(std::string &out, const std::string &s)
     out += '"';
     for (unsigned char c : s) {
         switch (c) {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
         default:
             if (c < 0x20) {
                 char buf[8];
@@ -357,10 +385,16 @@ void escapeInto(std::string &out, const std::string &s)
 void dumpInto(std::string &out, const J &j)
 {
     switch (j.t) {
-    case J::Null: out += "null"; break;
+    case J::Null:
+        out += "null";
+        break;
     case J::Bool:
-    case J::Num: out += j.s; break;
-    case J::Str: escapeInto(out, j.s); break;
+    case J::Num:
+        out += j.s;
+        break;
+    case J::Str:
+        escapeInto(out, j.s);
+        break;
     case J::Arr: {
         out += '[';
         for (size_t i = 0; i < j.a.size(); ++i) {

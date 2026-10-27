@@ -1,0 +1,131 @@
+module tinox.ide.kde
+
+import tinox.core.json
+
+namespace tinox.ide.kde
+{
+    // The C ABI of libtinoxkde (docs/abi.md), one declaration per function.
+    extern fn tkde_abi_version() -> Int64
+    extern fn tkde_init(appName: String, displayName: String) -> Int64
+    extern fn tkde_exec() -> Int64
+    extern fn tkde_quit()
+    extern fn tkde_post(json: String) -> Int64
+    extern fn tkde_query(json: String) -> String
+    extern fn tkde_next_event(timeoutMs: Int64) -> String
+    extern fn tkde_release(id: Int64) -> Int64
+    extern fn tkde_last_error() -> String
+    extern fn tkde_now_ns() -> Int64
+    extern fn tkde_getenv(name: String) -> String
+
+    /**
+     * Typed access to the bridge. Every call that can fail throws a String that
+     * names the call, the status code and the bridge's own explanation, so a
+     * failure is never silent. Only the process main thread may call init() and
+     * exec() (Qt owns it); everything else is for the logic task.
+     */
+    class Bridge
+    {
+        /** The ABI version these bindings were written for. */
+        fnc expectedAbi() -> Int64
+        {
+            return 1
+        }
+
+        fnc abiVersion() -> Int64
+        {
+            return tkde_abi_version()
+        }
+
+        /** Fails with a clear message when the loaded library speaks another ABI version. */
+        fnc requireAbi() -> Nothing
+        {
+            const loaded: Int64 = tkde_abi_version()
+            if (loaded != Bridge::expectedAbi())
+            {
+                throw "libtinoxkde implements ABI version " + loaded.toString() + ", these bindings need " + Bridge::expectedAbi().toString()
+            }
+        }
+
+        /** Name of a TKDE_E_* status code. */
+        fnc describe(code: Int64) -> String
+        {
+            if (code == 0) { return "ok" }
+            if (code == -1) { return "invalid argument" }
+            if (code == -2) { return "wrong thread" }
+            if (code == -3) { return "not initialized" }
+            if (code == -4) { return "already initialized" }
+            if (code == -5) { return "not found" }
+            if (code == -6) { return "unsupported" }
+            if (code == -7) { return "failed" }
+            return "status " + code.toString()
+        }
+
+        fnc check(call: String, code: Int64) -> Nothing
+        {
+            if (code < 0)
+            {
+                throw call + " failed (" + Bridge::describe(code) + "): " + tkde_last_error()
+            }
+        }
+
+        /** Creates the application. Main thread. */
+        fnc init(appName: String, displayName: String) -> Nothing
+        {
+            Bridge::check("tkde_init", tkde_init(appName, displayName))
+        }
+
+        /** Runs the Qt event loop until quit and returns its exit code. Blocks the main thread. */
+        fnc exec() -> Int64
+        {
+            const code: Int64 = tkde_exec()
+            Bridge::check("tkde_exec", code)
+            return code
+        }
+
+        fnc quit() -> Nothing
+        {
+            tkde_quit()
+        }
+
+        /** Queues a command (see Command). Replies arrive as events when the command has a "req". */
+        fnc post(command: String) -> Nothing
+        {
+            Bridge::check("tkde_post", tkde_post(command))
+        }
+
+        /** Runs a command on the UI thread and returns its reply; throws when the reply says "ok": false. */
+        fnc query(command: String) -> JsonValue
+        {
+            const reply: JsonValue = Json::parse(tkde_query(command))
+            if (!reply.getField("ok").getBool())
+            {
+                const error: JsonValue = reply.getField("error")
+                throw "tkde_query failed (" + Bridge::describe(error.getField("code").getInt()) + "): " + error.getField("message").getString()
+            }
+            return reply
+        }
+
+        /** The next event as JSON text, or "" after the timeout (< 0 waits forever). */
+        fnc nextEvent(timeoutMs: Int64) -> String
+        {
+            return tkde_next_event(timeoutMs)
+        }
+
+        fnc release(id: Int64) -> Nothing
+        {
+            Bridge::check("tkde_release", tkde_release(id))
+        }
+
+        /** Monotonic clock in nanoseconds, the clock event timestamps use. */
+        fnc nowNs() -> Int64
+        {
+            return tkde_now_ns()
+        }
+
+        /** Environment variable, "" when unset. */
+        fnc env(name: String) -> String
+        {
+            return tkde_getenv(name)
+        }
+    }
+}

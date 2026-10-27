@@ -1,0 +1,68 @@
+module tinox.ide.kde
+
+import tinox.core.json
+
+namespace tinox.ide.kde
+{
+    /**
+     * One event from the bridge (docs/abi.md): the envelope fields are parsed once
+     * when the event is created; the rest stays available through the typed accessors.
+     */
+    class Event
+    {
+        var type: String
+        var seq: Int64
+        var tNs: Int64
+        /** Id of the object the event comes from, 0 when it has none. */
+        var target: Int64
+        var raw: String
+        var json: JsonValue
+
+        /** Parses event JSON text; throws a String when it is not an event object. */
+        fnc parse(text: String) -> Event
+        {
+            const json: JsonValue = Json::parse(text)
+            if (!json.isObject())
+            {
+                throw "event is not a JSON object: " + text
+            }
+            const type: JsonValue = json.getField("type")
+            if (!type.isString())
+            {
+                throw "event has no string \"type\": " + text
+            }
+            var target: Int64 = 0
+            const targetField: JsonValue = json.getField("target")
+            if (targetField.isInt())
+            {
+                target = targetField.getInt()
+            }
+            return Event { type: type.getString(), seq: json.getField("seq").getInt(), tNs: json.getField("t_ns").getInt(), target: target, raw: text, json: json }
+        }
+
+        fn has(key: String) -> Bool
+        {
+            return !this.json.getField(key).isNull()
+        }
+
+        fn str(key: String) -> String
+        {
+            return this.json.getField(key).getString()
+        }
+
+        fn int(key: String) -> Int64
+        {
+            return this.json.getField(key).getInt()
+        }
+
+        fn bool(key: String) -> Bool
+        {
+            return this.json.getField(key).getBool()
+        }
+
+        fn field(key: String) -> JsonValue
+        {
+            return this.json.getField(key)
+        }
+    }
+}

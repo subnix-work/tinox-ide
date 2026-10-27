@@ -36,14 +36,11 @@ class EventQueue
 public:
     static constexpr size_t kDefaultCapacity = 65536;
 
-    explicit EventQueue(size_t capacity = kDefaultCapacity)
-        : m_capacity(capacity < 2 ? 2 : capacity)
-    {
-    }
+    explicit EventQueue(size_t capacity = kDefaultCapacity) : m_capacity(capacity < 2 ? 2 : capacity) {}
 
     /// `make(seq)` returns the event's JSON for the assigned sequence number.
     /// `forcedSeq > 0` (replay, injected events with a seq) uses that number instead.
-    template<class Make>
+    template <class Make>
     void push(Make &&make, int64_t forcedSeq = 0)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -138,8 +135,8 @@ private:
 
     static std::string overflowJson(const Item &i)
     {
-        return "{\"type\":\"core.overflow\",\"seq\":" + std::to_string(i.seq) + ",\"t_ns\":" + std::to_string(monotonicNanos())
-            + ",\"dropped\":" + std::to_string(i.dropped) + ",\"last_seq\":" + std::to_string(i.lastSeq) + "}";
+        return "{\"type\":\"core.overflow\",\"seq\":" + std::to_string(i.seq) + ",\"t_ns\":" + std::to_string(monotonicNanos()) +
+               ",\"dropped\":" + std::to_string(i.dropped) + ",\"last_seq\":" + std::to_string(i.lastSeq) + "}";
     }
 
     mutable std::mutex m_mutex;

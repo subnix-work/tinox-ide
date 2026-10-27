@@ -14,20 +14,20 @@
 #include <vector>
 
 static int g_failures = 0;
-#define EXPECT(cond)                                                                                                   \
-    do {                                                                                                               \
-        if (!(cond)) {                                                                                                 \
-            std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                        \
-            ++g_failures;                                                                                              \
-        }                                                                                                              \
+#define EXPECT(cond)                                                                                                                       \
+    do {                                                                                                                                   \
+        if (!(cond)) {                                                                                                                     \
+            std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                                           \
+            ++g_failures;                                                                                                                  \
+        }                                                                                                                                  \
     } while (0)
-#define EXPECT_CONTAINS(text, part)                                                                                    \
-    do {                                                                                                               \
-        std::string t_ = (text);                                                                                       \
-        if (t_.find(part) == std::string::npos) {                                                                      \
-            std::fprintf(stderr, "FAIL %s:%d: \"%s\" not in %s\n", __FILE__, __LINE__, part, t_.c_str());              \
-            ++g_failures;                                                                                              \
-        }                                                                                                              \
+#define EXPECT_CONTAINS(text, part)                                                                                                        \
+    do {                                                                                                                                   \
+        std::string t_ = (text);                                                                                                           \
+        if (t_.find(part) == std::string::npos) {                                                                                          \
+            std::fprintf(stderr, "FAIL %s:%d: \"%s\" not in %s\n", __FILE__, __LINE__, part, t_.c_str());                                  \
+            ++g_failures;                                                                                                                  \
+        }                                                                                                                                  \
     } while (0)
 
 static std::string event(int64_t timeout = 2000)

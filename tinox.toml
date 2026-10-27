@@ -5,8 +5,19 @@ version = "0.1.0"
 description = "Native KDE Plasma IDE for the Tinox language, written in Tinox"
 entry = "src/Main.tnx"
 
+# JSON for commands and events.
+[[dependencies]]
+group      = "tinox.core"
+artifactId = "json"
+version    = "1.1.0"
+
 # The C++ bridge to Qt and KDE Frameworks (bridge/). `make bridge` builds it.
 [native]
 libs     = ["tinoxkde"]
 lib_dirs = ["bridge/build/bin"]
 rpath    = ["bridge/build/bin"]
+
+# `tinox test` links the headless mock of the bridge instead (docs/mock.md):
+# same symbols, no Qt, no display, scripted by the tests.
+[native.test]
+libs = ["tinoxkde-mock"]

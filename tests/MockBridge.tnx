@@ -1,0 +1,50 @@
+// The scripting side of libtinoxkde-mock (bridge/mock/tinoxkde_mock.h), for tests.
+// `tinox test` links the mock instead of the real bridge ([native.test] in tinox.toml).
+extern fn mock_reset()
+extern fn mock_push_event(json: String) -> Int64
+extern fn mock_next_command(timeoutMs: Int64) -> String
+extern fn mock_pending_commands() -> Int64
+extern fn mock_on_command(cmd: String, replyJson: String, eventJson: String) -> Int64
+extern fn mock_create_object() -> Int64
+extern fn mock_add_namespace(name: String) -> Int64
+extern fn mock_close_last_window()
+
+class MockBridge
+{
+    /** Injects an event as if the UI had produced it. */
+    fnc push(json: String) -> Nothing
+    {
+        mock_push_event(json)
+    }
+
+    /** The next command the code under test posted, or "". */
+    fnc nextCommand() -> String
+    {
+        return mock_next_command(200)
+    }
+
+    fnc pending() -> Int64
+    {
+        return mock_pending_commands()
+    }
+
+    fnc onCommand(cmd: String, reply: String, event: String) -> Nothing
+    {
+        mock_on_command(cmd, reply, event)
+    }
+
+    fnc createObject() -> Int64
+    {
+        return mock_create_object()
+    }
+
+    fnc addNamespace(name: String) -> Nothing
+    {
+        mock_add_namespace(name)
+    }
+
+    fnc closeLastWindow() -> Nothing
+    {
+        mock_close_last_window()
+    }
+}

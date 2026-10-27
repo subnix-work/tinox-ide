@@ -1,0 +1,68 @@
+import MockBridge
+import tinox.ide.kde.Bridge
+import tinox.core.json
+
+class BridgeBindingsTest
+{
+    @Test("the loaded library speaks the ABI version the bindings need")
+    fn testAbi() -> Bool
+    {
+        Bridge::requireAbi()
+        return Bridge::abiVersion() == 1 && Bridge::expectedAbi() == 1
+    }
+
+    @Test("init twice fails with the bridge's explanation")
+    fn testInitTwice() -> Bool
+    {
+        Bridge::init("test", "Test")
+        var message: String = ""
+        try { Bridge::init("test", "Test") } catch (e: String) { message = e }
+        return message.contains("tkde_init failed") && message.contains("already initialized")
+    }
+
+    @Test("query returns the reply, and throws when the reply says ok:false")
+    fn testQuery() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const reply: JsonValue = Bridge::query("{\"cmd\":\"core.capabilities\"}")
+        var message: String = ""
+        try { Bridge::query("{\"cmd\":\"no.such.command\"}") } catch (e: String) { message = e }
+        return reply.getField("abi").getInt() == 1 && message.contains("unsupported") && message.contains("no.such.command")
+    }
+
+    @Test("post rejects malformed JSON on the spot")
+    fn testPostInvalid() -> Bool
+    {
+        Bridge::init("test", "Test")
+        var message: String = ""
+        try { Bridge::post("{not json") } catch (e: String) { message = e }
+        return message.contains("tkde_post failed") && message.contains("invalid argument")
+    }
+
+    @Test("calls before init report not initialized")
+    fn testBeforeInit() -> Bool
+    {
+        var message: String = ""
+        try { Bridge::post("{\"cmd\":\"core.ping\"}") } catch (e: String) { message = e }
+        return message.contains("not initialized")
+    }
+
+    @Test("nextEvent returns an empty string on timeout, and the clock and environment work")
+    fn testMisc() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const t0: Int64 = Bridge::nowNs()
+        return Bridge::nextEvent(10) == "" && Bridge::nowNs() >= t0 && Bridge::env("TINOX_IDE_SURELY_UNSET_VARIABLE") == ""
+    }
+
+    @Test("release of an unknown object throws, a registered one does not")
+    fn testRelease() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const id: Int64 = MockBridge::createObject()
+        Bridge::release(id)
+        var message: String = ""
+        try { Bridge::release(id) } catch (e: String) { message = e }
+        return message.contains("not found")
+    }
+}

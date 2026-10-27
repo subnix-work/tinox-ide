@@ -1,0 +1,152 @@
+module tinox.ide.kde
+
+namespace tinox.ide.kde
+{
+    /**
+     * Dispatches bridge events to handlers on the logic task.
+     *
+     * Handlers are registered by event type ("widget.clicked") and/or by the id of the
+     * object an event comes from; both kinds run, type handlers first. One handler per
+     * key: registering again replaces it. A handler that throws is recorded and
+     * reported on stderr, and the loop carries on with the next event.
+     *
+     * Use run() as the body of the logic task (ends at core.shutdown or stop()), or
+     * pump() to process what is available, for tests and for embedding in other loops.
+     */
+    class EventLoop
+    {
+        var byType: Map<String, fnc(Event) -> Nothing>
+        var byTarget: Map<String, fnc(Event) -> Nothing>
+        var stopped: Bool
+        var shutdown: Bool
+        var delivered: Int64
+        var failures: List<String>
+
+        fnc create() -> EventLoop
+        {
+            return EventLoop { byType: Map::new(), byTarget: Map::new(), stopped: false, shutdown: false, delivered: 0, failures: [] }
+        }
+
+        fn onType(type: String, handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.byType.set(type, handler)
+        }
+
+        fn offType(type: String) -> Nothing
+        {
+            this.byType.remove(type)
+        }
+
+        fn onTarget(id: Int64, handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.byTarget.set(id.toString(), handler)
+        }
+
+        fn offTarget(id: Int64) -> Nothing
+        {
+            this.byTarget.remove(id.toString())
+        }
+
+        /** Makes run() return after the current event. */
+        fn stop() -> Nothing
+        {
+            this.stopped = true
+        }
+
+        /** Whether the bridge has ended the event stream (core.shutdown was seen). */
+        fn isShutdown() -> Bool
+        {
+            return this.shutdown
+        }
+
+        fn failureCount() -> Int64
+        {
+            return this.failures.len()
+        }
+
+        fn fail(message: String) -> Nothing
+        {
+            this.failures.push(message)
+            printStderr("tinox-ide: " + message)
+        }
+
+        /** Runs the handlers for one event. */
+        fn dispatch(ev: Event) -> Nothing
+        {
+            this.delivered = this.delivered + 1
+            if (ev.type == "core.shutdown")
+            {
+                this.shutdown = true
+            }
+            if (this.byType.contains(ev.type))
+            {
+                const handler: fnc(Event) -> Nothing = this.byType.get(ev.type)
+                try
+                {
+                    handler(ev)
+                }
+                catch (e: String)
+                {
+                    this.fail("handler for " + ev.type + " failed: " + e)
+                }
+            }
+            if (ev.target > 0 && this.byTarget.contains(ev.target.toString()))
+            {
+                const targetHandler: fnc(Event) -> Nothing = this.byTarget.get(ev.target.toString())
+                try
+                {
+                    targetHandler(ev)
+                }
+                catch (e: String)
+                {
+                    this.fail("handler for object " + ev.target.toString() + " (" + ev.type + ") failed: " + e)
+                }
+            }
+        }
+
+        /** Handles one event text; a malformed one is recorded, never fatal. */
+        fn handle(text: String) -> Nothing
+        {
+            try
+            {
+                const ev: Event = Event::parse(text)
+                this.dispatch(ev)
+            }
+            catch (e: String)
+            {
+                this.fail("dropped an unreadable event: " + e)
+            }
+        }
+
+        /**
+         * Waits up to timeoutMs for an event, then handles it and everything already
+         * queued. Returns how many events it handled (0 on timeout).
+         */
+        fn pump(timeoutMs: Int64) -> Int64
+        {
+            var handled: Int64 = 0
+            var wait: Int64 = timeoutMs
+            while (!this.stopped && !this.shutdown)
+            {
+                const text: String = Bridge::nextEvent(wait)
+                if (text == "")
+                {
+                    return handled
+                }
+                this.handle(text)
+                handled = handled + 1
+                wait = 0
+            }
+            return handled
+        }
+
+        /** Handles events until core.shutdown arrives or stop() is called. */
+        fn run() -> Nothing
+        {
+            while (!this.stopped && !this.shutdown)
+            {
+                this.pump(200)
+            }
+        }
+    }
+}

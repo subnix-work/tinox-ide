@@ -30,13 +30,13 @@ extern "C" {
 /** Status codes returned by the int64_t functions (negative on failure). */
 enum {
     TKDE_OK = 0,
-    TKDE_E_INVALID_ARG = -1,        /* NULL, malformed JSON, bad id */
-    TKDE_E_WRONG_THREAD = -2,       /* main-thread function elsewhere, query on the UI thread */
-    TKDE_E_NOT_INITIALIZED = -3,    /* used before tkde_init or after shutdown */
+    TKDE_E_INVALID_ARG = -1,     /* NULL, malformed JSON, bad id */
+    TKDE_E_WRONG_THREAD = -2,    /* main-thread function elsewhere, query on the UI thread */
+    TKDE_E_NOT_INITIALIZED = -3, /* used before tkde_init or after shutdown */
     TKDE_E_ALREADY_INITIALIZED = -4,
-    TKDE_E_NOT_FOUND = -5,          /* unknown or released object id */
-    TKDE_E_UNSUPPORTED = -6,        /* unknown command */
-    TKDE_E_FAILED = -7              /* anything else; tkde_last_error() says what */
+    TKDE_E_NOT_FOUND = -5,   /* unknown or released object id */
+    TKDE_E_UNSUPPORTED = -6, /* unknown command */
+    TKDE_E_FAILED = -7       /* anything else; tkde_last_error() says what */
 };
 
 /** The ABI version the loaded library implements (compare with TKDE_ABI_VERSION). Any thread. */

@@ -56,8 +56,8 @@ std::string makeEvent(int64_t seq, const QString &type, QJsonObject fields, int6
     fields.remove(QStringLiteral("seq"));
     fields.remove(QStringLiteral("t_ns"));
     fields.remove(QStringLiteral("target"));
-    std::string out = "{\"type\":" + jsonString(type).toStdString() + ",\"seq\":" + std::to_string(seq)
-        + ",\"t_ns\":" + std::to_string(tkde::monotonicNanos());
+    std::string out = "{\"type\":" + jsonString(type).toStdString() + ",\"seq\":" + std::to_string(seq) +
+                      ",\"t_ns\":" + std::to_string(tkde::monotonicNanos());
     if (target > 0) {
         out += ",\"target\":" + std::to_string(target);
     }
@@ -148,8 +148,11 @@ int64_t Bridge::init(const QString &appName, const QString &displayName)
         return setLastError(TKDE_E_INVALID_ARG, QStringLiteral("tkde_init needs an application and a display name"));
     }
     // Qt aborts the whole process when it cannot reach a display; report it instead.
-    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM") && !qEnvironmentVariableIsSet("WAYLAND_DISPLAY") && !qEnvironmentVariableIsSet("DISPLAY")) {
-        return setLastError(TKDE_E_FAILED, QStringLiteral("no display available: set WAYLAND_DISPLAY or DISPLAY, or QT_QPA_PLATFORM=offscreen for headless runs"));
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM") && !qEnvironmentVariableIsSet("WAYLAND_DISPLAY") &&
+        !qEnvironmentVariableIsSet("DISPLAY")) {
+        return setLastError(
+            TKDE_E_FAILED,
+            QStringLiteral("no display available: set WAYLAND_DISPLAY or DISPLAY, or QT_QPA_PLATFORM=offscreen for headless runs"));
     }
 
     m_app = new QApplication(g_argc, g_argv); // lives for the whole process
@@ -385,7 +388,8 @@ void Bridge::registerCoreCommands()
 {
     registerCommand(QStringLiteral("core.ping"), [](const QJsonObject &cmd) {
         QJsonObject f;
-        f.insert(QStringLiteral("payload"), cmd.contains(QStringLiteral("payload")) ? cmd.value(QStringLiteral("payload")) : QJsonValue(QJsonValue::Null));
+        f.insert(QStringLiteral("payload"),
+                 cmd.contains(QStringLiteral("payload")) ? cmd.value(QStringLiteral("payload")) : QJsonValue(QJsonValue::Null));
         return Reply::success(f);
     });
 
@@ -444,12 +448,13 @@ void Bridge::registerCoreCommands()
         }
         if (!m_service) {
             m_service = std::make_unique<KDBusService>(KDBusService::Unique | KDBusService::NoExitOnFailure, m_app);
-            QObject::connect(m_service.get(), &KDBusService::activateRequested, m_context, [this](const QStringList &arguments, const QString &workingDirectory) {
-                QJsonObject f;
-                f.insert(QStringLiteral("arguments"), QJsonArray::fromStringList(arguments));
-                f.insert(QStringLiteral("workingDirectory"), workingDirectory);
-                emitEvent(QStringLiteral("core.activated"), f);
-            });
+            QObject::connect(m_service.get(), &KDBusService::activateRequested, m_context,
+                             [this](const QStringList &arguments, const QString &workingDirectory) {
+                                 QJsonObject f;
+                                 f.insert(QStringLiteral("arguments"), QJsonArray::fromStringList(arguments));
+                                 f.insert(QStringLiteral("workingDirectory"), workingDirectory);
+                                 emitEvent(QStringLiteral("core.activated"), f);
+                             });
         }
         QJsonObject f;
         f.insert(QStringLiteral("registered"), m_service->isRegistered());
