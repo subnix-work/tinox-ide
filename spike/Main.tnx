@@ -1,0 +1,161 @@
+// Spike for issue #7: Qt on the main thread, Tinox logic on a spawned task,
+// two queues in between. Prints measurements; exit code 0 means every check held.
+//   make spike            (QT_QPA_PLATFORM=offscreen by default; see docs/adr/0001-spike-findings.md)
+extern fn tkde_init() -> Int64
+extern fn tkde_exec() -> Int64
+extern fn tkde_post(json: String)
+extern fn tkde_next_event(timeoutMs: Int64) -> String
+extern fn tkde_now_ns() -> Int64
+extern fn tkde_getenv(name: String) -> String
+
+class Main
+{
+    // Reads `"key":<digits>` out of a flat JSON event, or -1.
+    fnc intField(ev: String, key: String) -> Int64
+    {
+        const marker: String = "\"" + key + "\":"
+        const at: Int64 = ev.indexOf(marker)
+        if (at < 0)
+        {
+            return -1
+        }
+        const first: Int64 = at + marker.len()
+        var end: Int64 = first
+        while (end < ev.len() && "0123456789".contains(ev.substring(end, end + 1)))
+        {
+            end = end + 1
+        }
+        if (end == first)
+        {
+            return -1
+        }
+        return ev.substring(first, end).toInt()
+    }
+
+    // Waits for an event whose text contains `kind`; anything else is skipped.
+    fnc waitFor(kind: String) -> String
+    {
+        var tries: Int64 = 0
+        while (tries < 50)
+        {
+            const ev: String = tkde_next_event(200)
+            if (ev.contains(kind))
+            {
+                return ev
+            }
+            tries = tries + 1
+        }
+        return ""
+    }
+
+    // Allocation pressure on the Tinox side while the UI works.
+    fnc churn(n: Int64) -> Int64
+    {
+        var xs: List<String> = []
+        var i: Int64 = 0
+        while (i < n)
+        {
+            xs.push("garbage-" + i.toString())
+            i = i + 1
+        }
+        return xs.len()
+    }
+
+    fnc logic(startNs: Int64, rounds: Int64) -> Int64
+    {
+        var failures: Int64 = 0
+        const ready: String = Main::waitFor("\"ready\"")
+        if (ready == "")
+        {
+            println("FAIL: no ready event")
+            tkde_post("{\"cmd\":\"quit\"}")
+            return 1
+        }
+        println("startup-ms=" + ((Main::intField(ready, "t_ns") - startNs) / 1000000).toString())
+
+        tkde_post("{\"cmd\":\"platform\"}")
+        const platform: String = Main::waitFor("\"platform\"")
+        println("platform-event=" + platform)
+
+        tkde_post("{\"cmd\":\"mode\"}")
+        println("highlighting-mode-event=" + Main::waitFor("\"mode\""))
+
+        tkde_post("{\"cmd\":\"memory\"}")
+        const rssStart: Int64 = Main::intField(Main::waitFor("\"memory\""), "rss_kb")
+
+        var i: Int64 = 0
+        var sum: Int64 = 0
+        var worst: Int64 = 0
+        var best: Int64 = 1000000000000
+        while (i < rounds)
+        {
+            const sent: Int64 = tkde_now_ns()
+            tkde_post("{\"cmd\":\"click\"}")
+            const ev: String = Main::waitFor("\"clicked\"")
+            const got: Int64 = tkde_now_ns()
+            if (ev == "")
+            {
+                failures = failures + 1
+            }
+            const dt: Int64 = got - sent
+            sum = sum + dt
+            if (dt > worst)
+            {
+                worst = dt
+            }
+            if (dt < best)
+            {
+                best = dt
+            }
+            Main::churn(300)
+            i = i + 1
+        }
+        println("roundtrips=" + rounds.toString())
+        println("latency-us avg=" + (sum / rounds / 1000).toString() + " min=" + (best / 1000).toString() + " max=" + (worst / 1000).toString())
+
+        tkde_post("{\"cmd\":\"setText\",\"text\":\"hello from tinox\"}")
+        const changed: String = Main::waitFor("\"textChanged\"")
+        const chars: Int64 = Main::intField(changed, "chars")
+        println("editor-chars=" + chars.toString())
+        if (chars != 16)
+        {
+            failures = failures + 1
+        }
+
+        tkde_post("{\"cmd\":\"memory\"}")
+        const rssEnd: Int64 = Main::intField(Main::waitFor("\"memory\""), "rss_kb")
+        println("rss-kb start=" + rssStart.toString() + " end=" + rssEnd.toString())
+
+        tkde_post("{\"cmd\":\"quit\"}")
+        println("failures=" + failures.toString())
+        return failures
+    }
+
+    fnc main() -> Int32
+    {
+        const startNs: Int64 = tkde_now_ns()
+        if (tkde_init() != 0)
+        {
+            println("FAIL: tkde_init")
+            return 1
+        }
+        // TKDE_SPIKE_ROUNDS lengthens the run for GC soak tests
+        var rounds: Int64 = 2000
+        const fromEnv: String = tkde_getenv("TKDE_SPIKE_ROUNDS")
+        if (fromEnv != "")
+        {
+            rounds = fromEnv.toInt()
+        }
+        const task = spawn Main::logic(startNs, rounds)
+        // Qt owns this (the main) thread from here on
+        const rc: Int64 = tkde_exec()
+        const failures: Int64 = await task
+        println("exec-returned=" + rc.toString())
+        if (rc != 0 || failures != 0)
+        {
+            return 1
+        }
+        println("spike ok")
+        return 0
+    }
+}
