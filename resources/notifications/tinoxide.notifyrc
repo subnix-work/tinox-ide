@@ -1,0 +1,34 @@
+[Global]
+IconName=tinoxide
+Name=Tinox IDE
+Comment=Tinox IDE
+
+[Event/buildFinished]
+Name=Build finished
+Comment=A build has finished successfully
+Action=Popup
+IconName=dialog-ok-apply
+
+[Event/buildFailed]
+Name=Build failed
+Comment=A build has finished with errors
+Action=Popup
+IconName=dialog-error
+
+[Event/testsFinished]
+Name=Tests passed
+Comment=All tests have passed
+Action=Popup
+IconName=dialog-ok-apply
+
+[Event/testsFailed]
+Name=Tests failed
+Comment=Some tests have failed
+Action=Popup
+IconName=dialog-warning
+
+[Event/languageServerCrashed]
+Name=Language server stopped
+Comment=The language server has stopped unexpectedly
+Action=Popup
+IconName=dialog-error

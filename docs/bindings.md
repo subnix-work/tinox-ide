@@ -28,7 +28,7 @@ class Main
 
     fnc main() -> Int32
     {
-        return App::run("tinox-ide", "Tinox IDE", (events: EventLoop) => Main::logic(events))
+        return App::run("tinoxide", "Tinox IDE", (events: EventLoop) => Main::logic(events))
     }
 }
 ```

@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStringList>
 
 #include <atomic>
 #include <cstdio>
@@ -34,6 +35,10 @@ static std::atomic<int> g_failures{0};
 static std::string show(const QByteArray &b)
 {
     return b.toStdString();
+}
+static std::string show(const QStringList &l)
+{
+    return QString(QLatin1Char('[') + l.join(QLatin1String(", ")) + QLatin1Char(']')).toStdString();
 }
 static std::string show(const QString &s)
 {

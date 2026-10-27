@@ -28,7 +28,7 @@ the UI thread, events from the UI thread to Tinox.
 | Function | Thread | Blocks | Purpose |
 |---|---|---|---|
 | `int64_t tkde_abi_version(void)` | any | no | The ABI version implemented (`TKDE_ABI_VERSION`, now 1). |
-| `int64_t tkde_init(const char *app_name, const char *display_name)` | main | no | Creates the application object. `app_name` is the identifier (`tinox-ide`), `display_name` the human name. Returns `0`, `TKDE_E_ALREADY_INITIALIZED` or `TKDE_E_FAILED`. |
+| `int64_t tkde_init(const char *app_name, const char *display_name)` | main | no | Creates the application object. `app_name` is the identifier (`tinoxide`: it names the config file `~/.config/tinoxiderc`, the notification component and the D-Bus service), `display_name` the human name. Returns `0`, `TKDE_E_ALREADY_INITIALIZED` or `TKDE_E_FAILED`. |
 | `int64_t tkde_exec(void)` | main | until quit | Shows the windows created so far and runs the event loop. Returns the exit code (`>= 0`) or a negative error. |
 | `void tkde_quit(void)` | any | no | Asks the loop to end; same as the `core.quit` command. |
 | `int64_t tkde_post(const char *json)` | any | no | Queues a command. `0` when queued; errors that happen later arrive as events. |
@@ -140,7 +140,7 @@ Until then the namespace is not in `core.capabilities`.
 | `widget` | #9 | **implemented**, see [widget.md](widget.md): declarative widget tree, layouts, docks, tabs, widget events |
 | `action` | #10 | **implemented**, see [action.md](action.md): actions, menus, toolbars, shortcuts, command palette backend |
 | `model` | #11 | **implemented**, see [model.md](model.md): item models for trees, lists and tables with lazy children, proxies, selection, drag and drop |
-| `dialog`, `config` | #13 | file/message dialogs, KConfig settings, notifications |
+| `dialog`, `config`, `notify` | #13 | **implemented**, see [dialog.md](dialog.md): file/message/input/progress/settings dialogs, KConfig by group and key, notifications |
 | `term` | #14 | embedded terminal |
 
 ## 5. Lifecycle and shutdown
@@ -150,7 +150,7 @@ sequenceDiagram
     participant M as Tinox main thread
     participant L as Tinox logic task
     participant Q as Qt (main thread)
-    M->>Q: tkde_init("tinox-ide", "Tinox IDE")
+    M->>Q: tkde_init("tinoxide", "Tinox IDE")
     M->>L: spawn logic task
     M->>Q: tkde_exec()  (blocks, runs the event loop)
     Q-->>L: event core.ready
