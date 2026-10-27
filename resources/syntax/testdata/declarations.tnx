@@ -1,0 +1,47 @@
+module demo.model
+
+import tinox.core.fs
+import demo.model.Person
+
+namespace demo.model
+{
+    /**
+     * A documented class.
+     */
+    @Getter
+    @Table("people")
+    public class Person<T> extends Base implements Named, Comparable
+    {
+        readonly var id: Int64
+        private const label: String = "none"
+        var tags: List<String>
+        var scores: Map<String, Float64>
+
+        static fnc create(id: Int64) -> Person<Int64>
+        {
+            return Person { id: id, label: "x" }
+        }
+
+        async fn load(path: String) -> Nothing throws String
+        {
+            const text = await Fs::readFile(path)
+            this.label = text
+            self.id = 1
+        }
+    }
+
+    interface Named
+    {
+        fn name() -> String
+    }
+
+    enum Color
+    {
+        Red
+        Green
+    }
+
+    immutable Point(x: Float64, y: Float64)
+
+    extern fn getpid() -> Int64
+}

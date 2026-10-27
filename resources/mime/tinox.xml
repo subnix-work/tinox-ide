@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-tinox">
+    <comment>Tinox source file</comment>
+    <comment xml:lang="de">Tinox-Quelltext</comment>
+    <glob pattern="*.tnx"/>
+    <sub-class-of type="text/plain"/>
+    <generic-icon name="text-x-script"/>
+  </mime-type>
+  <mime-type type="application/x-tinox-project">
+    <comment>Tinox project manifest</comment>
+    <comment xml:lang="de">Tinox-Projektdatei</comment>
+    <glob pattern="tinox.toml" weight="60"/>
+    <sub-class-of type="application/toml"/>
+  </mime-type>
+</mime-info>

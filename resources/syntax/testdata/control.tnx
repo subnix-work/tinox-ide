@@ -1,0 +1,55 @@
+// A line comment with a TODO inside
+/* block
+   comment */
+class Control
+{
+    fnc run(items: List<Int64>) -> Int64
+    {
+        var total: Int64 = 0
+        for item in items
+        {
+            if (item > 10 && item != 12 || !flag)
+            {
+                total += item << 2
+            }
+            else
+            {
+                continue
+            }
+        }
+        for (var i = 0; i < 3; i++)
+        {
+            total = total >>> 1
+        }
+        while (total > 0)
+        {
+            total -= 1
+            if (total == 5) { break }
+        }
+        const result = match total
+        {
+            0 => "zero"
+            1, 2 => "small"
+            _ => "big"
+        }
+        const maybe = lookup ?? fallback
+        const chained = value
+            .trim()
+            .toUpper()
+        const f = (x: Int64) => x * 2
+        try
+        {
+            throw "boom"
+        }
+        catch (e: String)
+        {
+            println(e)
+        }
+        finally
+        {
+            defer cleanup()
+        }
+        const t = spawn Control::run(items)
+        return await t
+    }
+}
