@@ -136,10 +136,10 @@ Until then the namespace is not in `core.capabilities`.
 
 | Namespace | Issue | Content |
 |---|---|---|
+| `editor` | #12 | **implemented**, see [editor.md](editor.md): KTextEditor documents and views, edits, diagnostics, completion, hover |
 | `widget` | #9 | declarative widget tree, layouts, docks, tabs, widget events |
 | `action` | #10 | actions, menus, toolbars, shortcuts, command palette backend |
 | `model` | #11 | list/tree/table models, lazy children, selection |
-| `editor` | #12 | KTextEditor documents and views, marks, completion, change events |
 | `dialog`, `config` | #13 | file/message dialogs, KConfig settings, notifications |
 | `term` | #14 | embedded terminal |
 

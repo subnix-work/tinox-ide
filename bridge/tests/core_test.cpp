@@ -74,7 +74,8 @@ static void driver()
 
     std::string caps = tkde_query("{\"cmd\":\"core.capabilities\"}");
     EXPECT_CONTAINS(caps, "\"abi\":1");
-    EXPECT_CONTAINS(caps, "\"namespaces\":[\"core\"]");
+    EXPECT_CONTAINS(caps, "\"core\"");
+    EXPECT_CONTAINS(caps, "\"editor\"");
     EXPECT_CONTAINS(caps, "\"qt\":\"6.");
     EXPECT_CONTAINS(caps, "\"kf\":\"6.");
 
