@@ -11,13 +11,16 @@ include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 
-find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core)
+find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Widgets)
+find_package(KF6TextEditor ${KF_MIN_VERSION} REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GC REQUIRED IMPORTED_TARGET bdw-gc)
 
-add_library(tinoxkde SHARED src/version.cpp)
+add_library(tinoxkde SHARED src/version.cpp src/spike.cpp)
 target_include_directories(tinoxkde PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}>)
-target_link_libraries(tinoxkde PRIVATE Qt6::Core)
+target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets KF6::TextEditor PkgConfig::GC)
 set_target_properties(tinoxkde PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION 0

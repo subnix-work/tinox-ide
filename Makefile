@@ -5,13 +5,14 @@
 #   make test     bridge tests (ctest) and Tinox tests
 #   make fmt      clang-format the bridge, tinox fmt the sources
 #   make check-env  verify the toolchain and dependencies
+#   make spike    run the architecture spike (offscreen); spike-platforms: Wayland + X11
 #   make install-resources  install the syntax definition and MIME types for this user
 
 TINOX ?= $(shell command -v tinox 2>/dev/null || echo ../tinox/target/release/tinox)
 BUILD_DIR := bridge/build
 OUT := build/tinox-ide
 
-.PHONY: all bridge ide run test fmt clean check-env install-resources
+.PHONY: all bridge ide run test fmt clean check-env install-resources spike spike-platforms
 
 all: ide
 
@@ -44,3 +45,9 @@ check-env:
 
 install-resources:
 	scripts/install-resources.sh
+
+spike: bridge
+	scripts/run-spike.sh
+
+spike-platforms: bridge
+	scripts/spike-platforms.sh
