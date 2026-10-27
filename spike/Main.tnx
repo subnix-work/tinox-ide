@@ -1,9 +1,9 @@
 // Spike for issue #7: Qt on the main thread, Tinox logic on a spawned task,
 // two queues in between. Prints measurements; exit code 0 means every check held.
 //   make spike            (QT_QPA_PLATFORM=offscreen by default; see docs/adr/0001-spike-findings.md)
-extern fn tkde_init() -> Int64
+extern fn tkde_init(appName: String, displayName: String) -> Int64
 extern fn tkde_exec() -> Int64
-extern fn tkde_post(json: String)
+extern fn tkde_post(json: String) -> Int64
 extern fn tkde_next_event(timeoutMs: Int64) -> String
 extern fn tkde_now_ns() -> Int64
 extern fn tkde_getenv(name: String) -> String
@@ -134,7 +134,7 @@ class Main
     fnc main() -> Int32
     {
         const startNs: Int64 = tkde_now_ns()
-        if (tkde_init() != 0)
+        if (tkde_init("tinox-ide", "Tinox IDE (spike)") != 0)
         {
             println("FAIL: tkde_init")
             return 1

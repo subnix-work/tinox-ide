@@ -8,7 +8,7 @@ Tinox can call C functions (`extern fn`) but not C++, so a thin C++ library,
 the **bridge** (`libtinoxkde`), exposes Qt and KDE through a small C ABI. The
 IDE logic runs in Tinox on a spawned task while Qt's event loop owns the main
 thread; the two talk through queues. See [docs/adr](docs/adr) for the
-architecture and the [epic](https://github.com/subnix-work/tinox-ide/issues/1)
+architecture, [docs/abi.md](docs/abi.md) for the C ABI and the [epic](https://github.com/subnix-work/tinox-ide/issues/1)
 for the plan.
 
 > Status: bootstrapping. Nothing here is usable as an IDE yet.

@@ -2,9 +2,9 @@ extern fn tkde_abi_version() -> Int64
 
 class BridgeTest
 {
-    @Test("the bridge library is linked and reports an ABI version")
+    @Test("the bridge library is linked and reports ABI version 1")
     fn testBridgeIsLinked() -> Bool
     {
-        return tkde_abi_version() >= 0
+        return tkde_abi_version() == 1
     }
 }
