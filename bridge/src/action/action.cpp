@@ -6,6 +6,7 @@
 #include <KActionCollection>
 #include <KConfigGroup>
 #include <KLocalizedString>
+#include <KRecentFilesAction>
 #include <KSharedConfig>
 #include <KShortcutsDialog>
 #include <KStandardAction>
@@ -80,6 +81,13 @@ public:
     {
         KSharedConfigPtr config = m_file.isEmpty() ? KSharedConfig::openConfig() : KSharedConfig::openConfig(m_file, KConfig::SimpleConfig);
         return KConfigGroup(config, m_group);
+    }
+
+    /// Recent files live next to the shortcuts, in the group RecentFiles of the same file.
+    KConfigGroup recentGroup() const
+    {
+        KSharedConfigPtr config = m_file.isEmpty() ? KSharedConfig::openConfig() : KSharedConfig::openConfig(m_file, KConfig::SimpleConfig);
+        return KConfigGroup(config, QStringLiteral("RecentFiles"));
     }
 
     void configure(const QString &file, const QString &group)
@@ -365,6 +373,15 @@ Reply define(Bridge &, const QJsonObject &cmd)
             if (d.standard) {
                 a = KStandardAction::create(standardActions().at(d.id), nullptr, nullptr, g_actions);
                 g_actions->collection()->addAction(d.id, a);
+                if (auto *recent = qobject_cast<KRecentFilesAction *>(a)) {
+                    recent->loadEntries(g_actions->recentGroup());
+                    QObject::connect(recent, &KRecentFilesAction::urlSelected, g_actions, [id = d.id](const QUrl &url) {
+                        QJsonObject f;
+                        f.insert(QStringLiteral("id"), id);
+                        f.insert(QStringLiteral("url"), url.isLocalFile() ? url.toLocalFile() : url.toString());
+                        g_actions->bridge().emitEvent(QStringLiteral("action.recentSelected"), f);
+                    });
+                }
             } else {
                 a = new QAction(g_actions);
                 g_actions->collection()->addAction(d.id, a);
@@ -493,6 +510,70 @@ Reply setShortcut(Bridge &, const QJsonObject &cmd)
     f.insert(QStringLiteral("shortcuts"), shortcutList(a));
     g_actions->bridge().emitEvent(QStringLiteral("action.shortcutChanged"), f);
     return Reply::success(f);
+}
+
+KRecentFilesAction *recentOf(const QJsonObject &cmd, Reply &fail)
+{
+    QAction *a = actionOf(cmd, fail);
+    if (!a) {
+        return nullptr;
+    }
+    auto *r = qobject_cast<KRecentFilesAction *>(a);
+    if (!r) {
+        fail = Reply::failure(
+            TKDE_E_INVALID_ARG,
+            QStringLiteral("'%1' is not the recent-files action (define \"file_open_recent\" with standard:true)").arg(a->objectName()));
+    }
+    return r;
+}
+
+Reply recentAdd(Bridge &, const QJsonObject &cmd)
+{
+    Reply fail;
+    KRecentFilesAction *r = recentOf(cmd, fail);
+    if (!r) {
+        return fail;
+    }
+    const QString text = cmd.value(QStringLiteral("url")).toString();
+    if (text.isEmpty()) {
+        return invalid(QStringLiteral("\"url\" is a path or a URL"));
+    }
+    const QUrl url = QUrl::fromUserInput(text, QString(), QUrl::AssumeLocalFile);
+    r->addUrl(url, cmd.value(QStringLiteral("name")).toString());
+    KConfigGroup g = g_actions->recentGroup();
+    r->saveEntries(g);
+    g.sync();
+    return Reply::success();
+}
+
+Reply recentList(Bridge &, const QJsonObject &cmd)
+{
+    Reply fail;
+    KRecentFilesAction *r = recentOf(cmd, fail);
+    if (!r) {
+        return fail;
+    }
+    QJsonArray urls;
+    for (const QUrl &u : r->urls()) {
+        urls.append(u.isLocalFile() ? u.toLocalFile() : u.toString());
+    }
+    QJsonObject f;
+    f.insert(QStringLiteral("urls"), urls);
+    return Reply::success(f);
+}
+
+Reply recentClear(Bridge &, const QJsonObject &cmd)
+{
+    Reply fail;
+    KRecentFilesAction *r = recentOf(cmd, fail);
+    if (!r) {
+        return fail;
+    }
+    r->clear();
+    KConfigGroup g = g_actions->recentGroup();
+    r->saveEntries(g);
+    g.sync();
+    return Reply::success();
 }
 
 Reply configure(Bridge &, const QJsonObject &cmd)
@@ -842,6 +923,9 @@ void registerCommands(Bridge &bridge)
     reg("action.list", list);
     reg("action.trigger", trigger);
     reg("action.setShortcut", setShortcut);
+    reg("action.recentAdd", recentAdd);
+    reg("action.recentList", recentList);
+    reg("action.recentClear", recentClear);
     reg("action.setMenuBar", setMenuBar);
     reg("action.setToolBar", setToolBar);
     reg("action.setContextMenu", setContextMenu);
