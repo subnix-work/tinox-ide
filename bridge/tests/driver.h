@@ -32,32 +32,32 @@ static std::atomic<int> g_failures{0};
         }                                                                                                                                  \
     } while (0)
 
-static std::string show(const QByteArray &b)
+static inline std::string show(const QByteArray &b)
 {
     return b.toStdString();
 }
-static std::string show(const QStringList &l)
+static inline std::string show(const QStringList &l)
 {
     return QString(QLatin1Char('[') + l.join(QLatin1String(", ")) + QLatin1Char(']')).toStdString();
 }
-static std::string show(const QString &s)
+static inline std::string show(const QString &s)
 {
     return s.toStdString();
 }
-static std::string show(const char *s)
+static inline std::string show(const char *s)
 {
     return s;
 }
 template <class T, std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<T, bool>, int> = 0>
-static std::string show(T v)
+static inline std::string show(T v)
 {
     return std::to_string(v);
 }
-static std::string show(bool v)
+static inline std::string show(bool v)
 {
     return v ? "true" : "false";
 }
-static std::string show(const QJsonValue &v)
+static inline std::string show(const QJsonValue &v)
 {
     return QJsonDocument(QJsonArray{v}).toJson(QJsonDocument::Compact).toStdString();
 }
@@ -86,7 +86,7 @@ static Obj cmd(const char *name, Obj fields = {})
     return fields;
 }
 
-static int64_t idOf(const Obj &reply)
+static inline int64_t idOf(const Obj &reply)
 {
     return int64_t(reply.value(QStringLiteral("id")).toDouble());
 }

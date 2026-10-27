@@ -102,6 +102,7 @@ private:
     bool runOnUiAndWait(std::function<void()> fn); // false if the loop ended first
     void registerCoreCommands();
     int64_t releaseOnUi(int64_t id);
+    void destroyAllObjects();
     void setupKde(const QString &appName, const QString &displayName);
 
     tkde::EventQueue m_events;

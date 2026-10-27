@@ -1,0 +1,1 @@
+{"cmd":"model.reset","target":5,"rows":[{"id":"a","text":"A","children":[{"id":"b","text":"B","cells":["1 KB"]}]},{"id":"c","text":"C","hasChildren":true,"checked":false}]}

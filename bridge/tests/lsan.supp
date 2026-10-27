@@ -1,0 +1,4 @@
+
+# fontconfig keeps font patterns it hands out while Qt lays out text (seen in the fuzzer, which draws a lot of text)
+leak:FcFontMatch
+leak:FcFontRenderPrepare
