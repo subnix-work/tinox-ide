@@ -1,0 +1,10 @@
+extern fn tkde_abi_version() -> Int64
+
+class Main
+{
+    fnc main() -> Int32
+    {
+        println("tinox-ide (bridge ABI " + tkde_abi_version().toString() + ")")
+        return 0
+    }
+}

@@ -1,0 +1,12 @@
+[package]
+compiler = "2.8.0"
+name = "tinox-ide"
+version = "0.1.0"
+description = "Native KDE Plasma IDE for the Tinox language, written in Tinox"
+entry = "src/Main.tnx"
+
+# The C++ bridge to Qt and KDE Frameworks (bridge/). `make bridge` builds it.
+[native]
+libs     = ["tinoxkde"]
+lib_dirs = ["bridge/build/bin"]
+rpath    = ["bridge/build/bin"]

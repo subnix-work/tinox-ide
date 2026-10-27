@@ -1,0 +1,14 @@
+# build output
+bridge/build/
+build/
+.tinox/
+.tinox-build/
+*.o
+*.so
+*.ll
+compile_commands.json
+.cache/
+
+# local tooling
+.claude/settings.local.json
+CMakeUserPresets.json

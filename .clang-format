@@ -1,0 +1,13 @@
+# Close to the KDE Frameworks style: 4 spaces, attached braces except for
+# functions and classes, 140 columns.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 140
+BreakBeforeBraces: Linux
+PointerAlignment: Right
+AccessModifierOffset: -4
+NamespaceIndentation: None
+AlwaysBreakTemplateDeclarations: Yes
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+SortIncludes: true
