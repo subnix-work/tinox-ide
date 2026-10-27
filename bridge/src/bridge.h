@@ -82,11 +82,16 @@ public:
     /// Gives `object` an id (UI thread). The registry holds a QPointer: an object destroyed
     /// from the Qt side simply stops resolving.
     int64_t registerObject(QObject *object);
+    /// Runs on the UI thread right before a released object is scheduled for deletion, while it
+    /// is still fully alive (modules free things the object's destructor can no longer reach).
+    void addReleaseHook(std::function<void(QObject *)> hook);
     /// UI thread. nullptr when the id is unknown, released or the object is gone.
     QObject *object(int64_t id) const;
     bool isUiThread() const;
     size_t objectCount() const;
     int64_t droppedEvents() const { return m_events.dropped(); }
+    /// True with TKDE_DEBUG_COMMANDS=1: test-only commands may be registered.
+    bool debugCommandsEnabled() const { return m_debugCommands; }
 
 private:
     Bridge();
@@ -112,6 +117,7 @@ private:
 
     std::map<QString, Handler> m_handlers;
     std::vector<QString> m_namespaces;
+    std::vector<std::function<void(QObject *)>> m_releaseHooks;
     std::map<int64_t, QPointer<QObject>> m_objects;
     int64_t m_nextId = 1;
     bool m_debugCommands = false;

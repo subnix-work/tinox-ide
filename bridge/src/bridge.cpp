@@ -2,6 +2,8 @@
 
 #include "tinoxkde.h"
 
+#include "editor/editor.h"
+
 #include <KAboutData>
 #include <KCoreAddons>
 #include <KCrash>
@@ -161,6 +163,7 @@ int64_t Bridge::init(const QString &appName, const QString &displayName)
     m_debugCommands = qEnvironmentVariable("TKDE_DEBUG_COMMANDS") == QLatin1String("1");
     m_namespaces = {QStringLiteral("core")};
     registerCoreCommands();
+    tkde::editor::registerCommands(*this);
 
     QObject::connect(m_app, &QGuiApplication::lastWindowClosed, m_context, [this] { requestQuit(0); });
 
@@ -346,6 +349,11 @@ QObject *Bridge::object(int64_t id) const
     return it == m_objects.end() ? nullptr : it->second.data();
 }
 
+void Bridge::addReleaseHook(std::function<void(QObject *)> hook)
+{
+    m_releaseHooks.push_back(std::move(hook));
+}
+
 int64_t Bridge::releaseOnUi(int64_t id)
 {
     if (id <= 0) {
@@ -358,6 +366,9 @@ int64_t Bridge::releaseOnUi(int64_t id)
     }
     QObject *o = it->second.data();
     m_objects.erase(it);
+    for (const auto &hook : m_releaseHooks) {
+        hook(o);
+    }
     o->deleteLater();
     return TKDE_OK;
 }

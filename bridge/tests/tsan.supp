@@ -15,3 +15,10 @@ race:tkde::Bridge::query
 race:tkde::Bridge::release
 race:tkde::Bridge::runOnUi
 race:tkde::Bridge::runOnUiAndWait
+
+# The editor tests start KTextEditor/KIO/D-Bus helper threads (QThread::start inside the
+# libraries) that Qt only joins at process exit, and libdbus takes two of its own locks in
+# both orders on different connections. Both live entirely inside the libraries; the bridge
+# takes none of those locks.
+thread:QThread::start
+deadlock:libdbus-1.so
