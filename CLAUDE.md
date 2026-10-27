@@ -12,7 +12,8 @@ Qt 6 / KF6. Plan and status: the epic (issue #1). Architecture: docs/adr.
 
 ## Build and test
 
-`make bridge`, `make ide`, `make test`, `make fmt`, `make check-env`.
+`make bridge`, `make ide`, `make test`, `make test-bridge`, `make fmt`, `make check-env`
+(details: docs/testing.md).
 `tinox.toml` links the bridge through `[native]`. Run `make test` before every
 commit.
 

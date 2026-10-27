@@ -1,0 +1,1 @@
+{"cmd":"action.setMenuBar","target":4,"menus":[{"title":"&File","items":["file_open","-",{"menu":{"title":"&Theme","items":["theme.dark"]}}]}]}

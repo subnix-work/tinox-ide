@@ -1,0 +1,1 @@
+{"cmd":"dialog.openFile","title":"Open","filters":["Tinox (*.tnx)","All (*)"],"multiple":true}

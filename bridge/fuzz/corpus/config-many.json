@@ -1,0 +1,1 @@
+{"cmd":"config.writeMany","entries":[{"group":"A","key":"l","value":["x","y"]},{"group":"A","key":"c","value":"#336699","type":"color"}]}

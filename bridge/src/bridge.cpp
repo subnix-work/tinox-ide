@@ -111,8 +111,11 @@ QJsonObject Reply::toJson() const
 
 Bridge &Bridge::instance()
 {
-    static Bridge bridge;
-    return bridge;
+    // Never destroyed, like the QApplication it owns: Qt deletes pending objects (a document with
+    // deleteLater) while the process exits, after function-local statics are gone, and their
+    // handlers still emit events. Found by the command fuzzer.
+    static Bridge *bridge = new Bridge;
+    return *bridge;
 }
 
 Bridge::Bridge() = default;
@@ -201,9 +204,31 @@ int64_t Bridge::exec()
     emitEvent(QStringLiteral("core.shutdown"));
     m_shutdown = true;
     m_running = false;
+    destroyAllObjects();
     m_service.reset();
     m_events.close();
     return rc;
+}
+
+void Bridge::destroyAllObjects()
+{
+    // While the libraries are still alive: an object left for process exit is deleted after
+    // the static destructors of KDE Frameworks and Qt have run (found by the command fuzzer).
+    std::vector<QPointer<QObject>> remaining;
+    for (const auto &entry : m_objects) {
+        remaining.push_back(entry.second);
+    }
+    for (const QPointer<QObject> &o : remaining) {
+        if (o) {
+            for (const auto &hook : m_releaseHooks) {
+                hook(o);
+            }
+            delete o.data();
+        }
+    }
+    m_objects.clear();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents();
 }
 
 void Bridge::requestQuit(int64_t code)

@@ -1,0 +1,1 @@
+{"cmd":"config.read","group":"Editor","key":"font","type":"string","default":"Hack"}

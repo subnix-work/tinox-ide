@@ -1,0 +1,1 @@
+{"cmd":"action.define","actions":[{"id":"build.run","text":"&Run","icon":"media-playback-start","shortcut":"F5"},{"id":"file_open","standard":true},{"id":"theme.dark","group":"theme","checked":true}]}

@@ -11,7 +11,7 @@ TINOX ?= $(shell command -v tinox 2>/dev/null || echo ../tinox/target/release/ti
 BUILD_DIR := bridge/build
 OUT := build/tinox-ide
 
-.PHONY: all bridge ide run test test-asan test-tsan bench fmt clean check-env install-resources
+.PHONY: all bridge ide run test test-bridge test-asan test-tsan fuzz bench fmt clean check-env install-resources
 
 all: ide
 
@@ -36,6 +36,15 @@ bench: bridge
 	QT_QPA_PLATFORM=offscreen $(BUILD_DIR)/bin/bench_queue
 
 # Bridge tests under AddressSanitizer + UBSan (leaks included) and ThreadSanitizer.
+# The whole bridge suite on Qt's offscreen platform: unit tests per namespace, the ABI contract
+# against the real bridge and the mock, header checks. No display needed.
+test-bridge: bridge
+	QT_QPA_PLATFORM=offscreen ctest --test-dir bridge/build --output-on-failure
+
+# libFuzzer on the command parser and every command (clang; FUZZ_SECONDS=600 for the nightly run)
+fuzz:
+	scripts/fuzz.sh $(or $(FUZZ_SECONDS),60)
+
 test-asan:
 	cmake -S bridge -B bridge/build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTKDE_SANITIZE=address,undefined
 	cmake --build bridge/build-asan

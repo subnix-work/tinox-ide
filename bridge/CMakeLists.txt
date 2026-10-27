@@ -6,6 +6,14 @@ set(KF_MIN_VERSION "6.5.0")
 
 # -DTKDE_SANITIZE=address,undefined (or thread) builds everything instrumented: `make test-asan`
 set(TKDE_SANITIZE "" CACHE STRING "Sanitizers to enable, e.g. address,undefined")
+# -DTKDE_FUZZ=ON (clang): `make fuzz` builds the command fuzzer; the library is instrumented for coverage
+option(TKDE_FUZZ "Build the libFuzzer command fuzzer" OFF)
+if(TKDE_FUZZ)
+    add_compile_options(-fsanitize=fuzzer-no-link)
+    # clang does not link its runtimes into shared libraries; the fuzzer executable provides them
+    add_link_options(-Wl,-z,undefs)
+endif()
+
 if(TKDE_SANITIZE)
     add_compile_options(-fsanitize=${TKDE_SANITIZE} -fno-omit-frame-pointer -g)
     add_link_options(-fsanitize=${TKDE_SANITIZE})
@@ -58,6 +66,15 @@ set_target_properties(tinoxkde-mock PROPERTIES
     AUTOMOC OFF)
 install(TARGETS tinoxkde-mock LIBRARY DESTINATION ${KDE_INSTALL_LIBDIR})
 
+# `make fuzz`: libFuzzer target for the command parser and all commands (clang, docs/testing.md)
+if(TKDE_FUZZ)
+    add_executable(command_fuzzer fuzz/command_fuzzer.cpp)
+    target_compile_options(command_fuzzer PRIVATE -fsanitize=fuzzer-no-link)
+    target_link_options(command_fuzzer PRIVATE -fsanitize=fuzzer)
+    target_link_libraries(command_fuzzer PRIVATE tinoxkde Qt6::Core Qt6::Widgets PkgConfig::GC)
+    set_target_properties(command_fuzzer PROPERTIES AUTOMOC OFF)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(version_test tests/version_test.cpp)
@@ -108,6 +125,21 @@ if(BUILD_TESTING)
     target_compile_definitions(dialog_test PRIVATE TKDE_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../resources")
     add_test(NAME dialog COMMAND dialog_test)
     set_tests_properties(dialog PROPERTIES TIMEOUT 300)
+
+    # The ABI contract, as plain C against the header: once with the real bridge, once with the
+    # mock. Both must pass the same program (docs/testing.md).
+    foreach(impl real mock)
+        if(impl STREQUAL "real")
+            set(lib tinoxkde)
+        else()
+            set(lib tinoxkde-mock)
+        endif()
+        add_executable(contract_test_${impl} tests/contract_test.c)
+        target_link_libraries(contract_test_${impl} PRIVATE ${lib} Threads::Threads PkgConfig::GC)
+        set_target_properties(contract_test_${impl} PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF LINKER_LANGUAGE C C_STANDARD 11 C_STANDARD_REQUIRED ON)
+        add_test(NAME contract_${impl} COMMAND contract_test_${impl})
+        set_tests_properties(contract_${impl} PROPERTIES TIMEOUT 120)
+    endforeach()
 
     add_executable(bench_queue tests/bench_queue.cpp)   # not a test: `make bench`
     target_link_libraries(bench_queue PRIVATE tinoxkde Threads::Threads PkgConfig::GC)

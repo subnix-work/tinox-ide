@@ -632,6 +632,10 @@ J handle(State &st, const char *json, bool viaQuery)
     if (!parseJson(json, cmd)) {
         return errorReply(TKDE_E_INVALID_ARG, "malformed JSON command");
     }
+    // the envelope is checked on the spot, like the real bridge: no event, tkde_post returns the code
+    if (const J *name = cmd.get("cmd"); !name || name->t != J::Str) {
+        return errorReply(TKDE_E_INVALID_ARG, "a command is a JSON object with a string \"cmd\"");
+    }
     std::string raw(json);
     recordLine(st, viaQuery ? "query" : "command", raw);
     st.commands.push_back(raw);
@@ -680,11 +684,15 @@ int64_t tkde_abi_version(void)
 
 int64_t tkde_init(const char *app_name, const char *display_name)
 {
-    if (!app_name || !display_name) {
-        return fail(TKDE_E_INVALID_ARG, "tkde_init needs an application and a display name");
+    if (!app_name || !*app_name || !display_name) {
+        return fail(TKDE_E_INVALID_ARG, "tkde_init needs an application identifier and a display name");
     }
     auto st = state();
     std::lock_guard<std::mutex> lock(st->m);
+    // while the loop runs, the thread that runs it is "the main thread"; other threads may not init or exec
+    if (st->running && st->uiThread != std::this_thread::get_id()) {
+        return fail(TKDE_E_WRONG_THREAD, "tkde_init must be called from the main thread");
+    }
     if (st->inited) {
         return fail(TKDE_E_ALREADY_INITIALIZED, "tkde_init was already called");
     }
@@ -717,6 +725,9 @@ int64_t tkde_exec(void)
     std::unique_lock<std::mutex> lock(st->m);
     if (!st->inited) {
         return fail(TKDE_E_NOT_INITIALIZED, "tkde_exec before tkde_init");
+    }
+    if (st->running && st->uiThread != std::this_thread::get_id()) {
+        return fail(TKDE_E_WRONG_THREAD, "tkde_exec must be called from the main thread");
     }
     if (st->running || st->shutdown) {
         return fail(TKDE_E_FAILED, "tkde_exec is already running or finished");

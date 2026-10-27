@@ -1,0 +1,1 @@
+{"cmd":"notify.send","event":"buildFailed","title":"t","text":"x","urgency":"high","actions":[{"id":"a","text":"Show"}]}

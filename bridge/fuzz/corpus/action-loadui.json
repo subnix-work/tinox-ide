@@ -1,0 +1,1 @@
+{"cmd":"action.loadUi","target":4,"xml":"<!DOCTYPE gui SYSTEM \"kpartgui.dtd\"><gui name=\"x\" version=\"1\"><MenuBar><Menu name=\"f\"><text>F</text><Action name=\"file_open\"/></Menu></MenuBar></gui>"}

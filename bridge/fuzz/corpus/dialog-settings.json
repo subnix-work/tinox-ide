@@ -1,0 +1,1 @@
+{"cmd":"dialog.settings","pages":[{"id":"p","title":"P","fields":[{"key":"k","label":"K","type":"int","default":1},{"key":"c","label":"C","type":"choice","default":"a","choices":["a",{"value":"b","text":"B"}]}]}]}
