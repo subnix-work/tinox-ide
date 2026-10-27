@@ -17,7 +17,7 @@ for the plan.
 
 | Path | Contents |
 |---|---|
-| `bridge/` | C++ library `libtinoxkde` (CMake, ECM): the C ABI over Qt/KDE |
+| `bridge/` | C++ library `libtinoxkde` (CMake, ECM): the C ABI over Qt/KDE; `bridge/mock/` is its headless mock ([docs/mock.md](docs/mock.md)) |
 | `src/` | The IDE, written in Tinox (`src/Main.tnx` is the entry point) |
 | `tests/` | Tinox tests (`@Test`) |
 | `docs/` | Architecture decisions (`docs/adr`), the bridge ABI, manuals |
