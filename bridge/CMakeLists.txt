@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(tinoxkde VERSION 0.1.0 LANGUAGES CXX)
+project(tinoxkde VERSION 1.0.0 LANGUAGES C CXX)
 
 set(QT_MIN_VERSION "6.6.0")
 set(KF_MIN_VERSION "6.5.0")
@@ -23,7 +23,7 @@ target_include_directories(tinoxkde PUBLIC
 target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets KF6::TextEditor PkgConfig::GC)
 set_target_properties(tinoxkde PROPERTIES
     VERSION ${PROJECT_VERSION}
-    SOVERSION 0
+    SOVERSION 1   # equals TKDE_ABI_VERSION (docs/abi.md, versioning)
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON)
 
@@ -35,4 +35,16 @@ if(BUILD_TESTING)
     add_executable(version_test tests/version_test.cpp)
     target_link_libraries(version_test PRIVATE tinoxkde)
     add_test(NAME version COMMAND version_test)
+    add_dependencies(version_test header_c header_cxx)
+
+    # The header must compile as strict C11 and as C++, warnings are errors.
+    add_library(header_c OBJECT tests/header_c.c)
+    target_include_directories(header_c PRIVATE include)
+    set_target_properties(header_c PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+        C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    target_compile_options(header_c PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_library(header_cxx OBJECT tests/header_cxx.cpp)
+    target_include_directories(header_cxx PRIVATE include)
+    set_target_properties(header_cxx PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    target_compile_options(header_cxx PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()

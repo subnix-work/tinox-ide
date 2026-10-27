@@ -120,13 +120,14 @@ int64_t tkde_now_ns(void)
     return steadyNanos();
 }
 
-int64_t tkde_init(void)
+int64_t tkde_init(const char *app_name, const char *display_name)
 {
     if (g_app) {
-        return 0;
+        return TKDE_E_ALREADY_INITIALIZED;
     }
     g_app = new QApplication(g_argc, g_argv);
-    QApplication::setApplicationName(QStringLiteral("tinox-ide"));
+    QApplication::setApplicationName(QString::fromUtf8(app_name ? app_name : "tinox-ide"));
+    QApplication::setApplicationDisplayName(QString::fromUtf8(display_name ? display_name : "Tinox IDE"));
 
     KTextEditor::Editor *editor = KTextEditor::Editor::instance();
     g_document = editor->createDocument(g_app);
@@ -160,12 +161,31 @@ int64_t tkde_exec(void)
     return g_app->exec();
 }
 
-void tkde_post(const char *json)
+int64_t tkde_post(const char *json)
 {
-    if (!g_app || !json) {
-        return;
+    if (!g_app) {
+        return TKDE_E_NOT_INITIALIZED;
+    }
+    if (!json) {
+        return TKDE_E_INVALID_ARG;
     }
     QMetaObject::invokeMethod(g_app, [bytes = QByteArray(json)] { handleCommand(bytes); }, Qt::QueuedConnection);
+    return TKDE_OK;
+}
+
+const char *tkde_query(const char *)
+{
+    return "{\"ok\":false,\"error\":{\"code\":-6,\"message\":\"tkde_query is not implemented in the spike\"}}";
+}
+
+int64_t tkde_release(int64_t)
+{
+    return TKDE_E_UNSUPPORTED;
+}
+
+const char *tkde_last_error(void)
+{
+    return "";
 }
 
 const char *tkde_next_event(int64_t timeout_ms)
