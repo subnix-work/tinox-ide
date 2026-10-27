@@ -27,7 +27,7 @@ find_package(Threads REQUIRED)
 add_library(tinoxkde SHARED
     src/abi.cpp src/bridge.cpp
     src/editor/editor.cpp src/editor/diagnostics.cpp src/editor/completion.cpp src/editor/viewfeatures.cpp
-    src/widget/widget.cpp src/action/action.cpp)
+    src/widget/widget.cpp src/action/action.cpp src/model/model.cpp)
 target_include_directories(tinoxkde PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}>)
@@ -92,6 +92,13 @@ if(BUILD_TESTING)
     target_compile_options(action_test PRIVATE -UQT_NO_CAST_FROM_ASCII -UQT_NO_CAST_TO_ASCII)
     add_test(NAME action COMMAND action_test)
     set_tests_properties(action PROPERTIES TIMEOUT 180)
+
+    add_executable(model_test tests/model_test.cpp)
+    target_link_libraries(model_test PRIVATE tinoxkde Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test Threads::Threads PkgConfig::GC)
+    set_target_properties(model_test PROPERTIES AUTOMOC OFF)
+    target_compile_options(model_test PRIVATE -UQT_NO_CAST_FROM_ASCII -UQT_NO_CAST_TO_ASCII)
+    add_test(NAME model COMMAND model_test)
+    set_tests_properties(model PROPERTIES TIMEOUT 300)
 
     add_executable(bench_queue tests/bench_queue.cpp)   # not a test: `make bench`
     target_link_libraries(bench_queue PRIVATE tinoxkde Threads::Threads PkgConfig::GC)

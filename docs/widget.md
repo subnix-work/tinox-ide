@@ -25,8 +25,8 @@ and the widgets stay as they were.
 ### Types
 
 `QWidget`, `QMainWindow`, `QDockWidget`, `QSplitter`, `QTabWidget`, `QToolBar`, `QStatusBar`,
-`QLabel`, `QLineEdit`, `QPushButton`, `QCheckBox`, `QComboBox`, `QTreeView` (a host: its model
-comes with #11), `QPlainTextEdit` (read-only log, `widget.append`), `QStackedWidget`,
+`QLabel`, `QLineEdit`, `QPushButton`, `QCheckBox`, `QComboBox`, `QTreeView`, `QListView`, `QTableView` (item views; their models come from
+the `model` namespace, see model.md), `QPlainTextEdit` (read-only log, `widget.append`), `QStackedWidget`,
 `QScrollArea`, and `Embed`: `{"type":"Embed","key":"editor","object":<id>}` places a widget that
 another module owns (an editor view, a terminal). The tree never deletes an embedded widget;
 removing the node or releasing the tree hands it back, unparented.
