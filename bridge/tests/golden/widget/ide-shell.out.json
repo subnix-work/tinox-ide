@@ -1,0 +1,190 @@
+{
+    "central": "split",
+    "children": [
+        {
+            "children": [
+            ],
+            "class": "QToolBar",
+            "enabled": true,
+            "hidden": false,
+            "key": "toolbar",
+            "layout": {
+                "class": "QToolBarLayout",
+                "count": 0
+            },
+            "objectName": "toolbar",
+            "title": "Main",
+            "type": "QToolBar"
+        },
+        {
+            "area": "left",
+            "children": [
+                {
+                    "children": [
+                    ],
+                    "class": "QTreeView",
+                    "enabled": true,
+                    "hidden": false,
+                    "key": "fileTree",
+                    "objectName": "fileTree",
+                    "type": "QTreeView"
+                }
+            ],
+            "class": "QDockWidget",
+            "enabled": true,
+            "hidden": false,
+            "key": "dockFiles",
+            "layout": {
+                "class": "QDockWidgetLayout",
+                "count": 3
+            },
+            "objectName": "dockFiles",
+            "title": "Files",
+            "type": "QDockWidget"
+        },
+        {
+            "area": "bottom",
+            "children": [
+                {
+                    "children": [
+                    ],
+                    "class": "QPlainTextEdit",
+                    "enabled": true,
+                    "hidden": false,
+                    "key": "log",
+                    "objectName": "log",
+                    "text": "ready",
+                    "type": "QPlainTextEdit"
+                }
+            ],
+            "class": "QDockWidget",
+            "enabled": true,
+            "hidden": false,
+            "key": "dockOutput",
+            "layout": {
+                "class": "QDockWidgetLayout",
+                "count": 3
+            },
+            "objectName": "dockOutput",
+            "title": "Output",
+            "type": "QDockWidget"
+        },
+        {
+            "children": [
+                {
+                    "children": [
+                        {
+                            "children": [
+                            ],
+                            "class": "QLabel",
+                            "enabled": true,
+                            "hidden": true,
+                            "key": "welcome",
+                            "objectName": "welcome",
+                            "text": "Hello",
+                            "type": "QLabel"
+                        },
+                        {
+                            "children": [
+                            ],
+                            "class": "QLabel",
+                            "enabled": true,
+                            "hidden": false,
+                            "key": "main.tnx",
+                            "objectName": "main.tnx",
+                            "text": "editor goes here",
+                            "type": "QLabel"
+                        }
+                    ],
+                    "class": "QTabWidget",
+                    "currentIndex": 1,
+                    "enabled": true,
+                    "hidden": false,
+                    "key": "tabs",
+                    "objectName": "tabs",
+                    "tabs": [
+                        "Welcome",
+                        "main.tnx"
+                    ],
+                    "type": "QTabWidget"
+                },
+                {
+                    "children": [
+                        {
+                            "children": [
+                            ],
+                            "class": "QLabel",
+                            "enabled": true,
+                            "hidden": false,
+                            "key": "outline",
+                            "objectName": "outline",
+                            "text": "Outline",
+                            "type": "QLabel"
+                        },
+                        {
+                            "children": [
+                            ],
+                            "class": "QLabel",
+                            "enabled": true,
+                            "hidden": false,
+                            "key": "problems",
+                            "objectName": "problems",
+                            "text": "Problems",
+                            "type": "QLabel"
+                        }
+                    ],
+                    "class": "QStackedWidget",
+                    "count": 2,
+                    "currentIndex": 0,
+                    "enabled": true,
+                    "hidden": false,
+                    "key": "side",
+                    "layout": {
+                        "class": "QStackedLayout",
+                        "count": 2
+                    },
+                    "objectName": "side",
+                    "type": "QStackedWidget"
+                }
+            ],
+            "class": "QSplitter",
+            "enabled": true,
+            "hidden": false,
+            "key": "split",
+            "objectName": "split",
+            "order": [
+                "tabs",
+                "side"
+            ],
+            "orientation": "horizontal",
+            "type": "QSplitter"
+        },
+        {
+            "children": [
+            ],
+            "class": "QStatusBar",
+            "enabled": true,
+            "hidden": false,
+            "key": "status",
+            "layout": {
+                "class": "QHBoxLayout",
+                "count": 3
+            },
+            "message": "Ready",
+            "objectName": "status",
+            "type": "QStatusBar"
+        }
+    ],
+    "class": "QMainWindow",
+    "enabled": true,
+    "hidden": true,
+    "key": "main",
+    "layout": {
+        "class": "QMainWindowLayout",
+        "count": 5
+    },
+    "objectName": "main",
+    "statusBar": true,
+    "title": "Tinox IDE",
+    "type": "QMainWindow"
+}

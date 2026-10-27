@@ -1,0 +1,12 @@
+{"type":"QWidget","key":"root","layout":{"kind":"box","orientation":"vertical","margins":4,"spacing":2},"children":[
+ {"type":"QWidget","key":"form","place":{"stretch":0},"layout":{"kind":"form"},"children":[
+   {"type":"QLineEdit","key":"name","place":{"label":"Name"},"props":{"text":"tinox","placeholder":"project name","clearButton":true}},
+   {"type":"QComboBox","key":"kind","place":{"label":"Kind"},"props":{"items":["app","lib",{"text":"plugin","icon":"plugin"}],"currentIndex":1}},
+   {"type":"QCheckBox","key":"git","place":{"label":"Git"},"props":{"text":"Initialise a repository","checked":true}}]},
+ {"type":"QWidget","key":"grid","place":{"stretch":1},"layout":{"kind":"grid","spacing":6},"children":[
+   {"type":"QLabel","key":"a","place":{"row":0,"col":0},"props":{"text":"A"}},
+   {"type":"QLabel","key":"b","place":{"row":0,"col":1},"props":{"text":"B","toolTip":"second"}},
+   {"type":"QPushButton","key":"wide","place":{"row":1,"col":0,"colSpan":2},"props":{"text":"Wide","icon":"dialog-ok","flat":true}}]},
+ {"type":"QScrollArea","key":"scroll","props":{"widgetResizable":true},"children":[
+   {"type":"QLabel","key":"long","props":{"text":"<b>rich</b>","textFormat":"rich","wordWrap":true,"enabled":false}}]}
+]}
