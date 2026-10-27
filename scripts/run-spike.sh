@@ -3,7 +3,7 @@
 # Tinox logic on a spawned task, queues in between.
 #   scripts/run-spike.sh                    offscreen platform
 #   QT_QPA_PLATFORM=wayland scripts/run-spike.sh
-#   TKDE_SPIKE_ROUNDS=15000000 scripts/run-spike.sh      GC soak (about 5 minutes)
+#   TKDE_SPIKE_ROUNDS=15000000 scripts/run-spike.sh      GC soak (almost 4 minutes)
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 cd "$here"

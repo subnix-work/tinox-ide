@@ -38,7 +38,7 @@ Startup is measured from `main` to the `ready` event, queued after the first
 pass of the event loop, so the window is shown.
 
 **GC soak:** 15,000,000 round trips with 4.5 billion short-lived Tinox strings
-allocated alongside, on the offscreen platform, about 5 minutes: 0 failures,
+allocated alongside, on the offscreen platform, 3 min 46 s: 0 failures,
 round trip 5 us on average and 3.5 ms at worst, resident memory 85.9 MB at the
 start and 87.1 MB at the end (+1.2 MB, no growth trend).
 
