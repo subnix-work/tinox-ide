@@ -1,5 +1,7 @@
 # build output
 bridge/build/
+bridge/build-asan/
+bridge/build-tsan/
 build/
 .tinox/
 .tinox-build/

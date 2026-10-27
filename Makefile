@@ -5,14 +5,13 @@
 #   make test     bridge tests (ctest) and Tinox tests
 #   make fmt      clang-format the bridge, tinox fmt the sources
 #   make check-env  verify the toolchain and dependencies
-#   make spike    run the architecture spike (offscreen); spike-platforms: Wayland + X11
 #   make install-resources  install the syntax definition and MIME types for this user
 
 TINOX ?= $(shell command -v tinox 2>/dev/null || echo ../tinox/target/release/tinox)
 BUILD_DIR := bridge/build
 OUT := build/tinox-ide
 
-.PHONY: all bridge ide run test fmt clean check-env install-resources spike spike-platforms
+.PHONY: all bridge ide run test test-asan test-tsan bench fmt clean check-env install-resources
 
 all: ide
 
@@ -33,21 +32,30 @@ test: bridge
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
 	$(TINOX) test
 
+bench: bridge
+	QT_QPA_PLATFORM=offscreen $(BUILD_DIR)/bin/bench_queue
+
+# Bridge tests under AddressSanitizer + UBSan (leaks included) and ThreadSanitizer.
+test-asan:
+	cmake -S bridge -B bridge/build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTKDE_SANITIZE=address,undefined
+	cmake --build bridge/build-asan
+	ASAN_OPTIONS=detect_leaks=1 LSAN_OPTIONS=suppressions=$(CURDIR)/bridge/tests/lsan.supp:print_suppressions=0 \
+	    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 ctest --test-dir bridge/build-asan --output-on-failure
+
+test-tsan:
+	cmake -S bridge -B bridge/build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTKDE_SANITIZE=thread
+	cmake --build bridge/build-tsan
+	TSAN_OPTIONS=suppressions=$(CURDIR)/bridge/tests/tsan.supp ctest --test-dir bridge/build-tsan --output-on-failure
+
 fmt:
 	find bridge -name '*.cpp' -o -name '*.h' | grep -v '/build/' | xargs -r clang-format -i
 	find src tests -name '*.tnx' | xargs -r -n1 $(TINOX) fmt --write
 
 clean:
-	rm -rf $(BUILD_DIR) build .tinox
+	rm -rf $(BUILD_DIR) bridge/build-asan bridge/build-tsan build .tinox
 
 check-env:
 	scripts/check-env.sh
 
 install-resources:
 	scripts/install-resources.sh
-
-spike: bridge
-	scripts/run-spike.sh
-
-spike-platforms: bridge
-	scripts/spike-platforms.sh

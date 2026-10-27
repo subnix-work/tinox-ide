@@ -1,6 +1,8 @@
 // Tests the headless mock against the contract in docs/abi.md, through the C ABI only.
 #include "tinoxkde_mock.h"
 
+#include "../../tests/gc_thread.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -269,6 +271,7 @@ static void testRecordAndReplay()
 
 int main()
 {
+    gcInit();
     testLifecycleErrors();
     testCoreCommandsAndShutdown();
     testOrderingAndSequence();

@@ -20,6 +20,7 @@ the UI thread, events from the UI thread to Tinox.
 | Pointers | No Tinox heap pointer is ever stored by the bridge; no bridge pointer is ever given to Tinox. Objects are named by ids (section 3). |
 | Errors | Status functions return `0` or a negative `TKDE_E_*` code; `tkde_last_error()` explains the last failure of the calling thread. |
 | Threads | Per function, see section 2. Calling from the wrong thread returns `TKDE_E_WRONG_THREAD`; it never crashes. |
+| GC | Returned strings are Boehm GC allocations, so a thread that calls string-returning functions must be known to the collector. Tinox tasks are; any other thread (a C++ test client) must attach first (`GC_register_my_thread`, see `bridge/tests/gc_thread.h`). |
 | Exceptions | None cross the boundary. |
 
 ## 2. Functions

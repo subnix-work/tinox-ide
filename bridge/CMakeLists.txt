@@ -4,6 +4,13 @@ project(tinoxkde VERSION 1.0.0 LANGUAGES C CXX)
 set(QT_MIN_VERSION "6.6.0")
 set(KF_MIN_VERSION "6.5.0")
 
+# -DTKDE_SANITIZE=address,undefined (or thread) builds everything instrumented: `make test-asan`
+set(TKDE_SANITIZE "" CACHE STRING "Sanitizers to enable, e.g. address,undefined")
+if(TKDE_SANITIZE)
+    add_compile_options(-fsanitize=${TKDE_SANITIZE} -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=${TKDE_SANITIZE})
+endif()
+
 find_package(ECM ${KF_MIN_VERSION} REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
 
@@ -12,16 +19,17 @@ include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Widgets)
-find_package(KF6TextEditor ${KF_MIN_VERSION} REQUIRED)
+find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n Crash DBusAddons TextEditor)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GC REQUIRED IMPORTED_TARGET bdw-gc)
 find_package(Threads REQUIRED)
 
-add_library(tinoxkde SHARED src/version.cpp src/spike.cpp)
+add_library(tinoxkde SHARED src/abi.cpp src/bridge.cpp)
 target_include_directories(tinoxkde PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}>)
-target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets KF6::TextEditor PkgConfig::GC)
+target_include_directories(tinoxkde PRIVATE src common)
+target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets KF6::CoreAddons KF6::I18n KF6::Crash KF6::DBusAddons KF6::TextEditor PkgConfig::GC)
 set_target_properties(tinoxkde PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION 1   # equals TKDE_ABI_VERSION (docs/abi.md, versioning)
@@ -36,6 +44,7 @@ add_library(tinoxkde-mock SHARED mock/mock.cpp)
 target_include_directories(tinoxkde-mock PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mock>)
+target_include_directories(tinoxkde-mock PRIVATE common)
 target_link_libraries(tinoxkde-mock PRIVATE PkgConfig::GC)
 set_target_properties(tinoxkde-mock PROPERTIES
     VERSION ${PROJECT_VERSION}
@@ -51,8 +60,18 @@ if(BUILD_TESTING)
     target_link_libraries(version_test PRIVATE tinoxkde)
     add_test(NAME version COMMAND version_test)
 
+    add_executable(core_test tests/core_test.cpp)
+    target_link_libraries(core_test PRIVATE tinoxkde Threads::Threads PkgConfig::GC)
+    set_target_properties(core_test PROPERTIES AUTOMOC OFF)
+    add_test(NAME core COMMAND core_test)
+    set_tests_properties(core PROPERTIES TIMEOUT 120)
+
+    add_executable(bench_queue tests/bench_queue.cpp)   # not a test: `make bench`
+    target_link_libraries(bench_queue PRIVATE tinoxkde Threads::Threads PkgConfig::GC)
+    set_target_properties(bench_queue PROPERTIES AUTOMOC OFF)
+
     add_executable(mock_test mock/tests/mock_test.cpp)
-    target_link_libraries(mock_test PRIVATE tinoxkde-mock Threads::Threads)
+    target_link_libraries(mock_test PRIVATE tinoxkde-mock Threads::Threads PkgConfig::GC)
     set_target_properties(mock_test PROPERTIES AUTOMOC OFF)
     add_test(NAME mock COMMAND mock_test)
     add_dependencies(version_test header_c header_cxx)
