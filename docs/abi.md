@@ -106,8 +106,11 @@ The reply to a command is `{"ok": true, ...}` or
 * `target`: object the event comes from, if any.
 
 Events from one object are delivered in the order they happened. The queue is
-bounded (65536 events). If it overflows the **oldest** events are dropped and a
-`core.overflow` event with `"dropped": N` is queued; nothing is lost silently.
+bounded (65536 events). If it overflows the **oldest** events are dropped and
+replaced by a single `core.overflow` event at the front of the queue that stands
+for the lost range: its `seq` is the first dropped `seq`, `last_seq` the last,
+`dropped` the number of events. The next delivered event therefore has
+`seq = last_seq + 1`; nothing is lost silently.
 
 ### Core namespace (implemented by the bridge core, #8, and the mock, #16)
 
@@ -121,7 +124,7 @@ bounded (65536 events). If it overflows the **oldest** events are dropped and a
 | event `core.ready` | | the event loop started and the windows are shown |
 | event `core.reply` | `req`, `ok`, ... | reply to a posted command |
 | event `core.error` | `error`, `cmd` | a posted command without `req` failed |
-| event `core.overflow` | `dropped` | events were dropped |
+| event `core.overflow` | `dropped`, `last_seq` | events `seq`..`last_seq` were dropped (see above) |
 | event `core.quit` | `code` | quit was requested (before windows close) |
 | event `core.shutdown` | | last event; after it `tkde_next_event` returns `""` |
 

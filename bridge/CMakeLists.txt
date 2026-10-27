@@ -15,6 +15,7 @@ find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Widgets)
 find_package(KF6TextEditor ${KF_MIN_VERSION} REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GC REQUIRED IMPORTED_TARGET bdw-gc)
+find_package(Threads REQUIRED)
 
 add_library(tinoxkde SHARED src/version.cpp src/spike.cpp)
 target_include_directories(tinoxkde PUBLIC
@@ -30,11 +31,30 @@ set_target_properties(tinoxkde PROPERTIES
 install(TARGETS tinoxkde LIBRARY DESTINATION ${KDE_INSTALL_LIBDIR})
 install(FILES include/tinoxkde.h DESTINATION ${KDE_INSTALL_INCLUDEDIR})
 
+# The headless mock of the bridge (no Qt, no KDE): same ABI, scripted by tests.
+add_library(tinoxkde-mock SHARED mock/mock.cpp)
+target_include_directories(tinoxkde-mock PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mock>)
+target_link_libraries(tinoxkde-mock PRIVATE PkgConfig::GC)
+set_target_properties(tinoxkde-mock PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION 1
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    AUTOMOC OFF)
+install(TARGETS tinoxkde-mock LIBRARY DESTINATION ${KDE_INSTALL_LIBDIR})
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(version_test tests/version_test.cpp)
     target_link_libraries(version_test PRIVATE tinoxkde)
     add_test(NAME version COMMAND version_test)
+
+    add_executable(mock_test mock/tests/mock_test.cpp)
+    target_link_libraries(mock_test PRIVATE tinoxkde-mock Threads::Threads)
+    set_target_properties(mock_test PROPERTIES AUTOMOC OFF)
+    add_test(NAME mock COMMAND mock_test)
     add_dependencies(version_test header_c header_cxx)
 
     # The header must compile as strict C11 and as C++, warnings are errors.
