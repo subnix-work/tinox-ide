@@ -13,10 +13,12 @@
 #include <QDockWidget>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QHeaderView>
 #include <QIcon>
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListView>
 #include <QMainWindow>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -27,6 +29,7 @@
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QTabWidget>
+#include <QTableView>
 #include <QToolBar>
 #include <QTreeView>
 
@@ -164,6 +167,34 @@ template <class W>
 void add(TypeDef &t, const char *name, Kind kind, QJsonValue reset, Fn<W> set, QStringList choices = {})
 {
     t.props.emplace(QString::fromLatin1(name), def<W>(kind, std::move(reset), std::move(set), std::move(choices)));
+}
+
+/// Props every item view shares.
+template <class W>
+void addViewProps(TypeDef &t)
+{
+    add<W>(t, "alternatingRowColors", Kind::Bool, false, [](W *w, const QJsonValue &v) { w->setAlternatingRowColors(v.toBool()); });
+    add<W>(t, "selectionMode", Kind::Str, QStringLiteral("single"),
+           [](W *w, const QJsonValue &v) {
+               static const std::map<QString, QAbstractItemView::SelectionMode> modes{
+                   {QStringLiteral("none"), QAbstractItemView::NoSelection},
+                   {QStringLiteral("single"), QAbstractItemView::SingleSelection},
+                   {QStringLiteral("extended"), QAbstractItemView::ExtendedSelection},
+                   {QStringLiteral("multi"), QAbstractItemView::MultiSelection}};
+               w->setSelectionMode(modes.at(str(v)));
+           },
+           {QStringLiteral("none"), QStringLiteral("single"), QStringLiteral("extended"), QStringLiteral("multi")});
+    add<W>(t, "dragDrop", Kind::Bool, false, [](W *w, const QJsonValue &v) {
+        w->setDragEnabled(v.toBool());
+        w->setAcceptDrops(v.toBool());
+        w->setDropIndicatorShown(v.toBool());
+        w->setDragDropMode(v.toBool() ? QAbstractItemView::DragDrop : QAbstractItemView::NoDragDrop);
+        w->setDefaultDropAction(Qt::MoveAction);
+    });
+    add<W>(t, "editable", Kind::Bool, false, [](W *w, const QJsonValue &v) {
+        w->setEditTriggers(v.toBool() ? QAbstractItemView::EditKeyPressed | QAbstractItemView::SelectedClicked
+                                      : QAbstractItemView::NoEditTriggers);
+    });
 }
 
 QStringList dockChoices()
@@ -317,12 +348,31 @@ const std::map<QString, TypeDef> &types()
         }
         {
             TypeDef t = makeType<QTreeView>();
+            addViewProps<QTreeView>(t);
             add<QTreeView>(t, "headerHidden", Kind::Bool, false, [](QTreeView *w, const QJsonValue &v) { w->setHeaderHidden(v.toBool()); });
             add<QTreeView>(t, "rootIsDecorated", Kind::Bool, true,
                            [](QTreeView *w, const QJsonValue &v) { w->setRootIsDecorated(v.toBool()); });
-            add<QTreeView>(t, "alternatingRowColors", Kind::Bool, false,
-                           [](QTreeView *w, const QJsonValue &v) { w->setAlternatingRowColors(v.toBool()); });
+            add<QTreeView>(t, "uniformRowHeights", Kind::Bool, false,
+                           [](QTreeView *w, const QJsonValue &v) { w->setUniformRowHeights(v.toBool()); });
             m.emplace(QStringLiteral("QTreeView"), std::move(t));
+        }
+        {
+            TypeDef t = makeType<QListView>();
+            addViewProps<QListView>(t);
+            add<QListView>(t, "uniformItemSizes", Kind::Bool, false,
+                           [](QListView *w, const QJsonValue &v) { w->setUniformItemSizes(v.toBool()); });
+            m.emplace(QStringLiteral("QListView"), std::move(t));
+        }
+        {
+            TypeDef t = makeType<QTableView>();
+            addViewProps<QTableView>(t);
+            add<QTableView>(t, "horizontalHeaderVisible", Kind::Bool, true,
+                            [](QTableView *w, const QJsonValue &v) { w->horizontalHeader()->setVisible(v.toBool()); });
+            add<QTableView>(t, "verticalHeaderVisible", Kind::Bool, true,
+                            [](QTableView *w, const QJsonValue &v) { w->verticalHeader()->setVisible(v.toBool()); });
+            add<QTableView>(t, "stretchLastSection", Kind::Bool, false,
+                            [](QTableView *w, const QJsonValue &v) { w->horizontalHeader()->setStretchLastSection(v.toBool()); });
+            m.emplace(QStringLiteral("QTableView"), std::move(t));
         }
         {
             TypeDef t = makeType<QPlainTextEdit>();

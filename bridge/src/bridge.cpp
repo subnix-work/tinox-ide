@@ -4,6 +4,7 @@
 
 #include "action/action.h"
 #include "editor/editor.h"
+#include "model/model.h"
 #include "widget/widget.h"
 
 #include <KAboutData>
@@ -168,6 +169,7 @@ int64_t Bridge::init(const QString &appName, const QString &displayName)
     tkde::editor::registerCommands(*this);
     tkde::widget::registerCommands(*this);
     tkde::action::registerCommands(*this);
+    tkde::model::registerCommands(*this);
 
     QObject::connect(m_app, &QGuiApplication::lastWindowClosed, m_context, [this] { requestQuit(0); });
 
