@@ -66,11 +66,11 @@ public:
     // ---- the ABI (abi.cpp wraps these) ----
     int64_t init(const QString &appName, const QString &displayName);
     int64_t exec();
-    void requestQuit(int64_t code); // any thread
-    int64_t post(const QByteArray &json); // any thread
-    QByteArray query(const QByteArray &json); // not the UI thread
+    void requestQuit(int64_t code);                      // any thread
+    int64_t post(const QByteArray &json);                // any thread
+    QByteArray query(const QByteArray &json);            // not the UI thread
     bool nextEvent(int64_t timeoutMs, std::string &out); // any thread
-    int64_t release(int64_t id); // any thread
+    int64_t release(int64_t id);                         // any thread
 
     // ---- for feature modules ----
     /// Registers `name` ("namespace.verb"). UI thread, before exec.
@@ -93,7 +93,7 @@ private:
     ~Bridge();
 
     Reply dispatch(const QJsonObject &cmd);
-    void runOnUi(std::function<void()> fn); // queued, any thread
+    void runOnUi(std::function<void()> fn);        // queued, any thread
     bool runOnUiAndWait(std::function<void()> fn); // false if the loop ended first
     void registerCoreCommands();
     int64_t releaseOnUi(int64_t id);

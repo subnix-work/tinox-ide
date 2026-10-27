@@ -1,0 +1,121 @@
+import MockBridge
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+class EventLoopTest
+{
+    @Test("a pushed event reaches its handler and the handler's command reaches the bridge")
+    fn testRoundTrip() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("editor.setText", "", "")
+        const events: EventLoop = EventLoop::create()
+        events.onType("widget.clicked", (ev: Event) => Bridge::post(Command::named("editor.setText").target(ev.target).str("text", "clicked " + ev.target.toString()).build()))
+        MockBridge::push("{\"type\":\"widget.clicked\",\"target\":5}")
+        const handled: Int64 = events.pump(1000)
+        return handled == 1 && events.failureCount() == 0 && MockBridge::nextCommand() == "{\"cmd\":\"editor.setText\",\"target\":5,\"text\":\"clicked 5\"}"
+    }
+
+    @Test("type handlers run before target handlers, both for the same event")
+    fn testOrder() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        var seen: List<String> = []
+        events.onType("widget.clicked", (ev: Event) => seen.push("type"))
+        events.onTarget(7, (ev: Event) => seen.push("target"))
+        MockBridge::push("{\"type\":\"widget.clicked\",\"target\":7}")
+        MockBridge::push("{\"type\":\"widget.clicked\",\"target\":8}")
+        events.pump(1000)
+        return seen.len() == 3 && seen[0] == "type" && seen[1] == "target" && seen[2] == "type"
+    }
+
+    @Test("registering again replaces a handler, off removes it")
+    fn testReplaceAndRemove() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        var seen: List<String> = []
+        events.onType("a.b", (ev: Event) => seen.push("first"))
+        events.onType("a.b", (ev: Event) => seen.push("second"))
+        MockBridge::push("{\"type\":\"a.b\"}")
+        events.pump(1000)
+        events.offType("a.b")
+        MockBridge::push("{\"type\":\"a.b\"}")
+        events.pump(1000)
+        return seen.len() == 1 && seen[0] == "second"
+    }
+
+    @Test("a handler that throws is recorded and the loop carries on")
+    fn testThrowingHandler() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        var seen: List<String> = []
+        events.onType("boom", (ev: Event) => { throw "handler exploded" })
+        events.onType("after", (ev: Event) => seen.push("after"))
+        MockBridge::push("{\"type\":\"boom\"}")
+        MockBridge::push("{\"type\":\"after\"}")
+        const handled: Int64 = events.pump(1000)
+        return handled == 2 && seen.len() == 1 && events.failureCount() == 1 && events.failures[0].contains("handler exploded") && events.failures[0].contains("boom")
+    }
+
+    @Test("an unreadable event is dropped and recorded, not fatal")
+    fn testMalformedEvent() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        var seen: List<String> = []
+        events.onType("ok.event", (ev: Event) => seen.push("ok"))
+        events.handle("this is not json at all")
+        events.handle("{\"no\":\"type\"}")
+        events.handle("{\"type\":\"ok.event\",\"seq\":1,\"t_ns\":1}")
+        return seen.len() == 1 && events.failureCount() == 2
+    }
+
+    @Test("an unknown command comes back as a core.error event that the loop can handle")
+    fn testUnknownCommandError() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        var errors: List<String> = []
+        events.onType("core.error", (ev: Event) => errors.push(ev.str("cmd")))
+        Bridge::post("{\"cmd\":\"nope.unknown\"}")
+        events.pump(1000)
+        return errors.len() == 1 && errors[0] == "nope.unknown"
+    }
+
+    @Test("pump returns 0 on timeout")
+    fn testTimeout() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        return events.pump(20) == 0
+    }
+
+    @Test("core.shutdown ends pump and run")
+    fn testShutdown() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        var seen: List<String> = []
+        events.onType("late", (ev: Event) => seen.push("late"))
+        MockBridge::push("{\"type\":\"core.shutdown\"}")
+        MockBridge::push("{\"type\":\"late\"}")
+        events.run()
+        return events.isShutdown() && seen.len() == 0
+    }
+
+    @Test("stop() ends run after the current event")
+    fn testStop() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        events.onType("halt", (ev: Event) => events.stop())
+        MockBridge::push("{\"type\":\"halt\"}")
+        events.run()
+        return !events.isShutdown() && events.delivered == 1
+    }
+}

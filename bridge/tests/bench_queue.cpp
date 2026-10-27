@@ -55,7 +55,10 @@ static void driver()
     // 4. event throughput with a concurrent consumer
     const int events = 1000000;
     t0 = Clock::now();
-    std::thread producer([&] { GcAttach gcp; tkde_query("{\"cmd\":\"core.debug.emit\",\"type\":\"x\",\"count\":1000000}"); });
+    std::thread producer([&] {
+        GcAttach gcp;
+        tkde_query("{\"cmd\":\"core.debug.emit\",\"type\":\"x\",\"count\":1000000}");
+    });
     long received = 0;
     long overflow = 0;
     while (received < events) {
@@ -72,7 +75,8 @@ static void driver()
     }
     producer.join();
     s = seconds(t0);
-    std::printf("events UI -> consumer          : %8.0f /s  (%ld delivered, %ld lost to overflow)\n", events / s, received - overflow, overflow);
+    std::printf("events UI -> consumer          : %8.0f /s  (%ld delivered, %ld lost to overflow)\n", events / s, received - overflow,
+                overflow);
 
     tkde_post("{\"cmd\":\"core.quit\"}");
 }

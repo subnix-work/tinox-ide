@@ -1,0 +1,42 @@
+import MockBridge
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+
+class CommandTest
+{
+    @Test("a bare command")
+    fn testBare() -> Bool
+    {
+        return Command::named("core.ping").build() == "{\"cmd\":\"core.ping\"}"
+    }
+
+    @Test("fields keep their call order and types")
+    fn testFields() -> Bool
+    {
+        const text: String = Command::named("widget.set").target(17).str("text", "hi").int("count", 3).bool("on", true).req(42).build()
+        return text == "{\"cmd\":\"widget.set\",\"target\":17,\"text\":\"hi\",\"count\":3,\"on\":true,\"req\":42}"
+    }
+
+    @Test("strings are escaped: quotes, backslashes, newlines, control characters")
+    fn testEscaping() -> Bool
+    {
+        const text: String = Command::named("editor.setText").str("text", "a\"b\\c\nd\te").build()
+        return text == "{\"cmd\":\"editor.setText\",\"text\":\"a\\\"b\\\\c\\nd\\te\"}"
+    }
+
+    @Test("raw() embeds ready-made JSON")
+    fn testRaw() -> Bool
+    {
+        const text: String = Command::named("x.y").raw("items", "[1,2,{\"a\":null}]").build()
+        return text == "{\"cmd\":\"x.y\",\"items\":[1,2,{\"a\":null}]}"
+    }
+
+    @Test("a built command reaches the bridge unchanged")
+    fn testRoundTrip() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const text: String = Command::named("core.ping").str("payload", "line1\nline2 \"q\"").build()
+        Bridge::post(text)
+        return MockBridge::nextCommand() == text
+    }
+}

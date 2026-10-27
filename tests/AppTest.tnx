@@ -1,0 +1,25 @@
+import MockBridge
+import tinox.ide.kde.App
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+class AppTest
+{
+    // The logic task of the IDE in miniature: wait for the UI, react to a click, ask for quit.
+    fnc logic(events: EventLoop) -> Int32
+    {
+        events.onType("core.ready", (ev: Event) => MockBridge::push("{\"type\":\"widget.clicked\",\"target\":3}"))
+        events.onType("widget.clicked", (ev: Event) => Bridge::post(Command::named("core.quit").int("code", 0).build()))
+        events.run()
+        return 7
+    }
+
+    @Test("run wires init, the logic task and exec, and returns the logic's code after core.shutdown")
+    fn testRun() -> Bool
+    {
+        const code: Int32 = App::run("test", "Test", (events: EventLoop) => AppTest::logic(events))
+        return code == 7
+    }
+}

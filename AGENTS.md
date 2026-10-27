@@ -25,5 +25,7 @@ commit.
 * The C ABI in `bridge/include/tinoxkde.h` is additive-only after v1.
 * One class per file in Tinox, file name = class name; `fn` instance methods,
   `fnc` static ones; newline-terminated statements.
+* Tinox gotchas: `loop` and `await` are keywords; a static method is not a function value
+  (wrap in a lambda); `x as Int32` converts; lambdas cannot assign captured variables.
 * Commit messages and code are English. Commits end with the attribution lines
   the harness gives.

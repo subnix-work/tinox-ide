@@ -1,0 +1,69 @@
+module tinox.ide.kde
+
+namespace tinox.ide.kde
+{
+    // The runtime's JSON string encoder (quotes and escapes); already known to the compiler.
+    extern fn tinox_json_encode_string(s: String) -> String
+
+    /**
+     * Builds a command message as JSON text without intermediate objects:
+     *
+     *     Command::named("editor.setText").target(17).str("text", text).req(42).build()
+     *
+     * Field order is the call order. Values are escaped; raw() takes JSON text that is
+     * already valid (an array, a nested object). Commands are documented per namespace
+     * in docs/abi.md.
+     */
+    class Command
+    {
+        var name: String
+        var fields: String
+
+        fnc named(name: String) -> Command
+        {
+            return Command { name: name, fields: "" }
+        }
+
+        fn str(key: String, value: String) -> Command
+        {
+            this.fields = this.fields + "," + tinox_json_encode_string(key) + ":" + tinox_json_encode_string(value)
+            return this
+        }
+
+        fn int(key: String, value: Int64) -> Command
+        {
+            this.fields = this.fields + "," + tinox_json_encode_string(key) + ":" + value.toString()
+            return this
+        }
+
+        fn bool(key: String, value: Bool) -> Command
+        {
+            this.fields = this.fields + "," + tinox_json_encode_string(key) + ":" + value.toString()
+            return this
+        }
+
+        /** `json` must already be valid JSON text. */
+        fn raw(key: String, json: String) -> Command
+        {
+            this.fields = this.fields + "," + tinox_json_encode_string(key) + ":" + json
+            return this
+        }
+
+        /** Addresses the object with this id. */
+        fn target(id: Int64) -> Command
+        {
+            return this.int("target", id)
+        }
+
+        /** Asks for the reply as a core.reply event carrying this number. */
+        fn req(number: Int64) -> Command
+        {
+            return this.int("req", number)
+        }
+
+        fn build() -> String
+        {
+            return "{\"cmd\":" + tinox_json_encode_string(this.name) + this.fields + "}"
+        }
+    }
+}

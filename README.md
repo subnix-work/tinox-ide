@@ -8,7 +8,7 @@ Tinox can call C functions (`extern fn`) but not C++, so a thin C++ library,
 the **bridge** (`libtinoxkde`), exposes Qt and KDE through a small C ABI. The
 IDE logic runs in Tinox on a spawned task while Qt's event loop owns the main
 thread; the two talk through queues. See [docs/adr](docs/adr) for the
-architecture, [docs/abi.md](docs/abi.md) for the C ABI, [docs/bridge-core.md](docs/bridge-core.md) for how the bridge works and the [epic](https://github.com/subnix-work/tinox-ide/issues/1)
+architecture, [docs/abi.md](docs/abi.md) for the C ABI, [docs/bridge-core.md](docs/bridge-core.md) for how the bridge works, [docs/bindings.md](docs/bindings.md) for its Tinox bindings and the [epic](https://github.com/subnix-work/tinox-ide/issues/1)
 for the plan.
 
 > Status: bootstrapping. Nothing here is usable as an IDE yet.
@@ -18,7 +18,7 @@ for the plan.
 | Path | Contents |
 |---|---|
 | `bridge/` | C++ library `libtinoxkde` (CMake, ECM): the C ABI over Qt/KDE; `bridge/mock/` is its headless mock ([docs/mock.md](docs/mock.md)) |
-| `src/` | The IDE, written in Tinox (`src/Main.tnx` is the entry point) |
+| `src/` | The IDE, written in Tinox (`src/Main.tnx` is the entry point; `src/tinox/ide/kde/` are the bridge bindings) |
 | `tests/` | Tinox tests (`@Test`) |
 | `docs/` | Architecture decisions (`docs/adr`), the bridge ABI, manuals |
 | `resources/` | Syntax definition, MIME types, icons, desktop files |

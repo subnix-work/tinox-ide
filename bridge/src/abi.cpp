@@ -41,7 +41,8 @@ const char *gcCopy(const QByteArray &s)
 const char *errorReply(int64_t code, const char *message)
 {
     tkde::setLastError(code, QString::fromUtf8(message));
-    return gcCopy(QByteArray("{\"ok\":false,\"error\":{\"code\":") + QByteArray::number(qlonglong(code)) + ",\"message\":\"" + message + "\"}}");
+    return gcCopy(QByteArray("{\"ok\":false,\"error\":{\"code\":") + QByteArray::number(qlonglong(code)) + ",\"message\":\"" + message +
+                  "\"}}");
 }
 } // namespace
 

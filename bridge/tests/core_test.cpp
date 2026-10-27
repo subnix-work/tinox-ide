@@ -13,20 +13,20 @@
 #include <vector>
 
 static std::atomic<int> g_failures{0};
-#define EXPECT(cond)                                                                                                   \
-    do {                                                                                                               \
-        if (!(cond)) {                                                                                                 \
-            std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                        \
-            ++g_failures;                                                                                              \
-        }                                                                                                              \
+#define EXPECT(cond)                                                                                                                       \
+    do {                                                                                                                                   \
+        if (!(cond)) {                                                                                                                     \
+            std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                                           \
+            ++g_failures;                                                                                                                  \
+        }                                                                                                                                  \
     } while (0)
-#define EXPECT_CONTAINS(text, part)                                                                                    \
-    do {                                                                                                               \
-        std::string t_ = (text);                                                                                       \
-        if (t_.find(part) == std::string::npos) {                                                                      \
-            std::fprintf(stderr, "FAIL %s:%d: \"%s\" not in %s\n", __FILE__, __LINE__, part, t_.c_str());              \
-            ++g_failures;                                                                                              \
-        }                                                                                                              \
+#define EXPECT_CONTAINS(text, part)                                                                                                        \
+    do {                                                                                                                                   \
+        std::string t_ = (text);                                                                                                           \
+        if (t_.find(part) == std::string::npos) {                                                                                          \
+            std::fprintf(stderr, "FAIL %s:%d: \"%s\" not in %s\n", __FILE__, __LINE__, part, t_.c_str());                                  \
+            ++g_failures;                                                                                                                  \
+        }                                                                                                                                  \
     } while (0)
 
 static std::string event(int64_t timeout = 5000)
@@ -129,7 +129,8 @@ static void driver()
     EXPECT(tkde_release(first) == TKDE_E_NOT_FOUND); // released twice
     EXPECT(std::string(tkde_last_error()).find("no object") != std::string::npos);
     // the last one disappears on the Qt side first: release must say NOT_FOUND, not crash
-    EXPECT_CONTAINS(tkde_query(("{\"cmd\":\"core.debug.destroy\",\"target\":" + std::to_string(first + 4999) + "}").c_str()), "\"ok\":true");
+    EXPECT_CONTAINS(tkde_query(("{\"cmd\":\"core.debug.destroy\",\"target\":" + std::to_string(first + 4999) + "}").c_str()),
+                    "\"ok\":true");
     EXPECT(tkde_release(first + 4999) == TKDE_E_NOT_FOUND);
     EXPECT(tkde_release(0) == TKDE_E_INVALID_ARG);
     EXPECT(tkde_release(-3) == TKDE_E_INVALID_ARG);

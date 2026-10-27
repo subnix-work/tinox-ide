@@ -1,0 +1,68 @@
+module tinox.ide.kde
+
+namespace tinox.ide.kde
+{
+    /**
+     * The program entry for an IDE built on the bridge. Qt must own the process
+     * main thread, so the pattern is fixed: main() calls App::run, which
+     *
+     *   1. checks the ABI version and creates the application (main thread),
+     *   2. spawns the logic task, which receives the EventLoop and is expected to
+     *      register its handlers and call events.run(),
+     *   3. runs Qt's event loop on the main thread until quit,
+     *   4. waits for the logic task and returns the first non-zero code.
+     *
+     * Shutdown order is the bridge's: core.quit, the loop ends, core.shutdown (which
+     * ends events.run()), then the logic task returns and exec returns its code.
+     */
+    class App
+    {
+        fnc logicTask(events: EventLoop, logic: fnc(EventLoop) -> Int32) -> Int32
+        {
+            var code: Int32 = 1
+            try
+            {
+                code = logic(events)
+            }
+            catch (e: String)
+            {
+                printStderr("tinox-ide: the logic task failed: " + e)
+                // make sure Qt's loop ends even though the logic gave up
+                Bridge::quit()
+            }
+            return code
+        }
+
+        fnc run(appName: String, displayName: String, logic: fnc(EventLoop) -> Int32) -> Int32
+        {
+            try
+            {
+                Bridge::requireAbi()
+                Bridge::init(appName, displayName)
+            }
+            catch (e: String)
+            {
+                printStderr("tinox-ide: " + e)
+                return 1
+            }
+            const events: EventLoop = EventLoop::create()
+            const task = spawn App::logicTask(events, logic)
+            var execCode: Int64 = 0
+            try
+            {
+                execCode = Bridge::exec()
+            }
+            catch (e: String)
+            {
+                printStderr("tinox-ide: " + e)
+                execCode = 1
+            }
+            const logicCode: Int32 = await task
+            if (execCode != 0)
+            {
+                return execCode as Int32
+            }
+            return logicCode
+        }
+    }
+}
