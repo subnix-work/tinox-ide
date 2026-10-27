@@ -26,6 +26,7 @@ run: ide
 	./$(OUT)
 
 test: bridge
+	scripts/test-check-env.sh
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
 	$(TINOX) test
 
