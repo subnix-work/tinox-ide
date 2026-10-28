@@ -321,6 +321,17 @@ static void testEvents()
     EXPECT_EQ(errorCode(act(nodeId(m, "btn"), "text", "x")), -1);
     tkde_release(id);
 
+    // a popup floats, tells when it went away; navKeys turn arrows into events instead of moving the cursor
+    Obj pop = mountTree(tree("QWidget", "pop", Obj{{"popup", true}}, QJsonArray{tree("QLineEdit", "search", Obj{{"navKeys", true}})}));
+    const int64_t popId = int64_t(pop.value(QStringLiteral("id")).toDouble());
+    query(cmd("widget.show", Obj{{"target", double(popId)}}));
+    drainEvents();
+    act(nodeId(pop, "search"), "key", "Down");
+    EXPECT_EQ(waitFor("widget.navKey", 1000).value(QStringLiteral("direction")).toString(), QStringLiteral("down"));
+    query(cmd("widget.hide", Obj{{"target", double(popId)}}));
+    EXPECT_EQ(waitFor("widget.dismissed", 1000).value(QStringLiteral("key")).toString(), QStringLiteral("pop"));
+    tkde_release(popId);
+
     // a window asks before it closes; "force" closes it
     Obj w = mountTree(
         tree("QMainWindow", "win", Obj{{"windowTitle", "t"}},

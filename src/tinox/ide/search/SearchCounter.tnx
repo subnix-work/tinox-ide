@@ -1,0 +1,70 @@
+module tinox.ide.search
+
+import tinox.ide.app.Background
+import tinox.ide.ui.Js
+
+namespace tinox.ide.search
+{
+    /** What a running search has found so far; sends the matches to the bus in batches. Lives in the search task only. */
+    class SearchCounter
+    {
+        /** The search this belongs to. */
+        var id: Int64
+        /** The search stops after this many matches. */
+        var limit: Int64
+        /** Matches found. */
+        var count: Int64
+        /** Matches not sent yet, as JSON objects. */
+        var batch: List<String>
+        /** The files with matches. */
+        var files: Map<String, Bool>
+        /** Whether the limit stopped the search. */
+        var truncated: Bool
+        /** Why the search failed, "" if it did not. */
+        var error: String
+
+        /** A counter for a search. */
+        fnc create(id: Int64, limit: Int64) -> SearchCounter
+        {
+            return SearchCounter { id: id, limit: limit, count: 0, batch: [], files: Map::new(), truncated: false, error: "" }
+        }
+
+        /** Whether the limit is reached. */
+        fn full() -> Bool
+        {
+            return this.count >= this.limit
+        }
+
+        /** The number of files with matches. */
+        fn fileCount() -> Int64
+        {
+            return this.files.keys().len()
+        }
+
+        /** Counts a match and queues it. */
+        fn add(found: SearchMatch) -> Nothing
+        {
+            this.count = this.count + 1
+            if (this.count >= this.limit)
+            {
+                this.truncated = true
+            }
+            this.files.set(found.path, true)
+            this.batch.push(Js::object([Js::strField("path", found.path), Js::intField("line", found.line), Js::intField("col", found.column), Js::strField("text", found.text), Js::field("hits", Js::strings(found.hits))]))
+            if (this.batch.len() >= 100)
+            {
+                this.flush()
+            }
+        }
+
+        /** Sends what is queued. */
+        fn flush() -> Nothing
+        {
+            if (this.batch.len() > 0)
+            {
+                Background::report("search.batch", Js::object([Js::intField("id", this.id), Js::field("matches", Js::array(this.batch))]))
+                this.batch = []
+            }
+        }
+    }
+}

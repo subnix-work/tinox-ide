@@ -1,0 +1,172 @@
+module tinox.ide.search
+
+import tinox.ide.app.FileSystem
+import tinox.ide.workspace.FileTree
+import tinox.ide.workspace.TreeEntry
+
+namespace tinox.ide.search
+{
+    /**
+     * Every file of the project (ignored ones left out, like in the tree), for quick open. The
+     * index is rebuilt on demand: file changes only mark it stale (markStale), and the next
+     * query() walks the folder again, which takes a few milliseconds for thousands of files.
+     */
+    class FileIndex
+    {
+        /** The project folder. */
+        var root: String
+        /** The files below the root, relative paths. */
+        var paths: List<String>
+        /** The same paths in lower case. */
+        var lowerPaths: List<String>
+        /** The lower case file names. */
+        var lowerNames: List<String>
+        /** Whether the walk is out of date. */
+        var stale: Bool
+        /** The walk stops at this many files. */
+        var limit: Int64
+
+        /** An empty index. */
+        fnc create() -> FileIndex
+        {
+            return FileIndex { root: "", paths: [], lowerPaths: [], lowerNames: [], stale: true, limit: 200000 }
+        }
+
+        /** Follows another project folder (and forgets the files of the old one). */
+        fn setRoot(root: String) -> Nothing
+        {
+            this.root = root
+            this.paths = []
+            this.lowerPaths = []
+            this.lowerNames = []
+            this.stale = true
+        }
+
+        /** The files may have changed. */
+        fn markStale() -> Nothing
+        {
+            this.stale = true
+        }
+
+        /** Walks the project folder now. */
+        fn rebuild() -> Nothing
+        {
+            this.stale = false
+            this.paths = []
+            this.lowerPaths = []
+            this.lowerNames = []
+            if (this.root == "" || !FileSystem::isDirectory(this.root))
+            {
+                return
+            }
+            this.add(FileTree::create(this.root), this.root)
+        }
+
+        /** Adds the files below `top` (an explicit stack, so deep trees are fine). */
+        fn add(tree: FileTree, top: String) -> Nothing
+        {
+            var pending: List<String> = [top]
+            const cut: Int64 = this.root.len() + 1
+            while (pending.len() > 0 && this.paths.len() < this.limit)
+            {
+                const directory: String = pending[pending.len() - 1]
+                var rest: List<String> = []
+                var i: Int64 = 0
+                while (i < pending.len() - 1)
+                {
+                    rest.push(pending[i])
+                    i = i + 1
+                }
+                pending = rest
+                for entry in tree.entries(directory)
+                {
+                    if (entry.isDirectory)
+                    {
+                        pending.push(entry.path)
+                    }
+                    else
+                    {
+                        const relative: String = entry.path.substring(cut, entry.path.len())
+                        this.paths.push(relative)
+                        this.lowerPaths.push(Fuzzy::lower(relative))
+                        this.lowerNames.push(Fuzzy::lower(entry.name))
+                    }
+                }
+            }
+        }
+
+        /** The number of files (walks first when stale). */
+        fn count() -> Int64
+        {
+            if (this.stale)
+            {
+                this.rebuild()
+            }
+            return this.paths.len()
+        }
+
+        /** The best `max` files for the query, best first, as relative paths. An empty query gives the first files in tree order. */
+        fn query(text: String, max: Int64) -> List<String>
+        {
+            if (this.stale)
+            {
+                this.rebuild()
+            }
+            const q: String = Fuzzy::lower(text.trim())
+            var out: List<String> = []
+            if (q == "")
+            {
+                var k: Int64 = 0
+                while (k < this.paths.len() && k < max)
+                {
+                    out.push(this.paths[k])
+                    k = k + 1
+                }
+                return out
+            }
+            var bestScore: List<Int64> = []
+            var bestIndex: List<Int64> = []
+            var i: Int64 = 0
+            while (i < this.paths.len())
+            {
+                var s: Int64 = Fuzzy::score(q, this.lowerPaths[i])
+                if (s >= 0)
+                {
+                    const onName: Int64 = Fuzzy::score(q, this.lowerNames[i])
+                    if (onName >= 0)
+                    {
+                        s = onName + 200
+                    }
+                    FileIndex::insert(bestScore, bestIndex, s, i, max)
+                }
+                i = i + 1
+            }
+            for index in bestIndex
+            {
+                out.push(this.paths[index])
+            }
+            return out
+        }
+
+        /** Puts a candidate into the sorted top list (best first) when it belongs there. */
+        fnc insert(scores: List<Int64>, indexes: List<Int64>, score: Int64, index: Int64, max: Int64) -> Nothing
+        {
+            if (scores.len() >= max && score <= scores[scores.len() - 1])
+            {
+                return
+            }
+            var at: Int64 = scores.len()
+            while (at > 0 && scores[at - 1] < score)
+            {
+                at = at - 1
+            }
+            scores.insert(at, score)
+            indexes.insert(at, index)
+            if (scores.len() > max)
+            {
+                scores.pop()
+                indexes.pop()
+            }
+        }
+    }
+}

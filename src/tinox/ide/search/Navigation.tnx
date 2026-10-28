@@ -1,0 +1,263 @@
+module tinox.ide.search
+
+import tinox.ide.app.BusMessage
+import tinox.ide.app.CommandContext
+import tinox.ide.app.CommandRegistry
+import tinox.ide.app.EventBus
+import tinox.ide.app.FileSystem
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.Store
+import tinox.ide.kde.EventLoop
+import tinox.ide.settings.Settings
+import tinox.ide.ui.Js
+
+namespace tinox.ide.search
+{
+    /**
+     * Quick open (Ctrl+P) and the command palette (Ctrl+Shift+P), both on one Picker.
+     *
+     * Quick open lists the project's files by fuzzy match; with nothing typed the open files
+     * come first. Choosing a file sends the bus message `file.openRequested`. The palette lists
+     * the commands that are available now; with nothing typed the ones used last come first,
+     * and while typing a recently used command beats an equally good match. The list of used
+     * commands is kept in the settings (`Palette/recent`).
+     */
+    class Navigation
+    {
+        /** Messages between modules. */
+        var bus: EventBus
+        /** The application state. */
+        var store: Store
+        /** The commands. */
+        var registry: CommandRegistry
+        /** Persistent settings. */
+        var settings: Settings
+        /** The popup. */
+        var picker: Picker
+        /** The project's files. */
+        var index: FileIndex
+        /** Gives the paths of the open files; IdeApp connects it to the document module. */
+        var openPaths: fnc(Store) -> List<String>
+        /** How many items are listed. */
+        var limit: Int64
+
+        /** The navigation for an application. */
+        fnc create(events: EventLoop, bus: EventBus, store: Store, registry: CommandRegistry, settings: Settings) -> Navigation
+        {
+            return Navigation { bus: bus, store: store, registry: registry, settings: settings, picker: Picker::create(events), index: FileIndex::create(), openPaths: (s: Store) => [], limit: 60 }
+        }
+
+        /** The commands. Call before the registry is attached. */
+        fn registerCommands() -> Nothing
+        {
+            this.registry.registerAll([
+                IdeCommand::create("nav.quickOpen", "Go to &File…").icon("document-open").shortcut("Ctrl+P").category("Go").enabledWhen((s: Store) => s.getBool("workspace.open")).run((c: CommandContext) => this.quickOpen()),
+                IdeCommand::create("nav.palette", "Command &Palette…").icon("system-search").shortcut("Ctrl+Shift+P").category("Go").run((c: CommandContext) => this.palette())
+            ])
+        }
+
+        /** Menu entries of this module. */
+        fn menuItems() -> List<String>
+        {
+            return ["nav.quickOpen", "nav.palette"]
+        }
+
+        /** Follows the project: another folder or changed files make the index stale. */
+        fn bind() -> Nothing
+        {
+            this.bus.subscribe("workspace.opened", (m: BusMessage) => this.index.setRoot(m.str("path")))
+            this.bus.subscribe("workspace.closed", (m: BusMessage) => this.index.setRoot(""))
+            this.bus.subscribe("workspace.fsChanged", (m: BusMessage) => this.index.markStale())
+            this.bus.subscribe("workspace.fileOperation", (m: BusMessage) => this.index.markStale())
+            if (this.store.getBool("workspace.open"))
+            {
+                this.index.setRoot(this.store.get("workspace.path"))
+            }
+        }
+
+        // ---------------------------------------------------------------- quick open
+
+        /** Shows the file chooser. */
+        fn quickOpen() -> Nothing
+        {
+            this.picker.open("Go to file…", (text: String) => this.files(text), (item: PickItem) => this.openFile(item.id))
+        }
+
+        /** The items for a text typed in quick open. */
+        fn files(text: String) -> List<PickItem>
+        {
+            var out: List<PickItem> = []
+            const root: String = this.index.root
+            if (text.trim() == "")
+            {
+                for path in this.openPaths(this.store)
+                {
+                    out.push(Navigation::fileItem(root, path))
+                }
+            }
+            for relative in this.index.query(text, this.limit)
+            {
+                const path: String = root + "/" + relative
+                if (out.len() < this.limit && !Navigation::listed(out, path))
+                {
+                    out.push(Navigation::fileItem(root, path))
+                }
+            }
+            return out
+        }
+
+        /** Whether an item for the path is in the list. */
+        fnc listed(items: List<PickItem>, path: String) -> Bool
+        {
+            for item in items
+            {
+                if (item.id == path)
+                {
+                    return true
+                }
+            }
+            return false
+        }
+
+        /** The item of a file: its name, and the folder it is in. */
+        fnc fileItem(root: String, path: String) -> PickItem
+        {
+            var folder: String = FileSystem::parent(path)
+            if (folder.startsWith(root + "/"))
+            {
+                folder = folder.substring(root.len() + 1, folder.len())
+            }
+            else if (folder == root)
+            {
+                folder = ""
+            }
+            return PickItem::create(path, FileSystem::baseName(path), folder, "text-x-generic")
+        }
+
+        /** Asks the document module to open the file. */
+        fn openFile(path: String) -> Nothing
+        {
+            this.bus.publish("file.openRequested", Js::object([Js::strField("path", path)]))
+        }
+
+        // ---------------------------------------------------------------- command palette
+
+        /** Shows the command palette. */
+        fn palette() -> Nothing
+        {
+            this.picker.open("Run a command…", (text: String) => this.commands(text), (item: PickItem) => this.run(item.id))
+        }
+
+        /** The commands used last, newest first. */
+        fn recent() -> List<String>
+        {
+            return this.settings.getStrings("Palette", "recent", [])
+        }
+
+        /** A readable title: a standard command's KDE name becomes words. */
+        fnc titleOf(command: IdeCommand) -> String
+        {
+            if (!command.isStandard)
+            {
+                return command.label()
+            }
+            var out: String = ""
+            var i: Int64 = 0
+            while (i < command.id.len())
+            {
+                var ch: String = command.id.substring(i, i + 1)
+                if (ch == "_")
+                {
+                    ch = " "
+                }
+                if (i == 0)
+                {
+                    ch = ch.toUpper()
+                }
+                out = out + ch
+                i = i + 1
+            }
+            return out
+        }
+
+        /** The items for a text typed in the palette. */
+        fn commands(text: String) -> List<PickItem>
+        {
+            const q: String = Fuzzy::lower(text.trim())
+            const recent: List<String> = this.recent()
+            var scores: List<Int64> = []
+            var found: List<PickItem> = []
+            for command in this.registry.list()
+            {
+                if (this.registry.isEnabled(command.id) && command.id != "nav.palette")
+                {
+                    const title: String = Navigation::titleOf(command)
+                    var s: Int64 = Fuzzy::score(q, Fuzzy::lower(title))
+                    if (s >= 0)
+                    {
+                        const rank: Int64 = Navigation::position(recent, command.id)
+                        if (rank >= 0)
+                        {
+                            s = s + 1000 - rank * 10
+                        }
+                        var detail: String = command.shortcutText
+                        if (command.categoryName != "")
+                        {
+                            detail = command.categoryName + "    " + detail
+                        }
+                        Navigation::place(scores, found, s, PickItem::create(command.id, title, detail.trim(), command.iconName))
+                    }
+                }
+            }
+            return found
+        }
+
+        /** The place of a command in the recent list, -1 when it is not there. */
+        fnc position(list: List<String>, id: String) -> Int64
+        {
+            var i: Int64 = 0
+            while (i < list.len())
+            {
+                if (list[i] == id)
+                {
+                    return i
+                }
+                i = i + 1
+            }
+            return -1
+        }
+
+        /** Inserts an item into the list sorted by descending score (equal scores keep their order). */
+        fnc place(scores: List<Int64>, items: List<PickItem>, score: Int64, item: PickItem) -> Nothing
+        {
+            var at: Int64 = scores.len()
+            while (at > 0 && scores[at - 1] < score)
+            {
+                at = at - 1
+            }
+            scores.insert(at, score)
+            items.insert(at, item)
+        }
+
+        /** Runs a command chosen in the palette and remembers it. */
+        fn run(id: String) -> Nothing
+        {
+            this.remember(id)
+            this.registry.execute(id)
+        }
+
+        /** Puts a command first in the recent list (twenty are kept). */
+        fn remember(id: String) -> Nothing
+        {
+            var next: List<String> = [id]
+            for old in this.recent()
+            {
+                if (old != id && next.len() < 20)
+                {
+                    next.push(old)
+                }
+            }
+            this.settings.setStrings("Palette", "recent", next)
+        }
+    }
+}

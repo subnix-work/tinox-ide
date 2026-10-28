@@ -1,0 +1,276 @@
+import MockBridge
+import TempProject
+import WorkspaceAppTest
+import tinox.ide.IdeApp
+import tinox.ide.app.BusMessage
+import tinox.ide.app.FileSystem
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.EventLoop
+import tinox.ide.search.FileIndex
+import tinox.ide.search.Fuzzy
+import tinox.ide.search.PickItem
+import tinox.ide.search.SearchMatch
+
+class SearchTest
+{
+    fnc project() -> String
+    {
+        const root: String = TempProject::create()
+        TempProject::file(root, ".gitignore", "build/\n")
+        TempProject::file(root, "src/Main.tnx", "class Main\n{\n    fn run() -> Nothing {}\n}\n")
+        TempProject::file(root, "src/util/StringHelper.tnx", "Needle one\nnothing\nneedle two and NEEDLE three\n")
+        TempProject::file(root, "docs/readme.md", "a needle here\n")
+        TempProject::file(root, "build/out.o", "needle in ignored file\n")
+        return root
+    }
+
+    fnc start(events: EventLoop, root: String) -> IdeApp
+    {
+        const app: IdeApp = WorkspaceAppTest::start(events, MockBridge::createObject())
+        for name in ["editor.setText", "editor.setCursor", "editor.getText", "editor.openDocument", "editor.createView"]
+        {
+            MockBridge::onCommand(name, "", "")
+        }
+        app.search.useRipgrep = true
+        app.workspace.open(root)
+        WorkspaceAppTest::drain()
+        return app
+    }
+
+    /** Lets the events of a running search arrive, until it says it is finished. */
+    fnc waitForSearch(events: EventLoop, app: IdeApp) -> Bool
+    {
+        var rounds: Int64 = 0
+        while (app.store.getBool("search.running") && rounds < 100)
+        {
+            events.pump(100)
+            rounds = rounds + 1
+        }
+        return !app.store.getBool("search.running")
+    }
+
+    @Test("fuzzy: letters in order, starts of words and runs score higher, no match is -1")
+    fn testFuzzy() -> Bool
+    {
+        const exact: Int64 = Fuzzy::score("main", "src/main.tnx")
+        const scattered: Int64 = Fuzzy::score("main", "my_amazing_index.tnx")
+        return Fuzzy::score("", "x") == 0 && Fuzzy::score("zzz", "src/main.tnx") == -1 && exact > scattered && scattered >= 0 &&
+            Fuzzy::score("sm", "src/main.tnx") > Fuzzy::score("sm", "xsxxxmxxx") && Fuzzy::score("ab", "ba") == -1
+    }
+
+    @Test("the file index lists the project without ignored files and ranks name matches first")
+    fn testIndex() -> Bool
+    {
+        const root: String = SearchTest::project()
+        const index: FileIndex = FileIndex::create()
+        index.setRoot(root)
+        const all: List<String> = index.query("", 50)
+        const hits: List<String> = index.query("strhelp", 10)
+        const byName: List<String> = index.query("main", 10)
+        TempProject::remove(root)
+        return index.count() == 4 && !all.contains("build/out.o") && hits.len() == 1 && hits[0] == "src/util/StringHelper.tnx" && byName[0] == "src/Main.tnx"
+    }
+
+    @Test("quick open answers in well under 50 ms among 10000 files")
+    fn testIndexSpeed() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const index: FileIndex = FileIndex::create()
+        index.stale = false
+        var i: Int64 = 0
+        while (i < 10000)
+        {
+            const path: String = "module" + (i % 97).toString() + "/package" + (i % 13).toString() + "/Component" + i.toString() + "Handler.tnx"
+            index.paths.push(path)
+            index.lowerPaths.push(path.toLower())
+            index.lowerNames.push(FileSystem::baseName(path).toLower())
+            i = i + 1
+        }
+        index.paths.push("src/ide/editor/Documents.tnx")
+        index.lowerPaths.push("src/ide/editor/documents.tnx")
+        index.lowerNames.push("documents.tnx")
+        const started: Int64 = Bridge::nowNs()
+        const found: List<String> = index.query("edoc", 50)
+        const milliseconds: Int64 = (Bridge::nowNs() - started) / 1000000
+        return found.len() > 0 && found[0] == "src/ide/editor/Documents.tnx" && milliseconds < 50
+    }
+
+    @Test("quick open lists files, follows typing and navigation keys, and Enter asks for the file to be opened")
+    fn testQuickOpen() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const root: String = SearchTest::project()
+        const app: IdeApp = SearchTest::start(events, root)
+        MockBridge::onCommand("widget.mount", "{\"id\":900,\"root\":80,\"nodes\":{\"picker\":80,\"query\":81,\"results\":82}}", "")
+        var opened: List<String> = []
+        app.bus.subscribe("file.openRequested", (m: BusMessage) => opened.push(m.str("path")))
+        app.registry.execute("nav.quickOpen")
+        const first: List<String> = WorkspaceAppTest::drain()
+        const listed: Bool = WorkspaceAppTest::firstWith(first, "StringHelper.tnx") != "" && WorkspaceAppTest::firstWith(first, "\"popup\":true") != ""
+        MockBridge::push("{\"type\":\"widget.textChanged\",\"target\":81,\"key\":\"query\",\"text\":\"main\"}")
+        events.pump(1000)
+        const typed: List<String> = WorkspaceAppTest::drain()
+        const filtered: Bool = WorkspaceAppTest::firstWith(typed, "Main.tnx") != "" && WorkspaceAppTest::firstWith(typed, "StringHelper") == "" && app.navigation.picker.items.len() == 1
+        MockBridge::push("{\"type\":\"widget.textChanged\",\"target\":81,\"key\":\"query\",\"text\":\".tnx\"}")
+        events.pump(1000)
+        MockBridge::push("{\"type\":\"widget.navKey\",\"target\":81,\"key\":\"query\",\"direction\":\"down\"}")
+        events.pump(1000)
+        const moved: Bool = app.navigation.picker.chosen == 1
+        MockBridge::push("{\"type\":\"widget.returnPressed\",\"target\":81,\"key\":\"query\"}")
+        events.pump(1000)
+        const accepted: Bool = opened.len() == 1 && opened[0] == app.navigation.picker.items[1].id && !app.navigation.picker.isOpen()
+        TempProject::remove(root)
+        return listed && filtered && moved && accepted
+    }
+
+    @Test("the command palette lists the available commands, recently used first, and runs the chosen one")
+    fn testPalette() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const root: String = SearchTest::project()
+        const app: IdeApp = SearchTest::start(events, root)
+        const all: List<PickItem> = app.navigation.commands("")
+        const typed: List<PickItem> = app.navigation.commands("split")
+        var hasSplit: Bool = false
+        for item in typed
+        {
+            hasSplit = hasSplit || item.id.startsWith("view.split")
+        }
+        const noDisabled: Bool = !SearchTest::hasId(all, "file_save") && SearchTest::hasId(all, "nav.quickOpen")
+        MockBridge::onCommand("config.read", "{\"exists\":true,\"value\":[\"view.bottom\"]}", "")
+        const ordered: List<PickItem> = app.navigation.commands("")
+        app.navigation.run("view.project")
+        const toggled: Bool = !app.store.getBool("ui.projectVisible")
+        const written: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"cmd\":\"config.write\",\"file\":\"\",\"group\":\"Palette\"")
+        TempProject::remove(root)
+        return all.len() > 5 && noDisabled && !hasSplit && ordered[0].id == "view.bottom" && toggled && written.contains("[\"view.project\",\"view.bottom\"]")
+    }
+
+    fnc hasId(items: List<PickItem>, id: String) -> Bool
+    {
+        for item in items
+        {
+            if (item.id == id)
+            {
+                return true
+            }
+        }
+        return false
+    }
+
+    @Test("a match replaces its hits and keeps the rest of the line")
+    fn testMatchReplace() -> Bool
+    {
+        const found: SearchMatch = SearchMatch::create("/a", 3, 0, "needle two and NEEDLE three", ["needle", "NEEDLE"])
+        const none: SearchMatch = SearchMatch::create("/a", 1, 0, "x", [])
+        return found.replaced("pin") == "pin two and pin three" && none.replaced("y") == "x" && found.preview() == "3:  needle two and NEEDLE three" && found.rowId() == "/a:3"
+    }
+
+    @Test("find in files streams matches grouped by file with ripgrep, ignoring ignored files")
+    fn testSearchRipgrep() -> Bool
+    {
+        return SearchTest::searchAndCheck(true)
+    }
+
+    @Test("find in files works without ripgrep too, with the same results")
+    fn testSearchBuiltin() -> Bool
+    {
+        return SearchTest::searchAndCheck(false)
+    }
+
+    fnc searchAndCheck(useRipgrep: Bool) -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const root: String = SearchTest::project()
+        const app: IdeApp = SearchTest::start(events, root)
+        app.search.useRipgrep = useRipgrep
+        app.search.setQuery("needle")
+        app.search.start()
+        const finished: Bool = SearchTest::waitForSearch(events, app)
+        const sent: List<String> = WorkspaceAppTest::drain()
+        const status: String = app.store.get("search.status")
+        const rows: Bool = WorkspaceAppTest::firstWith(sent, "docs/readme.md") != "" && WorkspaceAppTest::firstWith(sent, "src/util/StringHelper.tnx") != "" && WorkspaceAppTest::firstWith(sent, "build/out.o") == ""
+        const ok: Bool = finished && app.search.matches.len() == 3 && status == "3 matches in 2 files" && app.search.shownFiles.len() == 2 && app.store.getBool("search.canReplace") && rows
+        // a case sensitive and a regular expression search
+        app.search.setCase(true)
+        app.search.start()
+        SearchTest::waitForSearch(events, app)
+        const sensitive: Int64 = app.search.matches.len()
+        app.search.setCase(false)
+        app.search.setRegex(true)
+        app.search.setQuery("ne+dle (one|two)")
+        app.search.start()
+        SearchTest::waitForSearch(events, app)
+        const regex: Int64 = app.search.matches.len()
+        app.search.setQuery("(unclosed")
+        app.search.start()
+        SearchTest::waitForSearch(events, app)
+        const failed: String = app.store.get("search.status")
+        TempProject::remove(root)
+        return ok && sensitive == 2 && regex == 2 && failed.startsWith("Search failed")
+    }
+
+    @Test("activating a result opens the file at its line")
+    fn testActivateResult() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const root: String = SearchTest::project()
+        const app: IdeApp = SearchTest::start(events, root)
+        MockBridge::onCommand("editor.openDocument", "{\"id\":" + MockBridge::createObject().toString() + "}", "")
+        MockBridge::onCommand("editor.createView", "{\"id\":" + MockBridge::createObject().toString() + "}", "")
+        app.search.setQuery("needle")
+        app.search.start()
+        SearchTest::waitForSearch(events, app)
+        WorkspaceAppTest::drain()
+        app.search.activated(root + "/docs/readme.md:1")
+        const sent: List<String> = WorkspaceAppTest::drain()
+        const cursor: String = WorkspaceAppTest::firstWith(sent, "\"cmd\":\"editor.setCursor\"")
+        TempProject::remove(root)
+        return app.documents.isOpen(root + "/docs/readme.md") && cursor.contains("\"line\":0") && cursor.contains("\"character\":2")
+    }
+
+    @Test("replace in files shows a preview, changes files on disk, leaves changed lines alone and can be undone")
+    fn testReplaceAndUndo() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const root: String = SearchTest::project()
+        const app: IdeApp = SearchTest::start(events, root)
+        const helper: String = root + "/src/util/StringHelper.tnx"
+        const readme: String = root + "/docs/readme.md"
+        app.search.setQuery("needle")
+        app.search.start()
+        SearchTest::waitForSearch(events, app)
+        app.search.setReplacement("pin")
+        const preview: String = app.search.preview(10)
+        WorkspaceAppTest::drain()
+        app.search.replaceAll()
+        const asked: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "Replace 3 matches in 2 files")
+        FileSystem::write(readme, "someone else changed this\n")
+        WorkspaceAppTest::answer(events, app.dialogs.nextRequest - 1, "\"button\":\"yes\"")
+        const after: String = FileSystem::read(helper)
+        const kept: String = FileSystem::read(readme)
+        const status: String = app.store.get("search.status")
+        const changed: Bool = after == "pin one\nnothing\npin two and pin three\n" && kept == "someone else changed this\n" && status.contains("Replaced 2 lines in 1 files") && status.contains("1 skipped")
+        const canUndo: Bool = app.store.getBool("search.canUndo") && app.registry.isEnabled("search.undoReplace")
+        app.registry.execute("search.undoReplace")
+        const restored: Bool = FileSystem::read(helper) == "Needle one\nnothing\nneedle two and NEEDLE three\n" && !app.store.getBool("search.canUndo")
+        TempProject::remove(root)
+        return preview.contains("- needle two and NEEDLE three") && preview.contains("+ pin two and pin three") && asked != "" && changed && canUndo && restored
+    }
+
+    @Test("cancel ends a search at once and keeps what was found")
+    fn testCancel() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const root: String = SearchTest::project()
+        const app: IdeApp = SearchTest::start(events, root)
+        app.search.setQuery("needle")
+        app.search.start()
+        const running: Bool = app.store.getBool("search.running") && app.registry.isEnabled("search.cancel")
+        app.registry.execute("search.cancel")
+        const stopped: Bool = !app.store.getBool("search.running") && app.search.control.stopped && app.store.get("search.status").contains("cancelled")
+        events.pump(300)
+        TempProject::remove(root)
+        return running && stopped && !app.registry.isEnabled("search.cancel")
+    }
+}

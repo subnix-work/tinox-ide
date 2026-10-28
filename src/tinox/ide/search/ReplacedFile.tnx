@@ -1,0 +1,21 @@
+module tinox.ide.search
+
+namespace tinox.ide.search
+{
+    /** A file that Replace All changed: what it said before and what it says now (for undo). */
+    class ReplacedFile
+    {
+        /** The path. */
+        var path: String
+        /** The text before the replacement. */
+        var before: String
+        /** The text after it. */
+        var after: String
+
+        /** A record. */
+        fnc create(path: String, before: String, after: String) -> ReplacedFile
+        {
+            return ReplacedFile { path: path, before: before, after: after }
+        }
+    }
+}

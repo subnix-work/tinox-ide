@@ -1,0 +1,352 @@
+module tinox.ide.search
+
+import tinox.core.json
+import tinox.core.process.InteractiveProcess
+import tinox.core.regex.Regex
+import tinox.ide.app.Background
+import tinox.ide.app.FileSystem
+import tinox.ide.ui.Js
+import tinox.ide.workspace.FileTree
+import tinox.ide.workspace.WatchControl
+
+namespace tinox.ide.search
+{
+    /**
+     * The background task of find in files. It runs ripgrep (`rg --json`) when the program is
+     * installed and otherwise a search of its own that reads the files itself. Either way the
+     * ignore rules apply (.gitignore and the tree's defaults) and results arrive in batches on
+     * the bus while the search goes on:
+     *
+     *   - `search.batch {id, matches: [{path, line, col, text, hits}]}`
+     *   - `search.finished {id, count, files, tool, truncated, error}`
+     *
+     * Setting `control.stopped` ends it within a tenth of a second.
+     */
+    class FileSearch
+    {
+        /** Runs a search; for `spawn`. `regex` makes the pattern a regular expression, otherwise it is plain text. */
+        fnc run(id: Int64, root: String, pattern: String, regex: Bool, caseSensitive: Bool, useRipgrep: Bool, limit: Int64, control: WatchControl) -> Int64
+        {
+            var tool: String = "builtin"
+            var counter: SearchCounter = SearchCounter::create(id, limit)
+            var error: String = ""
+            if (useRipgrep)
+            {
+                try
+                {
+                    FileSearch::runRipgrep(root, pattern, regex, caseSensitive, control, counter)
+                    tool = "ripgrep"
+                }
+                catch (e: String)
+                {
+                    // ripgrep is not installed (or failed to start): search without it
+                    counter = SearchCounter::create(id, limit)
+                    tool = "builtin"
+                }
+            }
+            if (tool == "builtin")
+            {
+                try
+                {
+                    FileSearch::runBuiltin(root, pattern, regex, caseSensitive, control, counter)
+                }
+                catch (e: String)
+                {
+                    error = e
+                }
+            }
+            if (counter.error != "")
+            {
+                error = counter.error
+            }
+            counter.flush()
+            Background::report("search.finished", Js::object([Js::intField("id", id), Js::intField("count", counter.count), Js::intField("files", counter.fileCount()), Js::strField("tool", tool), Js::boolField("truncated", counter.truncated), Js::strField("error", error)]))
+            return 0
+        }
+
+        /** Whether bit `bit` is set in the mask waitReadable returns. */
+        fnc has(mask: Int64, bit: Int64) -> Bool
+        {
+            return (mask / bit) % 2 == 1
+        }
+
+        /** Searches with ripgrep. Throws when it cannot be started. */
+        fnc runRipgrep(root: String, pattern: String, regex: Bool, caseSensitive: Bool, control: WatchControl, counter: SearchCounter) -> Nothing
+        {
+            var argv: List<String> = ["rg", "--json", "--no-config", "--no-require-git"]
+            if (caseSensitive)
+            {
+                argv.push("-s")
+            }
+            else
+            {
+                argv.push("-i")
+            }
+            if (!regex)
+            {
+                argv.push("-F")
+            }
+            argv.push("-e")
+            argv.push(pattern)
+            argv.push("--")
+            argv.push(root)
+            const proc: InteractiveProcess = InteractiveProcess::startPiped(argv, "", [])
+            var finished: Bool = false
+            var stderr: String = ""
+            while (!finished && !control.stopped && !counter.full())
+            {
+                const mask: Int64 = InteractiveProcess::waitReadable(proc, 100)
+                if (FileSearch::has(mask, 2))
+                {
+                    stderr = stderr + InteractiveProcess::readStderr(proc, 0)
+                }
+                if (FileSearch::has(mask, 1))
+                {
+                    var line: String = InteractiveProcess::readLine(proc, 0)
+                    while (line != "" && !counter.full())
+                    {
+                        FileSearch::take(line, counter)
+                        line = InteractiveProcess::readLine(proc, 0)
+                    }
+                }
+                counter.flush()
+                if (FileSearch::has(mask, 4))
+                {
+                    finished = true
+                }
+            }
+            const code: Int64 = InteractiveProcess::exitCode(proc)
+            InteractiveProcess::kill(proc)
+            if (finished && code == 2 && counter.count == 0)
+            {
+                counter.error = stderr.trim()
+            }
+        }
+
+        /** Reads one line of ripgrep's JSON output. */
+        fnc take(line: String, counter: SearchCounter) -> Nothing
+        {
+            const event: JsonValue = Json::parse(line)
+            if (event.getField("type").getString() != "match")
+            {
+                return
+            }
+            const data: JsonValue = event.getField("data")
+            const text: JsonValue = data.getField("lines").getField("text")
+            if (text.isNull())
+            {
+                return
+            }
+            var hits: List<String> = []
+            for sub in data.getField("submatches").asList()
+            {
+                hits.push(sub.getField("match").getField("text").getString())
+            }
+            const shown: String = FileSearch::chomp(text.getString())
+            counter.add(SearchMatch::create(data.getField("path").getField("text").getString(), data.getField("line_number").getInt(), FileSearch::column(shown, hits), shown, hits))
+        }
+
+        /** The offset of the first hit in the line (0 without hits). */
+        fnc column(line: String, hits: List<String>) -> Int64
+        {
+            if (hits.len() == 0)
+            {
+                return 0
+            }
+            const at: Int64 = line.indexOf(hits[0])
+            if (at < 0)
+            {
+                return 0
+            }
+            return at
+        }
+
+        /** A line without its line break. */
+        fnc chomp(line: String) -> String
+        {
+            var out: String = line
+            while (out.endsWith("\n") || out.endsWith("\r"))
+            {
+                out = out.substring(0, out.len() - 1)
+            }
+            return out
+        }
+
+        /** The built-in search: reads every file of the project that the tree shows. */
+        fnc runBuiltin(root: String, pattern: String, regex: Bool, caseSensitive: Bool, control: WatchControl, counter: SearchCounter) -> Nothing
+        {
+            var expression: String = pattern
+            if (!caseSensitive)
+            {
+                // the regex engine has no (?i): both sides are lower-cased instead
+                expression = pattern.toLower()
+            }
+            if (regex && !FileSearch::looksValid(expression))
+            {
+                counter.error = "invalid regular expression"
+                return
+            }
+            const needle: String = pattern.toLower()
+            const tree: FileTree = FileTree::create(root)
+            var pending: List<String> = [root]
+            while (pending.len() > 0 && !control.stopped && !counter.full())
+            {
+                const directory: String = pending[pending.len() - 1]
+                var rest: List<String> = []
+                var i: Int64 = 0
+                while (i < pending.len() - 1)
+                {
+                    rest.push(pending[i])
+                    i = i + 1
+                }
+                pending = rest
+                for entry in tree.entries(directory)
+                {
+                    if (entry.isDirectory)
+                    {
+                        pending.push(entry.path)
+                    }
+                    else if (!control.stopped && !counter.full())
+                    {
+                        FileSearch::searchFile(entry.path, expression, needle, pattern, regex, caseSensitive, counter)
+                        counter.flush()
+                    }
+                }
+            }
+        }
+
+        /** Looks for the pattern in each line of one file; files that cannot be read as text are skipped. */
+        fnc searchFile(path: String, expression: String, needle: String, pattern: String, regex: Bool, caseSensitive: Bool, counter: SearchCounter) -> Nothing
+        {
+            var content: String = ""
+            try
+            {
+                content = FileSystem::read(path)
+            }
+            catch (e: String)
+            {
+                return
+            }
+            if (!regex && !caseSensitive && !content.toLower().contains(needle))
+            {
+                return
+            }
+            if (!regex && caseSensitive && !content.contains(pattern))
+            {
+                return
+            }
+            var number: Int64 = 0
+            for raw in content.split("\n")
+            {
+                number = number + 1
+                const line: String = FileSearch::chomp(raw)
+                var hits: List<String> = []
+                if (regex)
+                {
+                    hits = FileSearch::regexHits(line, expression, caseSensitive)
+                }
+                else
+                {
+                    hits = FileSearch::literalHits(line, pattern, needle, caseSensitive)
+                }
+                if (hits.len() > 0 && !counter.full())
+                {
+                    counter.add(SearchMatch::create(path, number, FileSearch::column(line, hits), line, hits))
+                }
+            }
+        }
+
+        /** A conservative check of a regular expression: brackets balanced, no dangling backslash, nothing to repeat at the start. The Regex functions end the whole program on a bad pattern (subnix-work/tinox#568), so a pattern that might be wrong is not given to them. */
+        fnc looksValid(pattern: String) -> Bool
+        {
+            var depth: Int64 = 0
+            var inClass: Bool = false
+            var i: Int64 = 0
+            while (i < pattern.len())
+            {
+                const ch: String = pattern.substring(i, i + 1)
+                if (ch == "\\")
+                {
+                    if (i + 1 >= pattern.len())
+                    {
+                        return false
+                    }
+                    i = i + 1
+                }
+                else if (inClass)
+                {
+                    if (ch == "]")
+                    {
+                        inClass = false
+                    }
+                }
+                else if (ch == "[")
+                {
+                    inClass = true
+                }
+                else if (ch == "(")
+                {
+                    depth = depth + 1
+                }
+                else if (ch == ")")
+                {
+                    depth = depth - 1
+                    if (depth < 0)
+                    {
+                        return false
+                    }
+                }
+                else if (i == 0 && (ch == "*" || ch == "+" || ch == "?"))
+                {
+                    return false
+                }
+                i = i + 1
+            }
+            return depth == 0 && !inClass
+        }
+
+        /** The texts the regular expression matches in a line, as they are written there (when ignoring case the line is lower-cased for the search and the hits are cut from the original). */
+        fnc regexHits(line: String, expression: String, caseSensitive: Bool) -> List<String>
+        {
+            if (caseSensitive)
+            {
+                return Regex::findAll(expression, line)
+            }
+            const lowered: String = line.toLower()
+            var hits: List<String> = []
+            var from: Int64 = 0
+            for found in Regex::findAll(expression, lowered)
+            {
+                const at: Int64 = TextScan::indexFrom(lowered, found, from)
+                if (at >= 0 && found.len() > 0)
+                {
+                    hits.push(line.substring(at, at + found.len()))
+                    from = at + found.len()
+                }
+            }
+            return hits
+        }
+
+        /** The places where plain text occurs in a line. */
+        fnc literalHits(line: String, pattern: String, needle: String, caseSensitive: Bool) -> List<String>
+        {
+            var hits: List<String> = []
+            var haystack: String = line
+            var word: String = pattern
+            if (!caseSensitive)
+            {
+                haystack = line.toLower()
+                word = needle
+            }
+            var from: Int64 = 0
+            var at: Int64 = TextScan::indexFrom(haystack, word, from)
+            while (at >= 0 && word.len() > 0)
+            {
+                hits.push(line.substring(at, at + word.len()))
+                from = at + word.len()
+                at = TextScan::indexFrom(haystack, word, from)
+            }
+            return hits
+        }
+    }
+}

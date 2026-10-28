@@ -1,0 +1,23 @@
+module tinox.ide.search
+
+namespace tinox.ide.search
+{
+    /** String searching helpers. */
+    class TextScan
+    {
+        /** The offset of the first occurrence of `needle` at or after `from`, -1 when there is none. String.indexOf ignores its second argument (subnix-work/tinox#567), so this looks at the rest of the text. */
+        fnc indexFrom(text: String, needle: String, from: Int64) -> Int64
+        {
+            if (from > text.len())
+            {
+                return -1
+            }
+            const at: Int64 = text.substring(from, text.len()).indexOf(needle)
+            if (at < 0)
+            {
+                return -1
+            }
+            return at + from
+        }
+    }
+}

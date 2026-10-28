@@ -163,6 +163,18 @@ namespace tinox.ide.ui
             this.on(key, "widget.tabMoved", (ev: Event) => handler(ev.int("from"), ev.int("to")))
         }
 
+        /** The arrow or page key `up`, `down`, `pageUp` or `pageDown` was pressed in a line edit with the `navKeys` prop. */
+        fn onNavKey(key: String, handler: fnc(String) -> Nothing) -> Nothing
+        {
+            this.on(key, "widget.navKey", (ev: Event) => handler(ev.str("direction")))
+        }
+
+        /** A popup (the `popup` prop of a top-level widget) went away: Escape, a click outside or hide(). */
+        fn onDismissed(key: String, handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.on(key, "widget.dismissed", handler)
+        }
+
         /** A dock widget was shown or hidden (also by its close button). */
         fn onDockVisible(key: String, handler: fnc(Bool) -> Nothing) -> Nothing
         {
