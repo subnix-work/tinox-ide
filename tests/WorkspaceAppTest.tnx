@@ -7,7 +7,7 @@ import tinox.ide.app.EventBus
 import tinox.ide.IdeApp
 import tinox.ide.kde.Bridge
 import tinox.ide.kde.EventLoop
-import tinox.ide.workspace.FileSystem
+import tinox.ide.app.FileSystem
 import tinox.ide.workspace.FileTree
 import tinox.ide.workspace.GitStatus
 import tinox.ide.workspace.TreeEntry

@@ -117,6 +117,16 @@ public:
     /// Initial content (a new document's text) is not a change: no event, no version.
     void setSilent(bool silent) { m_silent = silent; }
 
+    /// The text was replaced wholesale from a file: one event, and a new version.
+    void reloaded()
+    {
+        ++m_version;
+        QJsonObject f;
+        f.insert(QStringLiteral("version"), double(m_version));
+        f.insert(QStringLiteral("url"), m_doc->url().toString());
+        m_bridge.emitEvent(QStringLiteral("editor.reloaded"), f, m_id);
+    }
+
     /// While alive, document changes are reported with origin "command".
     struct ApiScope {
         explicit ApiScope(DocState *s) : state(s) { ++state->m_apiDepth; }
@@ -233,6 +243,38 @@ Reply openDocument(Bridge &b, const QJsonObject &cmd)
     f.insert(QStringLiteral("id"), double(id));
     f.insert(QStringLiteral("url"), doc->url().toString());
     f.insert(QStringLiteral("encoding"), doc->encoding());
+    return Reply::success(f);
+}
+
+/// Reads the document again from its file, or from another one (`url`: the document now belongs to that
+/// file, e.g. after a rename). Unsaved changes are replaced. Raises `editor.reloaded` (not `editor.changed`):
+/// whoever tracks the text must take the whole text again.
+Reply loadDocument(Bridge &b, const QJsonObject &cmd)
+{
+    Reply fail;
+    Document *doc = documentOf(b, cmd, fail);
+    if (!doc) {
+        return fail;
+    }
+    const QString url = cmd.value(QStringLiteral("url")).toString();
+    const QUrl target = url.isEmpty() ? doc->url() : urlFrom(url);
+    if (target.isEmpty()) {
+        return Reply::failure(TKDE_E_INVALID_ARG, QStringLiteral("the document has no file to read: pass \"url\""));
+    }
+    if (target.isLocalFile() && !QFile::exists(target.toLocalFile())) {
+        return Reply::failure(TKDE_E_NOT_FOUND, QStringLiteral("no such file: %1").arg(target.toLocalFile()));
+    }
+    DocState *state = DocState::of(doc);
+    state->setSilent(true);
+    doc->setModified(false); // openUrl would otherwise ask what to do with the changes
+    const bool ok = url.isEmpty() ? doc->documentReload() : doc->openUrl(target);
+    state->setSilent(false);
+    if (!ok || doc->openingError()) {
+        return Reply::failure(TKDE_E_FAILED, QStringLiteral("cannot read %1").arg(target.toString()));
+    }
+    state->reloaded();
+    QJsonObject f;
+    f.insert(QStringLiteral("url"), doc->url().toString());
     return Reply::success(f);
 }
 
@@ -673,6 +715,7 @@ void registerCommands(Bridge &bridge)
     doc("editor.createDocument", createDocument);
     doc("editor.openDocument", openDocument);
     doc("editor.saveDocument", saveDocument);
+    doc("editor.loadDocument", loadDocument);
     doc("editor.closeDocument", closeDocument);
     doc("editor.createView", createView);
     doc("editor.setText", setText);

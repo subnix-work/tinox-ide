@@ -1,5 +1,6 @@
 module tinox.ide.workspace
 
+import tinox.ide.app.FileSystem
 import tinox.ide.app.EventBus
 import tinox.ide.ui.Js
 

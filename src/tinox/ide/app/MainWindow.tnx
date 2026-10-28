@@ -38,13 +38,46 @@ namespace tinox.ide.app
         var mount: Mount
         /** The group window geometry and dock layout are saved under. */
         var stateGroup: String
+        /** The tabs of the editor area; the editor module replaces it. */
+        var editorTabs: fnc(Store) -> List<Node>
+        /** The index of the current tab. */
+        var editorIndex: fnc(Store) -> Int64
+        /** Command ids of the View menu in order. */
+        var viewMenu: List<String>
         /** Command ids of the File menu in order ("-" is a separator); feature modules add theirs with addFileMenu. */
         var fileMenu: List<String>
 
         /** A window drawn from `store`, with menus made of the commands in `registry`. */
         fnc create(events: EventLoop, store: Store, bus: EventBus, registry: CommandRegistry, actions: Actions) -> MainWindow
         {
-            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow", fileMenu: ["file_quit"] }
+            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow", fileMenu: ["file_quit"], viewMenu: ["view.project", "view.bottom"], editorTabs: (s: Store) => MainWindow::welcomeTabs(), editorIndex: (s: Store) => 0 }
+        }
+
+        /** The editor area before any file is open. */
+        fnc welcomeTabs() -> List<Node>
+        {
+            return [Ui::label("welcome", "Open a folder or a file to start").inTab("Welcome", "go-home")]
+        }
+
+        /** Replaces the editor area: `tabs` makes the tab nodes (each placed with inTab) from the store, `index` the current one. Draw again after the editor's state changed. */
+        fn setEditorArea(tabs: fnc(Store) -> List<Node>, index: fnc(Store) -> Int64) -> Nothing
+        {
+            this.editorTabs = tabs
+            this.editorIndex = index
+        }
+
+        /** Puts commands into the View menu. */
+        fn addViewMenu(items: List<String>) -> Nothing
+        {
+            var next: List<String> = this.viewMenu
+            next.push("-")
+            var i: Int64 = 0
+            while (i < items.len())
+            {
+                next.push(items[i])
+                i = i + 1
+            }
+            this.viewMenu = next
         }
 
         /** Puts commands into the File menu above Quit, followed by a separator. */
@@ -114,7 +147,8 @@ namespace tinox.ide.app
                 .add(Ui::tabs("editors")
                         .bool("tabsClosable", true)
                         .bool("movable", true)
-                        .add(Ui::label("welcome", "Open a folder or a file to start").inTab("Welcome", "go-home")))
+                        .currentIndex(this.editorIndex(this.store))
+                        .addAll(this.editorTabs(this.store)))
                 .add(Ui::statusBar("status").str("message", this.store.get("status.message")))
         }
 
@@ -127,7 +161,7 @@ namespace tinox.ide.app
         /** The menu bar: File and View, from commands of the registry. */
         fn menus() -> List<Menu>
         {
-            return [Menu::create("&File").id("file").actions(this.fileMenu), Menu::create("&View").id("view").action("view.project").action("view.bottom")]
+            return [Menu::create("&File").id("file").actions(this.fileMenu), Menu::create("&View").id("view").actions(this.viewMenu)]
         }
 
         /** Builds and shows the window: first render, menus, state changes, saved layout. Call after the registry is attached. */
@@ -145,6 +179,7 @@ namespace tinox.ide.app
             this.store.watch("status.message", (value: String) => this.changed())
             this.store.watch("workspace.open", (value: String) => this.changed())
             this.store.watch("workspace.name", (value: String) => this.changed())
+            this.store.watch("editor.revision", (value: String) => this.changed())
             this.mount.onClick("openFolder", (ev: Event) => this.registry.execute("workspace.openFolder"))
             this.bus.subscribe("log.line", (m: BusMessage) => this.mount.append("output", m.str("line")))
             this.mount.restoreState(this.stateGroup)

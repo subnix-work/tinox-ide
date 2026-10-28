@@ -1,0 +1,296 @@
+import MockBridge
+import TempProject
+import WorkspaceAppTest
+import tinox.ide.IdeApp
+import tinox.ide.app.BusMessage
+import tinox.ide.app.FileSystem
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.EventLoop
+
+class DocumentsTest
+{
+    fnc start(events: EventLoop) -> IdeApp
+    {
+        const app: IdeApp = WorkspaceAppTest::start(events, MockBridge::createObject())
+        for name in ["editor.saveDocument", "editor.loadDocument", "editor.setText", "editor.setCursor", "core.release"]
+        {
+            MockBridge::onCommand(name, "", "")
+        }
+        MockBridge::onCommand("editor.getText", "{\"text\":\"kept\"}", "")
+        return app
+    }
+
+    /** Scripts the ids the next document and view get; returns the document id. */
+    fnc script(doc: Int64, view: Int64) -> Nothing
+    {
+        DocumentsTest::ensure(doc)
+        DocumentsTest::ensure(view)
+        MockBridge::onCommand("editor.openDocument", "{\"id\":" + doc.toString() + "}", "")
+        MockBridge::onCommand("editor.createView", "{\"id\":" + view.toString() + "}", "")
+    }
+
+    /** Makes the mock know the object with this id, so releasing it works. */
+    fnc ensure(id: Int64) -> Nothing
+    {
+        var made: Int64 = MockBridge::createObject()
+        while (made < id)
+        {
+            made = MockBridge::createObject()
+        }
+    }
+
+    fnc event(events: EventLoop, json: String) -> Nothing
+    {
+        MockBridge::push(json)
+        events.pump(1000)
+    }
+
+    fnc answer(events: EventLoop, app: IdeApp, button: String) -> Nothing
+    {
+        WorkspaceAppTest::answer(events, app.dialogs.nextRequest - 1, "\"button\":\"" + button + "\"")
+    }
+
+    fnc count(all: List<String>, needle: String) -> Int64
+    {
+        var n: Int64 = 0
+        for line in all
+        {
+            if (line.contains(needle))
+            {
+                n = n + 1
+            }
+        }
+        return n
+    }
+
+    @Test("opening a file makes a tab with a path tool tip, opening it again only switches to it")
+    fn testOpen() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = DocumentsTest::start(events)
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "a.txt", "a")
+        const b: String = TempProject::file(root, "b.txt", "b")
+        DocumentsTest::script(300, 301)
+        app.documents.open(a)
+        DocumentsTest::script(302, 303)
+        app.documents.open(b)
+        app.documents.open(a)
+        const sent: List<String> = WorkspaceAppTest::drain()
+        const redraw: String = WorkspaceAppTest::firstWith(sent, "\"toolTip\":\"" + a + "\"")
+        const ok: Bool = app.documents.count() == 2 && app.documents.active == 0 && app.store.getInt("editor.count") == 2 && app.store.getBool("editor.hasActive") && DocumentsTest::count(sent, "editor.openDocument") == 2 && redraw != "" && app.store.getInt("editor.active") == 0 && app.registry.isEnabled("file_close") && !app.registry.isEnabled("file_save")
+        TempProject::remove(root)
+        return ok
+    }
+
+    @Test("a modified document marks its tab and enables Save; saving writes it and clears the marker")
+    fn testModifiedAndSave() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = DocumentsTest::start(events)
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "a.txt", "a")
+        DocumentsTest::script(310, 311)
+        app.documents.open(a)
+        WorkspaceAppTest::drain()
+        DocumentsTest::event(events, "{\"type\":\"editor.modifiedChanged\",\"target\":310,\"modified\":true}")
+        const marked: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"icon\":\"document-save\"")
+        const enabled: Bool = app.registry.isEnabled("file_save") && app.registry.isEnabled("file.saveAll") && app.store.getInt("editor.modifiedCount") == 1
+        app.registry.execute("file_save")
+        const saved: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"cmd\":\"editor.saveDocument\"")
+        DocumentsTest::event(events, "{\"type\":\"editor.saved\",\"target\":310,\"url\":\"" + a + "\"}")
+        DocumentsTest::event(events, "{\"type\":\"editor.modifiedChanged\",\"target\":310,\"modified\":false}")
+        const clean: Bool = !app.registry.isEnabled("file_save") && app.store.getInt("editor.modifiedCount") == 0
+        TempProject::remove(root)
+        return marked != "" && enabled && saved.contains("\"target\":310") && clean
+    }
+
+    @Test("closing a modified tab asks; Cancel keeps it, Discard drops it, Save writes first")
+    fn testCloseWithPrompt() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = DocumentsTest::start(events)
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "a.txt", "a")
+        const b: String = TempProject::file(root, "b.txt", "b")
+        const c: String = TempProject::file(root, "c.txt", "c")
+        DocumentsTest::script(320, 321)
+        app.documents.open(a)
+        DocumentsTest::script(322, 323)
+        app.documents.open(b)
+        DocumentsTest::script(324, 325)
+        app.documents.open(c)
+        for id in [320, 322, 324]
+        {
+            DocumentsTest::event(events, "{\"type\":\"editor.modifiedChanged\",\"target\":" + id.toString() + ",\"modified\":true}")
+        }
+        WorkspaceAppTest::drain()
+        app.documents.closeTab(2)
+        const asked: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "has unsaved changes")
+        DocumentsTest::answer(events, app, "cancel")
+        const kept: Bool = app.documents.count() == 3
+        app.documents.closeTab(2)
+        DocumentsTest::answer(events, app, "discard")
+        const dropped: Bool = app.documents.count() == 2 && app.documents.active == 1
+        app.documents.closeTab(0)
+        DocumentsTest::answer(events, app, "save")
+        const saved: Bool = DocumentsTest::count(WorkspaceAppTest::drain(), "editor.saveDocument") == 1 && app.documents.count() == 1 && app.documents.paths()[0] == b
+        TempProject::remove(root)
+        return asked.contains("\"buttons\"") && kept && dropped && saved
+    }
+
+    @Test("tabs reorder when dragged and the middle click closes an unmodified tab")
+    fn testMoveAndMiddleClose() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = DocumentsTest::start(events)
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "a.txt", "a")
+        const b: String = TempProject::file(root, "b.txt", "b")
+        const c: String = TempProject::file(root, "c.txt", "c")
+        DocumentsTest::script(330, 331)
+        app.documents.open(a)
+        DocumentsTest::script(332, 333)
+        app.documents.open(b)
+        DocumentsTest::script(334, 335)
+        app.documents.open(c)
+        const editors: Int64 = app.window.mount.idOf("editors")
+        DocumentsTest::event(events, "{\"type\":\"widget.tabMoved\",\"target\":" + editors.toString() + ",\"key\":\"editors\",\"from\":0,\"to\":2}")
+        const order: List<String> = app.documents.paths()
+        const moved: Bool = order[0] == b && order[1] == c && order[2] == a && app.documents.active == 1
+        DocumentsTest::event(events, "{\"type\":\"widget.closeRequested\",\"target\":" + editors.toString() + ",\"key\":\"editors\",\"index\":0,\"via\":\"middle\"}")
+        const closed: Bool = app.documents.count() == 2 && app.documents.paths()[0] == c
+        DocumentsTest::event(events, "{\"type\":\"widget.currentChanged\",\"target\":" + editors.toString() + ",\"key\":\"editors\",\"index\":1}")
+        const switched: Bool = app.store.getInt("editor.active") == 1
+        TempProject::remove(root)
+        return moved && closed && switched
+    }
+
+    @Test("a split shows a second view of the same document and unsplit releases it")
+    fn testSplit() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = DocumentsTest::start(events)
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "a.txt", "a")
+        DocumentsTest::script(340, 341)
+        app.documents.open(a)
+        WorkspaceAppTest::drain()
+        DocumentsTest::ensure(342)
+        MockBridge::onCommand("editor.createView", "{\"id\":342}", "")
+        app.registry.execute("view.splitRight")
+        const split: List<String> = WorkspaceAppTest::drain()
+        const views: Bool = app.documents.current().isSplit() && app.documents.current().views[0].id() == 341 && app.documents.current().views[1].id() == 342 && app.store.getBool("editor.activeSplit") && !app.registry.isEnabled("view.splitRight") && app.registry.isEnabled("view.unsplit")
+        const tree: String = WorkspaceAppTest::firstWith(split, "\"object\":342")
+        const sameDocument: Bool = DocumentsTest::count(split, "\"document\":340") == 1
+        app.registry.execute("view.unsplit")
+        const back: Bool = !app.documents.current().isSplit() && !app.store.getBool("editor.activeSplit")
+        TempProject::remove(root)
+        return views && tree != "" && sameDocument && back
+    }
+
+    @Test("an unmodified file reloads silently when it changes on disk, a modified one asks, a deleted one is marked")
+    fn testExternalChange() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = DocumentsTest::start(events)
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "a.txt", "a")
+        DocumentsTest::script(350, 351)
+        app.documents.open(a)
+        WorkspaceAppTest::drain()
+        DocumentsTest::event(events, "{\"type\":\"editor.externallyModified\",\"target\":350,\"modified\":false,\"reason\":\"modified\"}")
+        const silent: Bool = DocumentsTest::count(WorkspaceAppTest::drain(), "editor.loadDocument") == 1 && app.dialogs.pending() == 0
+        DocumentsTest::event(events, "{\"type\":\"editor.modifiedChanged\",\"target\":350,\"modified\":true}")
+        DocumentsTest::event(events, "{\"type\":\"editor.externallyModified\",\"target\":350,\"modified\":true,\"reason\":\"modified\"}")
+        const asked: Bool = app.dialogs.pending() == 1 && DocumentsTest::count(WorkspaceAppTest::drain(), "editor.loadDocument") == 0
+        DocumentsTest::answer(events, app, "reload")
+        const reloaded: Bool = DocumentsTest::count(WorkspaceAppTest::drain(), "editor.loadDocument") == 1 && !app.documents.current().modified
+        DocumentsTest::event(events, "{\"type\":\"editor.externallyModified\",\"target\":350,\"modified\":false,\"reason\":\"deleted\"}")
+        const missing: Bool = app.documents.current().missing && WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "dialog-warning") != ""
+        TempProject::remove(root)
+        return silent && asked && reloaded && missing
+    }
+
+    @Test("renaming or moving a file in the tree retargets its open document, deleting marks it missing")
+    fn testFileOperations() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = DocumentsTest::start(events)
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "a.txt", "a")
+        const dir: String = TempProject::file(root, "sub/b.txt", "b")
+        DocumentsTest::script(360, 361)
+        app.documents.open(a)
+        DocumentsTest::script(362, 363)
+        const b: OpenFile = app.documents.open(root + "/sub/b.txt")
+        WorkspaceAppTest::drain()
+        app.bus.publish("workspace.fileOperation", "{\"kind\":\"rename\",\"path\":\"" + root + "/z.txt\",\"oldPath\":\"" + a + "\"}")
+        const renamed: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"cmd\":\"editor.loadDocument\"")
+        const first: Bool = app.documents.paths()[0] == root + "/z.txt" && renamed.contains("\"url\":\"" + root + "/z.txt\"")
+        app.bus.publish("workspace.fileOperation", "{\"kind\":\"move\",\"path\":\"" + root + "/moved\",\"oldPath\":\"" + root + "/sub\"}")
+        const second: Bool = b.path == root + "/moved/b.txt"
+        app.bus.publish("workspace.fileOperation", "{\"kind\":\"delete\",\"path\":\"" + root + "/moved\",\"oldPath\":\"\"}")
+        const gone: Bool = b.missing && !app.documents.files[0].missing
+        TempProject::remove(root)
+        return first && second && gone
+    }
+
+    @Test("the session lists files, cursors and splits, and restoring opens them again and skips files that are gone")
+    fn testSession() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = DocumentsTest::start(events)
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "a.txt", "a")
+        const b: String = TempProject::file(root, "b.txt", "b")
+        DocumentsTest::script(370, 371)
+        app.documents.open(a)
+        DocumentsTest::script(372, 373)
+        app.documents.open(b)
+        DocumentsTest::event(events, "{\"type\":\"editor.cursorMoved\",\"target\":373,\"position\":{\"line\":4,\"character\":2}}")
+        DocumentsTest::ensure(374)
+        MockBridge::onCommand("editor.createView", "{\"id\":374}", "")
+        app.documents.split(true)
+        WorkspaceAppTest::drain()
+        app.documents.saveSession()
+        const written: List<String> = WorkspaceAppTest::drain()
+        const listed: Bool = WorkspaceAppTest::firstWith(written, "\"key\":\"files\"").contains(a + "\\t0\\t0\\t") && WorkspaceAppTest::firstWith(written, "\"key\":\"files\"").contains(b + "\\t4\\t2\\tdown") && WorkspaceAppTest::firstWith(written, "\"key\":\"active\"").contains(b)
+        app.documents.closeAll((ok: Bool) => app.documents.closed(ok))
+        const emptied: Bool = app.documents.count() == 0 && app.documents.active == -1
+        DocumentsTest::script(380, 381)
+        app.documents.restoreEntries([a + "\t0\t0\t", b + "\t4\t2\tdown", root + "/gone.txt\t0\t0\t"], a)
+        const restored: Bool = app.documents.count() == 2 && app.documents.active == 0 && app.documents.files[1].line == 4 && app.documents.files[1].isSplit()
+        TempProject::remove(root)
+        return listed && emptied && restored
+    }
+
+    @Test("quitting asks about every modified file once, Cancel stops it, and a clean state quits at once")
+    fn testQuit() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = DocumentsTest::start(events)
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "a.txt", "a")
+        const b: String = TempProject::file(root, "b.txt", "b")
+        DocumentsTest::script(390, 391)
+        app.documents.open(a)
+        DocumentsTest::script(392, 393)
+        app.documents.open(b)
+        var results: List<Bool> = []
+        app.documents.confirmQuit((ok: Bool) => results.push(ok))
+        const clean: Bool = results.len() == 1 && results[0]
+        DocumentsTest::event(events, "{\"type\":\"editor.modifiedChanged\",\"target\":390,\"modified\":true}")
+        DocumentsTest::event(events, "{\"type\":\"editor.modifiedChanged\",\"target\":392,\"modified\":true}")
+        app.documents.confirmQuit((ok: Bool) => results.push(ok))
+        DocumentsTest::answer(events, app, "discard")
+        const second: Bool = results.len() == 1 && app.dialogs.pending() == 1
+        DocumentsTest::answer(events, app, "cancel")
+        const cancelled: Bool = results.len() == 2 && !results[1] && app.running
+        app.documents.confirmQuit((ok: Bool) => results.push(ok))
+        DocumentsTest::answer(events, app, "discard")
+        DocumentsTest::answer(events, app, "discard")
+        TempProject::remove(root)
+        return clean && second && cancelled && results.len() == 3 && results[2]
+    }
+}

@@ -1,10 +1,10 @@
-module tinox.ide.workspace
+module tinox.ide.app
 
 import tinox.core.fs.Fs
 import tinox.core.process.Process
 import tinox.core.process.ProcessResult
 
-namespace tinox.ide.workspace
+namespace tinox.ide.app
 {
     /**
      * Everything the workspace needs from the file system, in one place.

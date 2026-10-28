@@ -37,6 +37,8 @@ namespace tinox.ide.ui
         var externalHandler: fnc(String) -> Nothing
         /** Called when the document is being destroyed. */
         var closingHandler: fnc(Document) -> Nothing
+        /** Called when the text was read again from a file. */
+        var reloadedHandler: fnc(Document) -> Nothing
 
         /** Wraps an existing document object and starts listening to its events. */
         fnc wrap(events: EventLoop, id: Int64) -> Document
@@ -49,7 +51,8 @@ namespace tinox.ide.ui
                 savedHandler: (url: String) => Action::ignore(),
                 urlHandler: (url: String) => Action::ignore(),
                 externalHandler: (reason: String) => Action::ignore(),
-                closingHandler: (closing: Document) => Action::ignore()
+                closingHandler: (closing: Document) => Action::ignore(),
+                reloadedHandler: (reloaded: Document) => Action::ignore()
             }
             events.onTarget(id, (ev: Event) => doc.deliver(ev))
             return doc
@@ -103,6 +106,10 @@ namespace tinox.ide.ui
             {
                 this.externalHandler(ev.str("reason"))
             }
+            else if (ev.type == "editor.reloaded")
+            {
+                this.reloadedHandler(this)
+            }
             else if (ev.type == "editor.closing")
             {
                 this.closingHandler(this)
@@ -141,6 +148,12 @@ namespace tinox.ide.ui
             this.externalHandler = handler
         }
 
+        /** The text was replaced by the contents of a file (load()): take the whole text again, not an edit. */
+        fn onReloaded(handler: fnc(Document) -> Nothing) -> Nothing
+        {
+            this.reloadedHandler = handler
+        }
+
         /** The document is being destroyed (released, or closed by the application). */
         fn onClosing(handler: fnc(Document) -> Nothing) -> Nothing
         {
@@ -177,6 +190,20 @@ namespace tinox.ide.ui
         }
 
         // ---- file
+
+        /**
+         * Reads the file again, replacing the text and any unsaved edits (raises onReloaded, not
+         * onChange). With a `url` the document now belongs to that file: use it after a rename.
+         */
+        fn load(url: String) -> Nothing
+        {
+            var command: Command = Command::named("editor.loadDocument").target(this.docId)
+            if (url != "")
+            {
+                command = command.str("url", url)
+            }
+            Bridge::query(command.build())
+        }
 
         /** Writes to the document's file; throws when the document has none (use saveAs). */
         fn save() -> Nothing

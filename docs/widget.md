@@ -65,8 +65,9 @@ window ends the loop (`docs/bridge-core.md`); a main window asks first through `
 ## Events (`target` is the node's id, `key` its key)
 
 `widget.clicked {checked}`, `widget.textChanged {text}`, `widget.returnPressed`,
-`widget.currentChanged {index}` (combo box, tabs, stack), `widget.closeRequested {index?}` (window
-close button; tab close button with its index), `widget.dockVisibilityChanged {visible}`,
+`widget.currentChanged {index}` (combo box, tabs, stack), `widget.tabMoved {from, to}` (the user dragged a
+tab), `widget.closeRequested {index?, via?}` (window close button; tab close button with its index;
+`via: "middle"` when a tab was closed with the middle mouse button), `widget.dockVisibilityChanged {visible}`,
 `widget.splitterMoved {sizes}`.
 
 ## The diff

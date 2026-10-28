@@ -213,6 +213,18 @@ namespace tinox.ide.ui
             return this
         }
 
+        /** Like inTab, with a tool tip for the tab (a path, for instance). */
+        fn inTabTip(title: String, icon: String, toolTip: String) -> Node
+        {
+            var tab: List<String> = [Js::strField("title", title), Js::strField("toolTip", toolTip)]
+            if (icon != "")
+            {
+                tab.push(Js::strField("icon", icon))
+            }
+            this.place.push(Js::field("tab", Js::object(tab)))
+            return this
+        }
+
         /** In a main window, a dock widget: "left", "right", "top" or "bottom". */
         fn inArea(area: String) -> Node
         {

@@ -1,0 +1,959 @@
+module tinox.ide.editor
+
+import tinox.core.process.Process
+import tinox.ide.app.Background
+import tinox.ide.app.BusMessage
+import tinox.ide.app.CommandContext
+import tinox.ide.app.CommandRegistry
+import tinox.ide.app.EventBus
+import tinox.ide.app.FileSystem
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.MainWindow
+import tinox.ide.app.Store
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.settings.Settings
+import tinox.ide.ui.Dialogs
+import tinox.ide.ui.Document
+import tinox.ide.ui.EditorView
+import tinox.ide.ui.Js
+import tinox.ide.ui.Node
+import tinox.ide.ui.Position
+import tinox.ide.ui.Ui
+import tinox.ide.workspace.WatchControl
+import tinox.ide.app.Logger
+
+namespace tinox.ide.editor
+{
+    /**
+     * The open files: the tabs of the editor area. Opening, saving, closing with a question
+     * about unsaved changes, a split editor (two views on one document), reacting to changes
+     * of the files on disk, and the session that brings the tabs back after a restart.
+     *
+     * Store keys written: editor.count, editor.active (index, -1 for none), editor.hasActive,
+     * editor.activeModified, editor.modifiedCount, editor.activeSplit, editor.cursor ("Ln 3, Col 5")
+     * and editor.revision (counts every change of the tab list; the window draws again on it).
+     *
+     * Bus messages heard: file.openRequested {path}, workspace.fileOperation, workspace.opened,
+     * editor.tick. Sent: editor.opened {path}, editor.closed {path}, editor.saved {path},
+     * editor.activeChanged {path}.
+     *
+     * Settings: Editor/autosave (Bool), Editor/autosaveSeconds (Int), Editor/backup (Bool, keeps
+     * the previous version as `name~` on every save); Session/files, Session/active, Session/workspace.
+     */
+    class Documents
+    {
+        /** The loop events arrive on. */
+        var events: EventLoop
+        /** Messages between modules. */
+        var bus: EventBus
+        /** The application state. */
+        var store: Store
+        /** The commands. */
+        var registry: CommandRegistry
+        /** Questions to the user. */
+        var dialogs: Dialogs
+        /** Persistent settings. */
+        var settings: Settings
+        /** The log. */
+        var logger: Logger
+        /** The window whose editor area this fills. */
+        var window: MainWindow
+        /** The open files, in tab order. */
+        var files: List<OpenFile>
+        /** The index of the current tab, -1 for none. */
+        var active: Int64
+        /** Counts changes of the tab list. */
+        var revision: Int64
+        /** Whether the session has changed since it was written. */
+        var sessionDirty: Bool
+        /** Seconds since the last autosave. */
+        var sinceAutosave: Int64
+        /** Ends the ticker task. */
+        var control: WatchControl
+
+        /** The document module for a window. */
+        fnc create(events: EventLoop, bus: EventBus, store: Store, registry: CommandRegistry, dialogs: Dialogs, settings: Settings, logger: Logger, window: MainWindow) -> Documents
+        {
+            return Documents { events: events, bus: bus, store: store, registry: registry, dialogs: dialogs, settings: settings, logger: logger, window: window, files: [], active: -1, revision: 0, sessionDirty: false, sinceAutosave: 0, control: WatchControl::create() }
+        }
+
+        // ---------------------------------------------------------------- wiring
+
+        /** The commands of this module. Call before the registry is attached. */
+        fn registerCommands() -> Nothing
+        {
+            const has: fnc(Store) -> Bool = (s: Store) => s.getBool("editor.hasActive")
+            this.registry.registerAll([
+                IdeCommand::standard("file_open").run((c: CommandContext) => this.chooseAndOpen()),
+                IdeCommand::standard("file_save").enabledWhen((s: Store) => s.getBool("editor.activeModified")).run((c: CommandContext) => this.saveActive()),
+                IdeCommand::standard("file_save_as").enabledWhen(has).run((c: CommandContext) => this.saveActiveAs()),
+                IdeCommand::standard("file_close").enabledWhen(has).run((c: CommandContext) => this.closeActive()),
+                IdeCommand::create("file.saveAll", "Save A&ll").icon("document-save-all").shortcut("Ctrl+Shift+S").category("File").enabledWhen((s: Store) => s.getInt("editor.modifiedCount") > 0).run((c: CommandContext) => this.saveAll()),
+                IdeCommand::create("file.closeAll", "Close All &Files").icon("window-close").category("File").enabledWhen(has).run((c: CommandContext) => this.closeAll((ok: Bool) => this.closed(ok))),
+                IdeCommand::create("file.reload", "&Reload from Disk").icon("view-refresh").category("File").enabledWhen(has).run((c: CommandContext) => this.reloadActive()),
+                IdeCommand::create("view.splitRight", "Split &Right").icon("view-split-left-right").shortcut("Ctrl+\\").category("View").enabledWhen((s: Store) => s.getBool("editor.hasActive") && !s.getBool("editor.activeSplit")).run((c: CommandContext) => this.split(false)),
+                IdeCommand::create("view.splitDown", "Split &Down").icon("view-split-top-bottom").shortcut("Ctrl+Shift+\\").category("View").enabledWhen((s: Store) => s.getBool("editor.hasActive") && !s.getBool("editor.activeSplit")).run((c: CommandContext) => this.split(true)),
+                IdeCommand::create("view.unsplit", "&Remove Split").icon("view-close").category("View").enabledWhen((s: Store) => s.getBool("editor.activeSplit")).run((c: CommandContext) => this.unsplit()),
+                IdeCommand::create("tab.next", "&Next Tab").shortcut("Ctrl+PgDown").category("View").enabledWhen((s: Store) => s.getInt("editor.count") > 1).run((c: CommandContext) => this.step(1)),
+                IdeCommand::create("tab.previous", "&Previous Tab").shortcut("Ctrl+PgUp").category("View").enabledWhen((s: Store) => s.getInt("editor.count") > 1).run((c: CommandContext) => this.step(-1))
+            ])
+        }
+
+        /** The File menu entries of this module. */
+        fn fileItems() -> List<String>
+        {
+            return ["file_open", "file_save", "file_save_as", "file.saveAll", "file.reload", "-", "file_close", "file.closeAll"]
+        }
+
+        /** The View menu entries of this module. */
+        fn viewItems() -> List<String>
+        {
+            return ["view.splitRight", "view.splitDown", "view.unsplit", "-", "tab.next", "tab.previous"]
+        }
+
+        /** Connects the window and the bus. Call once the window is mounted. */
+        fn bind() -> Nothing
+        {
+            this.window.setEditorArea((s: Store) => this.tabNodes(), (s: Store) => this.activeIndex())
+            this.window.mount.onIndex("editors", (index: Int64) => this.activate(index))
+            this.window.mount.onTabMoved("editors", (from: Int64, to: Int64) => this.moved(from, to))
+            this.window.mount.onCloseRequested("editors", (ev: Event) => this.closeTab(ev.int("index")))
+            this.bus.subscribe("file.openRequested", (m: BusMessage) => this.openQuietly(m.str("path")))
+            this.bus.subscribe("workspace.fileOperation", (m: BusMessage) => this.fileOperation(m.str("kind"), m.str("path"), m.str("oldPath")))
+            this.bus.subscribe("editor.tick", (m: BusMessage) => this.tick())
+            this.publishState()
+        }
+
+        /** Starts the task that ticks once a second (autosave, session); the tests tick by hand instead. */
+        fn startTicker() -> Nothing
+        {
+            spawn Documents::ticker(this.control)
+        }
+
+        /** The ticker task: reports "editor.tick" every second until stopped. */
+        fnc ticker(control: WatchControl) -> Int64
+        {
+            while (!control.stopped)
+            {
+                Process::sleep(1000)
+                if (!control.stopped)
+                {
+                    Background::report("editor.tick", "")
+                }
+            }
+            return 0
+        }
+
+        /** The program is ending: ends the ticker. No call to the bridge. */
+        fn shutdown() -> Nothing
+        {
+            this.control.stopped = true
+        }
+
+        // ---------------------------------------------------------------- queries
+
+        /** The number of open files. */
+        fn count() -> Int64
+        {
+            return this.files.len()
+        }
+
+        /** The index of the file with this path, -1 when it is not open. */
+        fn indexOf(path: String) -> Int64
+        {
+            var i: Int64 = 0
+            while (i < this.files.len())
+            {
+                if (this.files[i].path == path)
+                {
+                    return i
+                }
+                i = i + 1
+            }
+            return -1
+        }
+
+        /** The file of the current tab; throws when none is open. */
+        fn current() -> OpenFile
+        {
+            if (this.active < 0 || this.active >= this.files.len())
+            {
+                throw "no file is open"
+            }
+            return this.files[this.active]
+        }
+
+        /** The open file with this path; throws when it is not open. */
+        fn file(path: String) -> OpenFile
+        {
+            const i: Int64 = this.indexOf(path)
+            if (i < 0)
+            {
+                throw "not open: " + path
+            }
+            return this.files[i]
+        }
+
+        /** The paths of the open files, in tab order. */
+        fn paths() -> List<String>
+        {
+            var out: List<String> = []
+            for f in this.files
+            {
+                out.push(f.path)
+            }
+            return out
+        }
+
+        /** The number of files with unsaved changes. */
+        fn modifiedCount() -> Int64
+        {
+            var n: Int64 = 0
+            for f in this.files
+            {
+                if (f.modified)
+                {
+                    n = n + 1
+                }
+            }
+            return n
+        }
+
+        // ---------------------------------------------------------------- opening
+
+        /** Asks for a file and opens it. */
+        fn chooseAndOpen() -> Nothing
+        {
+            var start: String = this.store.get("workspace.path")
+            if (start == "" && this.active >= 0)
+            {
+                start = FileSystem::parent(this.current().path)
+            }
+            this.dialogs.chooseFile("Open File", start, [], (path: String) => this.openQuietly(path))
+        }
+
+        /** Opens a file; a failure is shown to the user, not thrown. */
+        fn openQuietly(path: String) -> Nothing
+        {
+            if (path == "")
+            {
+                return
+            }
+            try
+            {
+                this.open(path)
+            }
+            catch (e: String)
+            {
+                this.logger.warn("could not open " + path + ": " + e)
+                this.dialogs.error("Open File", "Cannot open " + path + ":\n" + e)
+            }
+        }
+
+        /** Opens the file in a new tab, or switches to its tab when it is open already. Throws when it cannot be read. */
+        fn open(path: String) -> OpenFile
+        {
+            const existing: Int64 = this.indexOf(path)
+            if (existing >= 0)
+            {
+                this.activate(existing)
+                this.changedTabs()
+                return this.files[existing]
+            }
+            if (FileSystem::isDirectory(path))
+            {
+                throw "is a folder"
+            }
+            const doc: Document = Document::open(this.events, path, "")
+            const view: EditorView = EditorView::create(this.events, doc)
+            const f: OpenFile = OpenFile::create(path, doc, view)
+            this.wire(f, view)
+            var next: List<OpenFile> = this.files
+            next.push(f)
+            this.files = next
+            this.active = this.files.len() - 1
+            this.sessionDirty = true
+            this.bus.publish("editor.opened", Js::object([Js::strField("path", path)]))
+            this.changedTabs()
+            return f
+        }
+
+        /** Connects the events of a file's document and of a view. */
+        fn wire(f: OpenFile, view: EditorView) -> Nothing
+        {
+            view.onCursorMoved((p: Position) => this.cursorMoved(f, p))
+            if (f.views.len() > 0 && f.views[0].id() != view.id())
+            {
+                return
+            }
+            f.doc.onModified((modified: Bool) => this.modifiedChanged(f, modified))
+            f.doc.onSaved((url: String) => this.savedOnDisk(f))
+            f.doc.onExternalChange((reason: String) => this.externalChange(f, reason))
+        }
+
+        // ---------------------------------------------------------------- tabs
+
+        /** The index of the current tab; 0 shows the welcome tab while nothing is open. */
+        fn activeIndex() -> Int64
+        {
+            if (this.active < 0)
+            {
+                return 0
+            }
+            return this.active
+        }
+
+        /** The tab nodes of the editor area. */
+        fn tabNodes() -> List<Node>
+        {
+            if (this.files.len() == 0)
+            {
+                return MainWindow::welcomeTabs()
+            }
+            var out: List<Node> = []
+            for f in this.files
+            {
+                var content: Node = Ui::embed("view:" + f.path + ":0", f.views[0].id())
+                if (f.isSplit())
+                {
+                    content = Ui::splitter("doc:" + f.path, f.vertical).add(content).add(Ui::embed("view:" + f.path + ":1", f.views[1].id()))
+                }
+                out.push(content.inTabTip(f.title(), f.icon(), f.path))
+            }
+            return out
+        }
+
+        /** The user chose a tab (or code did). */
+        fn activate(index: Int64) -> Nothing
+        {
+            if (index < 0 || index >= this.files.len() || index == this.active)
+            {
+                return
+            }
+            this.active = index
+            this.sessionDirty = true
+            this.publishState()
+            this.bus.publish("editor.activeChanged", Js::object([Js::strField("path", this.files[index].path)]))
+        }
+
+        /** Switches by an offset, wrapping around. */
+        fn step(offset: Int64) -> Nothing
+        {
+            const n: Int64 = this.files.len()
+            if (n < 2)
+            {
+                return
+            }
+            this.activate((this.active + offset + n) % n)
+            this.changedTabs()
+        }
+
+        /** The user dragged a tab: the list follows. */
+        fn moved(from: Int64, to: Int64) -> Nothing
+        {
+            if (from < 0 || to < 0 || from >= this.files.len() || to >= this.files.len() || from == to)
+            {
+                return
+            }
+            const f: OpenFile = this.files[from]
+            const wasActive: OpenFile = this.files[this.active]
+            var rest: List<OpenFile> = []
+            var i: Int64 = 0
+            while (i < this.files.len())
+            {
+                if (i != from)
+                {
+                    rest.push(this.files[i])
+                }
+                i = i + 1
+            }
+            var next: List<OpenFile> = []
+            i = 0
+            while (i < rest.len())
+            {
+                if (i == to)
+                {
+                    next.push(f)
+                }
+                next.push(rest[i])
+                i = i + 1
+            }
+            if (to >= rest.len())
+            {
+                next.push(f)
+            }
+            this.files = next
+            this.active = this.indexOf(wasActive.path)
+            this.sessionDirty = true
+            this.changedTabs()
+        }
+
+        /** The tab list changed: state, window and session follow. */
+        fn changedTabs() -> Nothing
+        {
+            this.publishState()
+            this.revision = this.revision + 1
+            this.store.setInt("editor.revision", this.revision)
+        }
+
+        /** Writes the derived state into the store and refreshes the commands. */
+        fn publishState() -> Nothing
+        {
+            this.store.setInt("editor.count", this.files.len())
+            this.store.setInt("editor.active", this.active)
+            this.store.setBool("editor.hasActive", this.active >= 0)
+            this.store.setInt("editor.modifiedCount", this.modifiedCount())
+            var modified: Bool = false
+            var split: Bool = false
+            var cursor: String = ""
+            if (this.active >= 0)
+            {
+                const f: OpenFile = this.files[this.active]
+                modified = f.modified
+                split = f.isSplit()
+                cursor = "Ln " + (f.line + 1).toString() + ", Col " + (f.character + 1).toString()
+            }
+            this.store.setBool("editor.activeModified", modified)
+            this.store.setBool("editor.activeSplit", split)
+            this.store.set("editor.cursor", cursor)
+            this.registry.refresh()
+        }
+
+        // ---------------------------------------------------------------- document events
+
+        /** A document gained or lost unsaved changes: the tab marker follows. */
+        fn modifiedChanged(f: OpenFile, modified: Bool) -> Nothing
+        {
+            if (f.modified == modified)
+            {
+                return
+            }
+            f.modified = modified
+            this.changedTabs()
+        }
+
+        /** A document was written: the file exists again. */
+        fn savedOnDisk(f: OpenFile) -> Nothing
+        {
+            f.missing = false
+            f.modified = false
+            this.bus.publish("editor.saved", Js::object([Js::strField("path", f.path)]))
+            this.changedTabs()
+        }
+
+        /** The cursor of a view moved. */
+        fn cursorMoved(f: OpenFile, p: Position) -> Nothing
+        {
+            f.line = p.line
+            f.character = p.character
+            this.sessionDirty = true
+            if (this.active >= 0 && this.files[this.active].path == f.path)
+            {
+                this.store.set("editor.cursor", "Ln " + (p.line + 1).toString() + ", Col " + (p.character + 1).toString())
+            }
+        }
+
+        // ---------------------------------------------------------------- saving
+
+        /** Writes the file of the current tab. */
+        fn saveActive() -> Nothing
+        {
+            if (this.active >= 0)
+            {
+                this.saveQuietly(this.files[this.active])
+            }
+        }
+
+        /** Saves, showing a failure to the user. Returns whether it worked. */
+        fn saveQuietly(f: OpenFile) -> Bool
+        {
+            try
+            {
+                this.save(f)
+                return true
+            }
+            catch (e: String)
+            {
+                this.logger.warn("could not save " + f.path + ": " + e)
+                this.dialogs.error("Save", "Cannot save " + f.path + ":\n" + e)
+                return false
+            }
+        }
+
+        /** Writes a file; with the backup option the previous version is kept as `name~`. Throws on failure. */
+        fn save(f: OpenFile) -> Nothing
+        {
+            if (this.settings.getBool("Editor", "backup", false) && FileSystem::exists(f.path))
+            {
+                FileSystem::copy(f.path, f.path + "~")
+            }
+            f.doc.save()
+        }
+
+        /** Saves every file with unsaved changes. */
+        fn saveAll() -> Nothing
+        {
+            for f in this.files
+            {
+                if (f.modified)
+                {
+                    this.saveQuietly(f)
+                }
+            }
+        }
+
+        /** Asks for a new name for the current file and writes it there. */
+        fn saveActiveAs() -> Nothing
+        {
+            if (this.active < 0)
+            {
+                return
+            }
+            const f: OpenFile = this.files[this.active]
+            this.dialogs.askText("Save As", "File name:", f.path, (accepted: Bool, name: String) => this.saveAs(f, accepted, name))
+        }
+
+        /** Writes the file under another path, which becomes the tab's. */
+        fn saveAs(f: OpenFile, accepted: Bool, path: String) -> Nothing
+        {
+            if (!accepted || path == "" || path == f.path)
+            {
+                return
+            }
+            if (this.indexOf(path) >= 0)
+            {
+                this.dialogs.error("Save As", path + " is open in another tab.")
+                return
+            }
+            try
+            {
+                f.doc.saveAs(path)
+                f.path = path
+                f.missing = false
+                this.sessionDirty = true
+                this.changedTabs()
+            }
+            catch (e: String)
+            {
+                this.dialogs.error("Save As", "Cannot save " + path + ":\n" + e)
+            }
+        }
+
+        // ---------------------------------------------------------------- closing
+
+        /** Closes the current tab (asking when it has unsaved changes). */
+        fn closeActive() -> Nothing
+        {
+            this.closeTab(this.active)
+        }
+
+        /** The close button or middle click of a tab. */
+        fn closeTab(index: Int64) -> Nothing
+        {
+            this.closeAt(index, (ok: Bool) => this.closed(ok))
+        }
+
+        /** Nothing to do after a close; a cancelled one leaves everything as it was. */
+        fn closed(ok: Bool) -> Nothing
+        {
+        }
+
+        /** Closes a tab. With unsaved changes the user chooses Save, Discard or Cancel; `then` hears whether the tab is gone. */
+        fn closeAt(index: Int64, then: fnc(Bool) -> Nothing) -> Nothing
+        {
+            if (index < 0 || index >= this.files.len())
+            {
+                then(true)
+                return
+            }
+            const f: OpenFile = this.files[index]
+            if (!f.modified)
+            {
+                this.discard(f)
+                then(true)
+                return
+            }
+            this.dialogs.ask("Unsaved Changes", f.title() + " has unsaved changes.", ["save", "discard", "cancel"], ["Save", "Discard", "Cancel"], (answer: String) => this.closeAnswer(f, answer, then))
+        }
+
+        /** The answer to the unsaved-changes question. */
+        fn closeAnswer(f: OpenFile, answer: String, then: fnc(Bool) -> Nothing) -> Nothing
+        {
+            if (answer == "save")
+            {
+                if (this.saveQuietly(f))
+                {
+                    this.discard(f)
+                    then(true)
+                    return
+                }
+            }
+            else if (answer == "discard")
+            {
+                this.discard(f)
+                then(true)
+                return
+            }
+            then(false)
+        }
+
+        /** Closes every file, asking for each one that has unsaved changes; stops at the first Cancel. */
+        fn closeAll(then: fnc(Bool) -> Nothing) -> Nothing
+        {
+            if (this.files.len() == 0)
+            {
+                then(true)
+                return
+            }
+            this.closeAt(this.files.len() - 1, (ok: Bool) => this.closeRest(ok, then))
+        }
+
+        /** Carries on with closeAll after one tab. */
+        fn closeRest(ok: Bool, then: fnc(Bool) -> Nothing) -> Nothing
+        {
+            if (ok)
+            {
+                this.closeAll(then)
+            }
+            else
+            {
+                then(false)
+            }
+        }
+
+        /** Removes a file from the list and frees its views and document. */
+        fn discard(f: OpenFile) -> Nothing
+        {
+            const index: Int64 = this.indexOf(f.path)
+            if (index < 0)
+            {
+                return
+            }
+            var next: List<OpenFile> = []
+            var i: Int64 = 0
+            while (i < this.files.len())
+            {
+                if (i != index)
+                {
+                    next.push(this.files[i])
+                }
+                i = i + 1
+            }
+            this.files = next
+            if (this.active > index || this.active >= this.files.len())
+            {
+                this.active = this.active - 1
+            }
+            if (this.active < 0 && this.files.len() > 0)
+            {
+                this.active = 0
+            }
+            this.sessionDirty = true
+            this.changedTabs()
+            for v in f.views
+            {
+                v.release()
+            }
+            f.doc.release()
+            this.bus.publish("editor.closed", Js::object([Js::strField("path", f.path)]))
+        }
+
+        // ---------------------------------------------------------------- split
+
+        /** Shows the current file in a second view next to or below the first. */
+        fn split(vertical: Bool) -> Nothing
+        {
+            if (this.active < 0 || this.files[this.active].isSplit())
+            {
+                return
+            }
+            const f: OpenFile = this.files[this.active]
+            const view: EditorView = EditorView::create(this.events, f.doc)
+            this.wire(f, view)
+            var views: List<EditorView> = f.views
+            views.push(view)
+            f.views = views
+            f.vertical = vertical
+            view.setCursor(Position::create(f.line, f.character))
+            this.sessionDirty = true
+            this.changedTabs()
+        }
+
+        /** Goes back to one view of the current file. */
+        fn unsplit() -> Nothing
+        {
+            if (this.active < 0 || !this.files[this.active].isSplit())
+            {
+                return
+            }
+            const f: OpenFile = this.files[this.active]
+            const extra: EditorView = f.views[1]
+            f.views = [f.views[0]]
+            this.sessionDirty = true
+            this.changedTabs()
+            extra.release()
+        }
+
+        // ---------------------------------------------------------------- the disk changes
+
+        /** The file of a document changed on disk (`reason`: modified, created or deleted). */
+        fn externalChange(f: OpenFile, reason: String) -> Nothing
+        {
+            if (reason == "deleted")
+            {
+                f.missing = true
+                this.changedTabs()
+                this.logger.info(f.path + " was deleted on disk")
+                return
+            }
+            f.missing = false
+            if (!f.modified)
+            {
+                this.reloadQuietly(f)
+                return
+            }
+            if (f.asking)
+            {
+                return
+            }
+            f.asking = true
+            this.dialogs.ask("File Changed", f.title() + " was changed on disk and has unsaved changes here.", ["reload", "keep"], ["Reload", "Keep My Changes"], (answer: String) => this.reloadAnswer(f, answer))
+        }
+
+        /** The answer to the question about a changed file. */
+        fn reloadAnswer(f: OpenFile, answer: String) -> Nothing
+        {
+            f.asking = false
+            if (answer == "reload")
+            {
+                this.reloadQuietly(f)
+            }
+        }
+
+        /** Reads the file again, dropping unsaved changes. */
+        fn reloadQuietly(f: OpenFile) -> Nothing
+        {
+            try
+            {
+                f.doc.load("")
+                f.modified = false
+                f.missing = false
+                this.changedTabs()
+            }
+            catch (e: String)
+            {
+                this.logger.warn("could not reload " + f.path + ": " + e)
+            }
+        }
+
+        /** Reloads the current file; with unsaved changes the user is asked first. */
+        fn reloadActive() -> Nothing
+        {
+            if (this.active < 0)
+            {
+                return
+            }
+            const f: OpenFile = this.files[this.active]
+            if (!f.modified)
+            {
+                this.reloadQuietly(f)
+                return
+            }
+            this.dialogs.confirm("Reload", f.title() + " has unsaved changes. Discard them and read the file again?", "", (yes: Bool) => this.reloadIf(f, yes))
+        }
+
+        /** Reloads when the user agreed. */
+        fn reloadIf(f: OpenFile, yes: Bool) -> Nothing
+        {
+            if (yes)
+            {
+                this.reloadQuietly(f)
+            }
+        }
+
+        /** A file or folder was created, renamed, moved or deleted in the project tree. */
+        fn fileOperation(kind: String, path: String, oldPath: String) -> Nothing
+        {
+            if (kind == "rename" || kind == "move")
+            {
+                this.moveOpenFiles(oldPath, path)
+            }
+            else if (kind == "delete" || kind == "trash")
+            {
+                for f in this.files
+                {
+                    if (f.path == path || FileSystem::isInside(f.path, path))
+                    {
+                        f.missing = true
+                    }
+                }
+                this.changedTabs()
+            }
+        }
+
+        /** Open files at or below `from` now live below `to`. */
+        fn moveOpenFiles(from: String, to: String) -> Nothing
+        {
+            for f in this.files
+            {
+                if (f.path == from || FileSystem::isInside(f.path, from))
+                {
+                    const target: String = to + f.path.substring(from.len(), f.path.len())
+                    if (f.modified)
+                    {
+                        const text: String = f.doc.text()
+                        f.doc.load(target)
+                        f.doc.setText(text)
+                    }
+                    else
+                    {
+                        f.doc.load(target)
+                    }
+                    f.path = target
+                    f.missing = false
+                }
+            }
+            this.sessionDirty = true
+            this.changedTabs()
+        }
+
+        // ---------------------------------------------------------------- timers: autosave and session
+
+        /** Once a second: autosave when it is due, and write the session when it changed. */
+        fn tick() -> Nothing
+        {
+            if (this.settings.getBool("Editor", "autosave", false))
+            {
+                this.sinceAutosave = this.sinceAutosave + 1
+                if (this.sinceAutosave >= this.settings.getInt("Editor", "autosaveSeconds", 30))
+                {
+                    this.sinceAutosave = 0
+                    for f in this.files
+                    {
+                        if (f.modified && !f.missing)
+                        {
+                            this.saveQuietly(f)
+                        }
+                    }
+                }
+            }
+            if (this.sessionDirty)
+            {
+                this.saveSession()
+            }
+        }
+
+        /** Remembers the open files, cursors, splits and the current tab for the next start. */
+        fn saveSession() -> Nothing
+        {
+            this.sessionDirty = false
+            var entries: List<String> = []
+            for f in this.files
+            {
+                entries.push(f.sessionEntry())
+            }
+            this.settings.setStrings("Session", "files", entries)
+            var current: String = ""
+            if (this.active >= 0)
+            {
+                current = this.files[this.active].path
+            }
+            this.settings.setString("Session", "active", current)
+            this.settings.setString("Session", "workspace", this.store.get("workspace.path"))
+        }
+
+        /** Opens the files of the last session, when the same project is open. Never throws. */
+        fn restoreSession() -> Nothing
+        {
+            const entries: List<String> = this.settings.getStrings("Session", "files", [])
+            if (entries.len() == 0 || this.settings.getString("Session", "workspace", "") != this.store.get("workspace.path"))
+            {
+                return
+            }
+            this.restoreEntries(entries, this.settings.getString("Session", "active", ""))
+        }
+
+        /** Opens the files of session entries (see OpenFile.sessionEntry) and makes `current` the current tab. Files that are gone are skipped. */
+        fn restoreEntries(entries: List<String>, current: String) -> Nothing
+        {
+            for entry in entries
+            {
+                const parts: List<String> = entry.split("\t")
+                if (parts.len() >= 1 && FileSystem::exists(parts[0]) && !FileSystem::isDirectory(parts[0]))
+                {
+                    try
+                    {
+                        const f: OpenFile = this.open(parts[0])
+                        if (parts.len() >= 3)
+                        {
+                            f.line = parts[1].toInt()
+                            f.character = parts[2].toInt()
+                            f.views[0].setCursor(Position::create(f.line, f.character))
+                        }
+                        if (parts.len() >= 4 && parts[3] != "")
+                        {
+                            this.activate(this.indexOf(f.path))
+                            this.split(parts[3] == "down")
+                        }
+                    }
+                    catch (e: String)
+                    {
+                        this.logger.warn("could not restore " + parts[0] + ": " + e)
+                    }
+                }
+            }
+            if (this.indexOf(current) >= 0)
+            {
+                this.activate(this.indexOf(current))
+            }
+            this.changedTabs()
+        }
+
+        // ---------------------------------------------------------------- quitting
+
+        /** The application wants to end: the session is written, then each file with unsaved changes asks Save, Discard or Cancel. `then` hears whether quitting may go on. */
+        fn confirmQuit(then: fnc(Bool) -> Nothing) -> Nothing
+        {
+            this.saveSession()
+            this.reviewFrom(0, then)
+        }
+
+        /** Asks about the first modified file from `index` on. */
+        fn reviewFrom(index: Int64, then: fnc(Bool) -> Nothing) -> Nothing
+        {
+            var i: Int64 = index
+            while (i < this.files.len() && !this.files[i].modified)
+            {
+                i = i + 1
+            }
+            if (i >= this.files.len())
+            {
+                then(true)
+                return
+            }
+            const f: OpenFile = this.files[i]
+            const next: Int64 = i + 1
+            this.activate(i)
+            this.changedTabs()
+            this.dialogs.ask("Unsaved Changes", f.title() + " has unsaved changes.", ["save", "discard", "cancel"], ["Save", "Discard", "Cancel"], (answer: String) => this.reviewAnswer(f, answer, next, then))
+        }
+
+        /** The answer for one file while quitting. */
+        fn reviewAnswer(f: OpenFile, answer: String, next: Int64, then: fnc(Bool) -> Nothing) -> Nothing
+        {
+            if (answer == "cancel")
+            {
+                then(false)
+            }
+            else if (answer == "save" && !this.saveQuietly(f))
+            {
+                then(false)
+            }
+            else
+            {
+                this.reviewFrom(next, then)
+            }
+        }
+    }
+}

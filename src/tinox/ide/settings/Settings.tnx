@@ -45,6 +45,30 @@ namespace tinox.ide.settings
             return this.read(group, key, "int", fallback.toString()).getInt()
         }
 
+        /** A list of strings, or `fallback` when it was never set. */
+        fn getStrings(group: String, key: String, fallback: List<String>) -> List<String>
+        {
+            const value: JsonValue = this.read(group, key, "stringList", Js::strings(fallback))
+            var out: List<String> = []
+            if (value.isArray())
+            {
+                const items: List<JsonValue> = value.asList()
+                var i: Int64 = 0
+                while (i < items.len())
+                {
+                    out.push(items[i].getString())
+                    i = i + 1
+                }
+            }
+            return out
+        }
+
+        /** Writes a list of strings. */
+        fn setStrings(group: String, key: String, values: List<String>) -> Nothing
+        {
+            this.write(group, key, Js::strings(values))
+        }
+
         /** Whether the key has been written. */
         fn has(group: String, key: String) -> Bool
         {

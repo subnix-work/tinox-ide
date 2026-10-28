@@ -185,6 +185,13 @@ static void testUserTypingHasUtf16Ranges()
     tkde_release(doc);
 }
 
+static void writeFile(const QString &path, const char *text)
+{
+    QFile f(path);
+    f.open(QIODevice::WriteOnly);
+    f.write(text);
+}
+
 static void testFilesEncodingAndEndOfLine(const QString &dir)
 {
     // open: a latin-1 file, decoded with the requested encoding, written back byte for byte
@@ -264,6 +271,30 @@ static void testExternalModification(const QString &dir)
     EXPECT(!e.isEmpty());
     EXPECT_EQ(e.value(QStringLiteral("reason")).toString(), QStringLiteral("modified"));
     EXPECT_EQ(int64_t(e.value(QStringLiteral("target")).toDouble()), doc);
+
+    // reading it again replaces the text, raises editor.reloaded (not editor.changed) and a new version
+    const int version = infoOf(doc).value(QStringLiteral("version")).toInt();
+    drainEvents();
+    EXPECT(query(cmd("editor.loadDocument", Obj{{"target", double(doc)}})).value(QStringLiteral("ok")).toBool());
+    EXPECT(textOf(doc).startsWith(QStringLiteral("changed behind")));
+    Obj reloaded = waitFor("editor.reloaded", 2000);
+    EXPECT_EQ(reloaded.value(QStringLiteral("version")).toInt(), version + 1);
+    EXPECT(!infoOf(doc).value(QStringLiteral("modified")).toBool());
+    // unsaved edits are replaced too, and the document can be moved to another file
+    query(cmd("editor.setText", Obj{{"target", double(doc)}, {"text", "unsaved"}}));
+    const QString other = dir + QStringLiteral("/other.txt");
+    writeFile(other, "from the other file\n");
+    drainEvents();
+    EXPECT(query(cmd("editor.loadDocument", Obj{{"target", double(doc)}, {"url", other}})).value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(textOf(doc), QStringLiteral("from the other file\n"));
+    EXPECT_EQ(infoOf(doc).value(QStringLiteral("url")).toString(), QUrl::fromLocalFile(other).toString());
+    EXPECT(waitFor("editor.changed", 200).isEmpty());
+    EXPECT_EQ(
+        errorCode(query(cmd("editor.loadDocument", Obj{{"target", double(doc)}, {"url", QString(dir + QStringLiteral("/missing.txt"))}}))),
+        -5);
+    int64_t scratch = newDoc(QStringLiteral("x"));
+    EXPECT_EQ(errorCode(query(cmd("editor.loadDocument", Obj{{"target", double(scratch)}}))), -1); // no file to read
+    tkde_release(scratch);
     tkde_release(doc);
 }
 
