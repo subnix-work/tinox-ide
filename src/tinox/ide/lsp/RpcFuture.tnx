@@ -1,0 +1,49 @@
+module tinox.ide.lsp
+
+import tinox.core.json
+
+namespace tinox.ide.lsp
+{
+    /** A poll-driven request result, owned by the client's logic task. Cancellation settles it once. */
+    class RpcFuture
+    {
+        /** Unique request id; ids are never reused after restart. */
+        var id: Int64
+        /** Deadline in the caller's clock, in milliseconds. */
+        var deadline: Int64
+        /** Whether the request completed, failed or was cancelled. */
+        var done: Bool
+        /** The JSON result, including null for a successful null result. */
+        var result: JsonValue
+        /** JSON-RPC error code, zero on success. */
+        var code: Int64
+        /** Failure description. */
+        var message: String
+
+        /** An unsettled request. */
+        fnc create(id: Int64, deadline: Int64) -> RpcFuture
+        {
+            return RpcFuture { id: id, deadline: deadline, done: false, result: Json::parse("null"), code: 0, message: "" }
+        }
+
+        /** Completes at most once, so late replies cannot revive cancelled requests. */
+        fn resolve(result: JsonValue, code: Int64, message: String) -> Nothing
+        {
+            if (!this.done)
+            {
+                this.result = result
+                this.code = code
+                this.message = message
+                this.done = true
+            }
+        }
+
+        /** Returns the result, or throws if pending or failed. Never blocks the logic task. */
+        fn value() -> JsonValue
+        {
+            if (!this.done) { throw "LSP request is still pending" }
+            if (this.code != 0) { throw this.message }
+            return this.result
+        }
+    }
+}

@@ -1,0 +1,148 @@
+import tinox.core.json
+import tinox.core.process.Process
+import tinox.ide.app.FileSystem
+import tinox.ide.lsp.LspClient
+import tinox.ide.lsp.RpcFuture
+import tinox.ide.ui.Utf16
+import tinox.ide.settings.ToolProbe
+import tinox.ide.ui.Position
+import tinox.ide.ui.TextEdit
+
+class LspProcessTest
+{
+    fnc waitReady(client: LspClient) -> Bool
+    {
+        var rounds: Int64 = 0
+        while (client.state != "ready" && rounds < 1000)
+        {
+            client.poll()
+            Process::sleep(5)
+            rounds = rounds + 1
+        }
+        return client.state == "ready"
+    }
+
+    fnc wait(client: LspClient, future: RpcFuture) -> Bool
+    {
+        var rounds: Int64 = 0
+        while (!future.done && rounds < 1000)
+        {
+            client.poll()
+            Process::sleep(5)
+            rounds = rounds + 1
+        }
+        return future.done && future.code == 0
+    }
+
+    fnc close(client: LspClient) -> Bool
+    {
+        client.shutdown()
+        var rounds: Int64 = 0
+        while (client.state != "closed" && rounds < 1000)
+        {
+            client.poll()
+            Process::sleep(5)
+            rounds = rounds + 1
+        }
+        const closed: Bool = client.state == "closed" && client.transport.isStopped()
+        if (!closed) { client.stop() }
+        return closed
+    }
+
+    @Test("real pipes carry concurrent large Unicode messages on stdin, stdout and stderr; cancelled late replies stay ignored")
+    fn testDuplex() -> Bool
+    {
+        const client: LspClient = LspClient::launch(["python3", "tests/fixtures/lsp_server.py", "--flood"], "", "file:///workspace")
+        var floods: List<String> = []
+        client.notification = (method: String, params: JsonValue) => floods.push(method)
+        var text: String = "🌍"
+        var i: Int64 = 0
+        while (i < 18) { text = text + text
+            i = i + 1 }
+        client.open("file:///large.tnx", "tinox", text, 1)
+        const ready: Bool = LspProcessTest::waitReady(client)
+        if (!ready) { client.stop()
+            return false }
+        const echo: RpcFuture = client.request("test/echo", "{\"text\":\"Grüße 🌍\"}", 5000)
+        const echoed: Bool = LspProcessTest::wait(client, echo) && echo.result.getField("text").getString() == "Grüße 🌍"
+        const docs: RpcFuture = client.request("test/documents", "{}", 5000)
+        const document: Bool = LspProcessTest::wait(client, docs) && docs.result.getField("file:///large.tnx").getField("length").getInt() == text.len()
+        const held: RpcFuture = client.request("test/hold", "{}", 5000)
+        client.cancel(held)
+        const barrier: RpcFuture = client.request("test/echo", "{}", 5000)
+        LspProcessTest::wait(client, barrier)
+        const ignored: Bool = held.code == -32800 && held.result.isNull()
+        const closed: Bool = LspProcessTest::close(client)
+        if (!ready || !echoed || !document || !ignored || !closed) { println(client.lastError) }
+        return ready && echoed && document && ignored && floods.contains("test/flood") && closed
+    }
+
+    @Test("a crashed server restarts with backoff and receives the latest document text and version")
+    fn testRestart() -> Bool
+    {
+        const client: LspClient = LspClient::launch(["python3", "tests/fixtures/lsp_server.py"], "", "file:///workspace")
+        client.open("file:///a.tnx", "tinox", "a🌍", 1)
+        if (!LspProcessTest::waitReady(client)) { client.stop()
+            return false }
+        client.change("file:///a.tnx", 2, [TextEdit::insert(Position::create(0, 3), "b")])
+        const crashed: RpcFuture = client.request("test/crash", "{}", 5000)
+        var rounds: Int64 = 0
+        while (!crashed.done && rounds < 1000)
+        {
+            client.poll()
+            Process::sleep(5)
+            rounds = rounds + 1
+        }
+        const restarted: Bool = crashed.code == -32097 && LspProcessTest::waitReady(client)
+        if (!restarted) { client.stop()
+            return false }
+        const docs: RpcFuture = client.request("test/documents", "{}", 5000)
+        const answered: Bool = LspProcessTest::wait(client, docs)
+        const document: JsonValue = docs.result.getField("file:///a.tnx")
+        const restored: Bool = answered && document.getField("version").getInt() == 2 && document.getField("prefix").getString() == "a🌍b"
+        return LspProcessTest::close(client) && restored
+    }
+
+    @Test("the real tinox-lsp initializes, synchronizes a document, answers a request and shuts down cleanly")
+    fn testRealServer() -> Bool
+    {
+        var server: String = Process::env("TINOX_LSP")
+        if (server == "") { server = ToolProbe::find("tinox-lsp") }
+        if (server == "" && FileSystem::exists("../tinox/target/release/tinox-lsp")) { server = "../tinox/target/release/tinox-lsp" }
+        if (server == "") { println("tinox-lsp is required; set TINOX_LSP")
+            return false }
+        const client: LspClient = LspClient::launch([server], "", "")
+        client.open("file:///tmp/tinox-lsp-client-test.tnx", "tinox", "class Main\n{\n}\n", 1)
+        const ready: Bool = LspProcessTest::waitReady(client)
+        if (!ready) { println(client.lastError)
+            client.stop()
+            return false }
+        client.change("file:///tmp/tinox-lsp-client-test.tnx", 2, [TextEdit::insert(Position::create(2, 0), "\n")])
+        client.save("file:///tmp/tinox-lsp-client-test.tnx")
+        const symbols: RpcFuture = client.request("textDocument/documentSymbol", "{\"textDocument\":{\"uri\":\"file:///tmp/tinox-lsp-client-test.tnx\"}}", 5000)
+        const answered: Bool = LspProcessTest::wait(client, symbols)
+        client.close("file:///tmp/tinox-lsp-client-test.tnx")
+        return LspProcessTest::close(client) && answered && client.capabilities.getField("textDocumentSync").getField("change").getInt() == 1
+    }
+    @Test("force stop kills a child that never reads stdin and joins the blocked writer before closing its pipes")
+    fn testBlockedWriterStop() -> Bool
+    {
+        const client: LspClient = LspClient::launch(["python3", "tests/fixtures/lsp_server.py", "--stall"], "", "")
+        var payload: String = "x"
+        var i: Int64 = 0
+        while (i < 21) { payload = payload + payload
+            i = i + 1 }
+        client.transport.writeMessage("{\"payload\":\"" + payload + "\"}")
+        Process::sleep(30)
+        client.stop()
+        var rounds: Int64 = 0
+        while (client.state != "closed" && rounds < 400)
+        {
+            client.poll()
+            Process::sleep(5)
+            rounds = rounds + 1
+        }
+        return client.state == "closed" && client.transport.isStopped()
+    }
+
+}

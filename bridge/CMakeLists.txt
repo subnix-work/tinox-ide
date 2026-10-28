@@ -27,13 +27,13 @@ include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 
 find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Widgets Xml DBus)
-find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n Crash DBusAddons TextEditor SyntaxHighlighting Config ConfigWidgets XmlGui WidgetsAddons Notifications)
+find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS Parts CoreAddons I18n Crash DBusAddons TextEditor SyntaxHighlighting Config ConfigWidgets XmlGui WidgetsAddons Notifications)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GC REQUIRED IMPORTED_TARGET bdw-gc)
 find_package(Threads REQUIRED)
 
 add_library(tinoxkde SHARED
-    src/abi.cpp src/bridge.cpp
+    src/abi.cpp src/bridge.cpp src/terminal/terminal.cpp
     src/editor/editor.cpp src/editor/diagnostics.cpp src/editor/completion.cpp src/editor/viewfeatures.cpp
     src/widget/widget.cpp src/action/action.cpp src/model/model.cpp
     src/dialog/dialog.cpp src/dialog/config.cpp src/dialog/notify.cpp)
@@ -41,7 +41,7 @@ target_include_directories(tinoxkde PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}>)
 target_include_directories(tinoxkde PRIVATE src common)
-target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets Qt6::Xml KF6::CoreAddons KF6::I18n KF6::Crash KF6::DBusAddons KF6::TextEditor KF6::SyntaxHighlighting KF6::ConfigCore KF6::ConfigWidgets KF6::XmlGui KF6::WidgetsAddons KF6::Notifications PkgConfig::GC)
+target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets Qt6::Xml KF6::Parts KF6::CoreAddons KF6::I18n KF6::Crash KF6::DBusAddons KF6::TextEditor KF6::SyntaxHighlighting KF6::ConfigCore KF6::ConfigWidgets KF6::XmlGui KF6::WidgetsAddons KF6::Notifications PkgConfig::GC)
 set_target_properties(tinoxkde PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION 1   # equals TKDE_ABI_VERSION (docs/abi.md, versioning)
@@ -117,6 +117,14 @@ if(BUILD_TESTING)
     target_compile_options(model_test PRIVATE -UQT_NO_CAST_FROM_ASCII -UQT_NO_CAST_TO_ASCII)
     add_test(NAME model COMMAND model_test)
     set_tests_properties(model PROPERTIES TIMEOUT 300)
+
+    add_executable(terminal_test tests/terminal_test.cpp)
+    target_link_libraries(terminal_test PRIVATE tinoxkde Qt6::Core Qt6::Gui Threads::Threads PkgConfig::GC)
+    set_target_properties(terminal_test PROPERTIES AUTOMOC OFF)
+    target_compile_options(terminal_test PRIVATE -UQT_NO_CAST_FROM_ASCII -UQT_NO_CAST_TO_ASCII)
+    add_test(NAME terminal COMMAND terminal_test)
+    add_test(NAME terminal_no_konsole COMMAND terminal_test --without-konsole)
+    set_tests_properties(terminal terminal_no_konsole PROPERTIES TIMEOUT 60)
 
     add_executable(dialog_test tests/dialog_test.cpp)
     target_link_libraries(dialog_test PRIVATE tinoxkde Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test Qt6::DBus KF6::ConfigCore Threads::Threads PkgConfig::GC)

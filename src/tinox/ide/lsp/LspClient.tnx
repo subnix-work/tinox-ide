@@ -1,0 +1,457 @@
+module tinox.ide.lsp
+
+import tinox.core.json
+import tinox.core.process.Process
+import tinox.core.time.Time
+import tinox.core.semaphore.Mutex
+import tinox.ide.ui.Js
+import tinox.ide.ui.TextEdit
+import tinox.ide.ui.Utf16
+
+namespace tinox.ide.lsp
+{
+    /** Poll-driven LSP lifecycle and JSON-RPC client. Only the owning logic task touches protocol state. */
+    class LspClient
+    {
+        /** Serializes outgoing JSON; injectable for protocol tests and non-stdio transports. */
+        var sender: fnc(String) -> Nothing
+        /** Receives server notifications on the owning task. */
+        var notification: fnc(String, JsonValue) -> Nothing
+        /** Supplies one workspace/configuration item. */
+        var configuration: fnc(JsonValue) -> JsonValue
+        /** Applies an entire workspace edit atomically; defaults to refusal. */
+        var applyEdit: fnc(JsonValue) -> Bool
+        /** Outstanding requests keyed by id. */
+        var pending: Map<String, RpcFuture>
+        /** Latest open documents for crash recovery. */
+        var documents: Map<String, LspDocument>
+        /** Last allocated request id, never reset at restart. */
+        var nextId: Int64
+        /** idle, initializing, ready, backoff, closing, exiting, stopping or closed. */
+        var state: String
+        /** Negotiated server capabilities. */
+        var capabilities: JsonValue
+        /** Negotiated text synchronization kind (0, 1 or 2). */
+        var syncKind: Int64
+        /** Whether the server accepts open/close notifications. */
+        var openClose: Bool
+        /** Whether the server accepts save notifications. */
+        var saveSupported: Bool
+        /** Whether save notifications include text. */
+        var saveText: Bool
+        /** Most recent lifecycle or notification-handler failure. */
+        var lastError: String
+        /** Initialize request future. */
+        var initialization: RpcFuture
+        /** Shutdown request future. */
+        var shutdownRequest: RpcFuture
+        /** Current clock value supplied by pollAt. */
+        var clock: Int64
+        /** Absolute deadline for a restart or bounded exit. */
+        var deadline: Int64
+        /** Consecutive short-lived server attempts. */
+        var retries: Int64
+        /** Time the server last became ready. */
+        var readyAt: Int64
+        /** Server argv, empty for an injected transport. */
+        var argv: List<String>
+        /** Server working directory. */
+        var directory: String
+        /** Root URI sent in initialize. */
+        var rootUri: String
+        /** Active stdio transport, when argv is not empty. */
+        var transport: StdioTransport
+
+        /** Creates a protocol client using an injected sender; initialize and poll it explicitly. */
+        fnc create(sender: fnc(String) -> Nothing) -> LspClient
+        {
+            return LspClient { sender: sender, notification: (method: String, params: JsonValue) => LspClient::ignore(), configuration: (item: JsonValue) => Json::parse("null"), applyEdit: (edit: JsonValue) => false, pending: Map::new(), documents: Map::new(), nextId: 0, state: "idle", capabilities: Json::parse("{}"), syncKind: 0, openClose: false, saveSupported: false, saveText: false, lastError: "", initialization: RpcFuture::create(0, 0), shutdownRequest: RpcFuture::create(0, 0), clock: Time::now(), deadline: 0, retries: 0, readyAt: 0, argv: [], directory: "", rootUri: "", transport: StdioTransport { mutex: Mutex::new(), outgoing: [], incoming: [], queued: 0, received: 0, stopping: true, stopped: true, failure: "", stderr: "" } }
+        }
+
+        /** No-op default notification handler. */
+        fnc ignore() -> Nothing
+        {
+        }
+
+        /** Launches a server; poll regularly from the logic task until closed. */
+        fnc launch(argv: List<String>, directory: String, rootUri: String) -> LspClient
+        {
+            if (argv.len() == 0 || argv[0] == "") { throw "LSP server argv must name a program" }
+            const client: LspClient = LspClient::create((json: String) => LspClient::ignore())
+            client.argv = argv
+            client.directory = directory
+            client.rootUri = rootUri
+            client.clock = Time::now()
+            client.connect()
+            return client
+        }
+
+        /** Starts the next process after the previous transport has finished cleanup. */
+        fn connect() -> Nothing
+        {
+            const transport: StdioTransport = StdioTransport::start(this.argv, this.directory)
+            this.transport = transport
+            this.sender = (json: String) => transport.writeMessage(json)
+            this.initialize(this.rootUri)
+        }
+
+        /** Sends the first protocol request, advertising the editor's UTF-16 position encoding. */
+        fn initialize(rootUri: String) -> RpcFuture
+        {
+            if (this.state != "idle" && this.state != "backoff") { throw "LSP initialization already started" }
+            this.rootUri = rootUri
+            this.state = "initializing"
+            var root: String = "null"
+            var folders: String = "null"
+            if (rootUri != "")
+            {
+                root = Js::str(rootUri)
+                folders = "[{\"uri\":" + root + ",\"name\":\"workspace\"}]"
+            }
+            const params: String = "{\"processId\":" + Process::pid().toString() + ",\"rootUri\":" + root + ",\"workspaceFolders\":" + folders + ",\"clientInfo\":{\"name\":\"tinox-ide\",\"version\":\"0.1.0\"},\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-16\"]},\"workspace\":{\"configuration\":true,\"applyEdit\":true,\"workspaceFolders\":true},\"textDocument\":{\"synchronization\":{\"dynamicRegistration\":false,\"didSave\":true}}}}"
+            this.initialization = this.call("initialize", params, 10000)
+            return this.initialization
+        }
+
+        /** Creates a correlated request; only internal lifecycle calls bypass ready-state validation. */
+        fn call(method: String, params: String, timeoutMs: Int64) -> RpcFuture
+        {
+            if (timeoutMs <= 0) { throw "LSP request timeout must be positive" }
+            Json::parse(params)
+            this.nextId = this.nextId + 1
+            const future: RpcFuture = RpcFuture::create(this.nextId, this.clock + timeoutMs)
+            this.pending.set(future.id.toString(), future)
+            try
+            {
+                this.sender("{\"jsonrpc\":\"2.0\",\"id\":" + future.id.toString() + ",\"method\":" + Js::str(method) + ",\"params\":" + params + "}")
+            }
+            catch (e: String)
+            {
+                this.pending.remove(future.id.toString())
+                future.resolve(Json::parse("null"), -32097, e)
+            }
+            return future
+        }
+
+        /** A user request. The future is settled by poll, a timeout or cancel. */
+        fn request(method: String, params: String, timeoutMs: Int64) -> RpcFuture
+        {
+            if (this.state != "ready") { throw "LSP server is not ready" }
+            if (method == "" || method == "initialize" || method == "shutdown" || method == "exit") { throw "Use the LSP lifecycle methods for initialize, shutdown and exit" }
+            return this.call(method, params, timeoutMs)
+        }
+
+        /** Sends a JSON-RPC notification. */
+        fn notify(method: String, params: String) -> Nothing
+        {
+            if (this.state != "ready" && !(method == "initialized" && this.state == "initializing") && !(method == "exit" && this.state == "closing")) { throw "Notification is not allowed in the current LSP lifecycle state" }
+            Json::parse(params)
+            this.sender("{\"jsonrpc\":\"2.0\",\"method\":" + Js::str(method) + ",\"params\":" + params + "}")
+        }
+
+        /** Cancels exactly once and ignores subsequent server replies. */
+        fn cancel(future: RpcFuture) -> Nothing
+        {
+            if (!future.done && this.pending.contains(future.id.toString()))
+            {
+                this.pending.remove(future.id.toString())
+                future.resolve(Json::parse("null"), -32800, "LSP request cancelled")
+                if (this.state == "ready") { this.notify("$/cancelRequest", "{\"id\":" + future.id.toString() + "}") }
+                else if (this.state == "initializing") { this.lost("LSP initialization cancelled") }
+            }
+        }
+
+        /** Handles one decoded JSON-RPC message; request ids can be strings or numbers on server requests. */
+        fn receive(text: String) -> Nothing
+        {
+            if (this.state == "closed" || this.state == "stopping" || this.state == "backoff") { return }
+            const message: JsonValue = Json::parse(text)
+            if (!message.isObject() || message.getField("jsonrpc").getString() != "2.0") { throw "Invalid JSON-RPC envelope" }
+            const id: JsonValue = message.getField("id")
+            const method: JsonValue = message.getField("method")
+            if (method.isString())
+            {
+                if (id.isNull())
+                {
+                    try { this.notification(method.getString(), message.getField("params")) }
+                    catch (e: String) { this.lastError = e }
+                }
+                else { this.serverRequest(id, method.getString(), message.getField("params")) }
+                return
+            }
+            if (!id.isInt()) { return }
+            const key: String = id.getInt().toString()
+            if (!this.pending.contains(key)) { return }
+            const future: RpcFuture = this.pending.get(key)
+            this.pending.remove(key)
+            var result: JsonValue = message.getField("result")
+            var code: Int64 = 0
+            var description: String = ""
+            const fields: Map<String, JsonValue> = message.asTable()
+            if (fields.contains("result") == fields.contains("error"))
+            {
+                code = -32603
+                description = "JSON-RPC response must have exactly one of result and error"
+            }
+            else if (fields.contains("error"))
+            {
+                const error: JsonValue = message.getField("error")
+                if (!error.isObject() || !error.getField("code").isInt() || !error.getField("message").isString())
+                {
+                    code = -32603
+                    description = "Invalid JSON-RPC error object"
+                }
+                else
+                {
+                    code = error.getField("code").getInt()
+                    if (code == 0) { code = -32603 }
+                    description = error.getField("message").getString()
+                }
+                result = Json::parse("null")
+            }
+            if (future.id == this.initialization.id && this.state == "initializing" && code == 0)
+            {
+                try { this.acceptCapabilities(result.getField("capabilities")) }
+                catch (e: String) { code = -32603
+                    description = e }
+            }
+            future.resolve(result, code, description)
+            if (future.id == this.initialization.id && this.state == "initializing" && future.code != 0)
+            {
+                this.lost(future.message)
+                return
+            }
+            if (future.id == this.initialization.id && this.state == "initializing")
+            {
+                this.notify("initialized", "{}")
+                this.state = "ready"
+                this.readyAt = this.clock
+                for uri in this.documents.keys()
+                {
+                    if (this.openClose) { this.notify("textDocument/didOpen", this.documents.get(uri).opening()) }
+                }
+            }
+        }
+
+        /** Negotiates synchronization and rejects position encodings the editor cannot speak. */
+        fn acceptCapabilities(capabilities: JsonValue) -> Nothing
+        {
+            if (!capabilities.isObject()) { throw "LSP initialize result has no capabilities object" }
+            const encoding: String = capabilities.getField("positionEncoding").getString()
+            if (encoding != "" && encoding != "utf-16") { throw "LSP server selected unsupported position encoding: " + encoding }
+            this.capabilities = capabilities
+            const sync: JsonValue = capabilities.getField("textDocumentSync")
+            this.syncKind = 0
+            this.openClose = false
+            this.saveSupported = false
+            this.saveText = false
+            if (sync.isInt())
+            {
+                this.syncKind = sync.getInt()
+                this.openClose = this.syncKind != 0
+            }
+            else if (sync.isObject())
+            {
+                this.syncKind = sync.getField("change").getInt()
+                this.openClose = sync.getField("openClose").getBool()
+                const save: JsonValue = sync.getField("save")
+                this.saveSupported = save.isObject() || save.getBool()
+                this.saveText = save.getField("includeText").getBool()
+            }
+            if (this.syncKind < 0 || this.syncKind > 2) { throw "Unsupported LSP text synchronization kind" }
+        }
+
+        /** Answers supported server requests; unsupported methods receive MethodNotFound. */
+        fn serverRequest(id: JsonValue, method: String, params: JsonValue) -> Nothing
+        {
+            if (!id.isInt() && !id.isString()) { throw "Invalid JSON-RPC request id" }
+            var result: String = "null"
+            var code: Int64 = 0
+            var error: String = ""
+            try
+            {
+                if (method == "workspace/configuration")
+                {
+                    var values: List<String> = []
+                    for item in params.getField("items").asList() { values.push(Json::stringify(this.configuration(item))) }
+                    result = Js::array(values)
+                }
+                else if (method == "workspace/applyEdit")
+                {
+                    result = Js::object([Js::boolField("applied", this.applyEdit(params.getField("edit")))])
+                }
+                else if (method == "window/showMessageRequest") { this.notification("window/showMessage", params) }
+                else if (method == "workspace/workspaceFolders")
+                {
+                    if (this.rootUri != "") { result = "[{\"uri\":" + Js::str(this.rootUri) + ",\"name\":\"workspace\"}]" }
+                }
+                else { code = -32601
+                    error = "Unsupported server request: " + method }
+            }
+            catch (e: String) { code = -32603
+                error = e }
+            const prefix: String = "{\"jsonrpc\":\"2.0\",\"id\":" + Json::stringify(id)
+            if (code != 0) { this.sender(prefix + ",\"error\":{\"code\":" + code.toString() + ",\"message\":" + Js::str(error) + "}}") }
+            else { this.sender(prefix + ",\"result\":" + result + "}") }
+        }
+
+        /** Stores a document even while disconnected, so restart replays its newest snapshot. */
+        fn open(uri: String, language: String, text: String, version: Int64) -> Nothing
+        {
+            if (this.documents.contains(uri)) { throw "Document already open" }
+            const document: LspDocument = LspDocument { uri: uri, language: language, text: text, version: version }
+            this.documents.set(uri, document)
+            if (this.state == "ready" && this.openClose) { this.notify("textDocument/didOpen", document.opening()) }
+        }
+
+        /** Applies sequential UTF-16 edits locally and sends the server's negotiated incremental/full form. */
+        fn change(uri: String, version: Int64, edits: List<TextEdit>) -> Nothing
+        {
+            if (!this.documents.contains(uri)) { throw "Document is not open" }
+            const document: LspDocument = this.documents.get(uri)
+            if (version <= document.version) { throw "Document version must increase" }
+            var text: String = document.text
+            var changes: List<String> = []
+            for edit in edits
+            {
+                const start: Int64 = Utf16::offset(text, edit.range.start)
+                const end: Int64 = Utf16::offset(text, edit.range.end)
+                if (end < start) { throw "Reversed document change range" }
+                text = text.substring(0, start) + edit.newText + text.substring(end, text.len())
+                changes.push(Js::object([Js::field("range", edit.range.toJson()), Js::strField("text", edit.newText)]))
+            }
+            document.text = text
+            document.version = version
+            if (this.state == "ready" && this.syncKind != 0)
+            {
+                if (this.syncKind == 1) { changes = [Js::object([Js::strField("text", text)])] }
+                this.notify("textDocument/didChange", Js::object([Js::field("textDocument", Js::object([Js::strField("uri", uri), Js::intField("version", version)])), Js::field("contentChanges", Js::array(changes))]))
+            }
+        }
+
+        /** Sends didSave only when supported, including text only when requested. */
+        fn save(uri: String) -> Nothing
+        {
+            if (!this.documents.contains(uri)) { throw "Document is not open" }
+            if (this.state == "ready" && this.saveSupported)
+            {
+                var fields: List<String> = [Js::field("textDocument", Js::object([Js::strField("uri", uri)]))]
+                if (this.saveText) { fields.push(Js::strField("text", this.documents.get(uri).text)) }
+                this.notify("textDocument/didSave", Js::object(fields))
+            }
+        }
+
+        /** Drops a document and prevents it from being replayed after a crash. */
+        fn close(uri: String) -> Nothing
+        {
+            if (this.documents.contains(uri))
+            {
+                this.documents.remove(uri)
+                if (this.state == "ready" && this.openClose) { this.notify("textDocument/didClose", "{\"textDocument\":{\"uri\":" + Js::str(uri) + "}}") }
+            }
+        }
+
+        /** Rejects all requests from the dead generation and schedules a bounded-backoff restart. */
+        fn lost(reason: String) -> Nothing
+        {
+            this.lastError = reason
+            for key in this.pending.keys() { this.pending.get(key).resolve(Json::parse("null"), -32097, reason) }
+            this.pending = Map::new()
+            if (this.argv.len() > 0) { this.transport.stop() }
+            this.state = "backoff"
+            var delay: Int64 = 100
+            var i: Int64 = 0
+            while (i < this.retries && delay < 5000) { delay = delay * 2
+                i = i + 1 }
+            if (delay > 5000) { delay = 5000 }
+            this.retries = this.retries + 1
+            this.deadline = this.clock + delay
+        }
+
+        /** Graceful shutdown request; poll sends exit after its response or timeout. */
+        fn shutdown() -> RpcFuture
+        {
+            if (this.state != "ready") { throw "LSP server is not ready for shutdown" }
+            this.state = "closing"
+            this.shutdownRequest = this.call("shutdown", "null", 2000)
+            return this.shutdownRequest
+        }
+
+        /** Immediate cancellation without auto-restart. */
+        fn stop() -> Nothing
+        {
+            for key in this.pending.keys() { this.pending.get(key).resolve(Json::parse("null"), -32097, "LSP client stopped") }
+            this.pending = Map::new()
+            this.state = "stopping"
+            if (this.argv.len() > 0) { this.transport.stop() }
+            else { this.state = "closed" }
+        }
+
+        /** Drives reads, deadlines, shutdown and restart using the system clock. Never waits for child I/O. */
+        fn poll() -> Nothing
+        {
+            this.pollAt(Time::now())
+        }
+
+        /** Deterministic clock injection for protocol tests; call regularly on the owning task. */
+        fn pollAt(now: Int64) -> Nothing
+        {
+            try { this.drive(now) }
+            catch (e: String)
+            {
+                if (this.state == "closing" || this.state == "exiting" || this.state == "stopping" || this.state == "closed")
+                {
+                    this.lastError = e
+                    this.stop()
+                }
+                else { this.lost(e) }
+            }
+        }
+
+        /** Performs one pump iteration; pollAt isolates connection failures from the event loop. */
+        fn drive(now: Int64) -> Nothing
+        {
+            this.clock = now
+            if (this.argv.len() > 0 && this.state != "backoff" && this.state != "closed")
+            {
+                if (this.state != "stopping")
+                {
+                    try { for message in this.transport.drain() { this.receive(message) } }
+                    catch (e: String)
+                    {
+                        if (this.state == "closing" || this.state == "exiting") { this.lastError = e
+                            this.stop() }
+                        else { this.lost(e) }
+                    }
+                }
+                if (this.transport.isStopped() && this.state != "backoff")
+                {
+                    if (this.state == "closing" || this.state == "exiting" || this.state == "stopping") { this.stop()
+                        this.state = "closed" }
+                    else { this.lost("LSP server exited: " + this.transport.error()) }
+                }
+            }
+            for key in this.pending.keys()
+            {
+                const future: RpcFuture = this.pending.get(key)
+                if (now >= future.deadline)
+                {
+                    this.pending.remove(key)
+                    future.resolve(Json::parse("null"), -32098, "LSP request timed out")
+                    if (this.state == "ready") { this.notify("$/cancelRequest", "{\"id\":" + future.id.toString() + "}") }
+                }
+            }
+            if (this.state == "initializing" && this.initialization.done && this.initialization.code != 0) { this.lost(this.initialization.message) }
+            if (this.state == "ready" && now - this.readyAt >= 10000) { this.retries = 0 }
+            if (this.state == "closing" && this.shutdownRequest.done)
+            {
+                this.notify("exit", "null")
+                this.state = "exiting"
+                this.deadline = now + 2000
+                if (this.argv.len() == 0) { this.state = "closed" }
+            }
+            if (this.state == "exiting" && now >= this.deadline) { this.stop() }
+            if (this.state == "backoff" && this.argv.len() > 0 && now >= this.deadline && this.transport.isStopped()) { this.connect() }
+        }
+    }
+}

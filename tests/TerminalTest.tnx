@@ -1,0 +1,71 @@
+import MockBridge
+import IdeAppTest
+import TempProject
+import tinox.ide.IdeApp
+import tinox.ide.kde.Event
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Terminal
+
+class TerminalTest
+{
+    @Test("terminal wrapper routes completion by target, reports backend and stops delivery on release")
+    fn testWrapper() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const id: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("terminal.create", "{\"id\":" + id.toString() + ",\"backend\":\"console\"}", "")
+        MockBridge::onCommand("terminal.sendText", "", "")
+        MockBridge::onCommand("terminal.setTitle", "", "")
+        MockBridge::onCommand("terminal.setDirectory", "", "")
+        const terminal: Terminal = Terminal::create(events, "/", "console")
+        var completed: List<String> = []
+        terminal.onFinished((ev: Event) => completed.push(ev.type))
+        terminal.sendText("build output\n")
+        terminal.setTitle("Build")
+        terminal.setDirectory("/tmp")
+        MockBridge::push("{\"type\":\"terminal.finished\",\"target\":" + id.toString() + "}")
+        events.pump(100)
+        const calls: List<String> = IdeAppTest::commands()
+        terminal.release()
+        MockBridge::push("{\"type\":\"terminal.finished\",\"target\":" + id.toString() + "}")
+        events.pump(100)
+        return terminal.backend == "console" && terminal.id() == id && completed.len() == 1 &&
+            IdeAppTest::firstWith(calls, "\"cmd\":\"terminal.sendText\"").contains("build output") &&
+            IdeAppTest::firstWith(calls, "\"cmd\":\"terminal.setTitle\"").contains("Build") &&
+            IdeAppTest::firstWith(calls, "\"cmd\":\"terminal.setDirectory\"").contains("/tmp")
+    }
+
+    @Test("terminal starts lazily in the workspace, follows root changes, surfaces busy errors and restarts an exited shell")
+    fn testPanel() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        const before: List<String> = IdeAppTest::commands()
+        const lazy: Bool = !app.terminal.started && IdeAppTest::firstWith(before, "\"cmd\":\"terminal.create\"") == ""
+        const root: String = TempProject::create()
+        app.store.set("workspace.path", root)
+        const id: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("terminal.create", "{\"id\":" + id.toString() + ",\"backend\":\"konsole\"}", "")
+        MockBridge::onCommand("terminal.setDirectory", "", "")
+        app.registry.execute("view.terminal")
+        const opened: List<String> = IdeAppTest::commands()
+        const directory: Bool = IdeAppTest::firstWith(opened, "\"cmd\":\"terminal.create\"").contains(root)
+        const shown: Bool = app.store.getInt("ui.bottomTab") == app.terminal.tabIndex && app.store.getBool("ui.bottomVisible")
+        app.bus.publish("workspace.opened", "{\"path\":\"/tmp\"}")
+        const changed: Bool = IdeAppTest::firstWith(IdeAppTest::commands(), "\"cmd\":\"terminal.setDirectory\"").contains("/tmp")
+        MockBridge::onCommand("terminal.setDirectory", "{\"ok\":false,\"error\":{\"code\":-6,\"message\":\"terminal is busy\"}}", "")
+        app.terminal.follow(root)
+        const busy: Bool = app.terminal.message.contains("terminal is busy")
+        MockBridge::push("{\"type\":\"terminal.finished\",\"target\":" + id.toString() + "}")
+        app.events.pump(100)
+        const finished: Bool = app.terminal.finished && app.terminal.message.contains("Shell finished")
+        const next: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("terminal.create", "{\"id\":" + next.toString() + ",\"backend\":\"console\"}", "")
+        app.registry.execute("view.terminal")
+        const restarted: Bool = app.terminal.terminal.id() == next && !app.terminal.finished && app.terminal.message.contains("Read-only")
+        app.terminal.terminal.release()
+        TempProject::remove(root)
+        return lazy && directory && shown && changed && busy && finished && restarted
+    }
+}

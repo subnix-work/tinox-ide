@@ -1,0 +1,78 @@
+module tinox.ide.ui
+
+import tinox.core.json
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+namespace tinox.ide.ui
+{
+    /** An embedded Konsole shell, or a read-only ANSI output console when Konsole is unavailable. */
+    class Terminal
+    {
+        /** The loop delivering process completion. */
+        var events: EventLoop
+        /** The stable widget id, also usable with Ui.embed. */
+        var terminalId: Int64
+        /** Either konsole or console. */
+        var backend: String
+        /** Called when the shell exits. */
+        var finishedHandler: fnc(Event) -> Nothing
+
+        /** Creates a terminal in an existing absolute directory; console forces the fallback. */
+        fnc create(events: EventLoop, directory: String, backend: String) -> Terminal
+        {
+            const reply: JsonValue = Bridge::query(Command::named("terminal.create").str("directory", directory).str("backend", backend).build())
+            const terminal: Terminal = Terminal { events: events, terminalId: reply.getField("id").getInt(), backend: reply.getField("backend").getString(), finishedHandler: (ev: Event) => Action::ignore() }
+            events.onTarget(terminal.terminalId, (ev: Event) => terminal.deliver(ev))
+            return terminal
+        }
+
+        /** Dispatches completion events. */
+        fn deliver(ev: Event) -> Nothing
+        {
+            if (ev.type == "terminal.finished")
+            {
+                this.finishedHandler(ev)
+            }
+        }
+
+        /** The stable widget handle. */
+        fn id() -> Int64
+        {
+            return this.terminalId
+        }
+
+        /** Sends shell input, or appends output with ANSI SGR colours in console mode. */
+        fn sendText(text: String) -> Nothing
+        {
+            Bridge::query(Command::named("terminal.sendText").target(this.terminalId).str("text", text).build())
+        }
+
+        /** Changes the widget title. */
+        fn setTitle(title: String) -> Nothing
+        {
+            Bridge::query(Command::named("terminal.setTitle").target(this.terminalId).str("title", title).build())
+        }
+
+        /** Changes the shell directory; throws if a foreground program is running. */
+        fn setDirectory(directory: String) -> Nothing
+        {
+            Bridge::query(Command::named("terminal.setDirectory").target(this.terminalId).str("directory", directory).build())
+        }
+
+        /** Calls the handler when the shell finishes; Konsole does not expose its exit status. */
+        fn onFinished(handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.finishedHandler = handler
+        }
+
+        /** Stops event delivery and destroys the terminal and its shell. */
+        fn release() -> Nothing
+        {
+            this.events.offTarget(this.terminalId)
+            Bridge::release(this.terminalId)
+        }
+    }
+}

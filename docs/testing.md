@@ -14,7 +14,7 @@ with sanitizers, at four levels. Everything below runs on Qt's `offscreen` platf
 ## The suites
 
 * **Per namespace** (`core_test`, `editor_test`, `widget_test`, `action_test`, `model_test`,
-  `dialog_test`): the main thread runs `tkde_exec`, a second thread plays the Tinox task and talks
+  `dialog_test`, `terminal_test`): the main thread runs `tkde_exec`, a second thread plays the Tinox task and talks
   to the library through the C ABI only (`tests/driver.h`: JSON commands, events, `EXPECT`).
   Where a test needs a real user action it goes through Qt like the user would: key presses with
   QTest (`action_test`), `QAbstractItemModelTester` attached to every model (`model_test`),
@@ -78,6 +78,29 @@ exactly what Tinox can call in a release build.
 * An event emitted by a document deleted late (Qt's deferred delete at process exit) reached the
   event queue after the `Bridge` singleton had been destroyed. The singleton is now never destroyed
   and `tkde_exec` deletes all registered objects before it returns.
+
+## Language server client
+
+`tests/LspTest.tnx` checks the protocol and document synchronization independently
+of a process. `tests/LspProcessTest.tnx` exercises duplex pressure, cancellation,
+crash recovery and teardown against a scripted peer, then uses the real tinox-lsp.
+Set `TINOX_LSP` when the executable is outside PATH and the sibling Tinox checkout.
+See [lsp-client.md](lsp-client.md) for the library's ownership and polling contract.
+
+## Existing search test race
+
+`SearchTest::testSearchRipgrep` can intermittently report zero matches instead of
+an error for an invalid regular expression. This also reproduces on the baseline
+commit `8f54f68`, without terminal support. `FileSearch.runRipgrep` treats pipe EOF
+as completion, reads the exit code once and then kills the process; EOF does not
+guarantee the child has exited. If its exit status is not available yet, the
+ripgrep error is lost. Keep this failure visible; the terminal tests do not skip
+or change the search test.
+
+Older installed compilers also compile once per test method; the performance
+issue is tracked in [tinox#514](https://github.com/subnix-work/tinox/issues/514).
+Passing individual test files to independent compiler processes avoids repeating
+project-wide discovery while retaining their normal test isolation.
 
 ## Adding to the suite
 

@@ -18,6 +18,7 @@ import tinox.ide.search.Navigation
 import tinox.ide.settings.Preferences
 import tinox.ide.settings.SettingsDialog
 import tinox.ide.settings.Settings
+import tinox.ide.terminal.TerminalPanel
 import tinox.ide.ui.Actions
 import tinox.ide.ui.Dialogs
 import tinox.ide.workspace.Workspace
@@ -66,6 +67,8 @@ namespace tinox.ide
         var navigation: Navigation
         /** Find and replace in files. */
         var search: FindInFiles
+        /** The integrated terminal. */
+        var terminal: TerminalPanel
         /** The preferences with their defaults and checks. */
         var preferences: Preferences
         /** The settings window. */
@@ -100,7 +103,9 @@ namespace tinox.ide
             const settingsDialog: SettingsDialog = SettingsDialog::create(events, preferences, actions)
             settingsDialog.themes = (p: Preferences) => documents.themes()
             settingsDialog.editorConfig = (p: Preferences) => documents.showEditorConfig()
-            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
+            search.install()
+            const terminal: TerminalPanel = TerminalPanel::install(window)
+            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, terminal: terminal, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
             app.loadSettings()
             app.registerCommands()
             workspace.registerCommands()
@@ -109,7 +114,6 @@ namespace tinox.ide
             window.addFileMenu(documents.fileItems())
             window.addViewMenu(documents.viewItems())
             navigation.registerCommands()
-            search.install()
             window.addSettingsMenu(["options_configure"])
             window.addGoMenu(navigation.menuItems(), search.menuItems())
             registry.attach()

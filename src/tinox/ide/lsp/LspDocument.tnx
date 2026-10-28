@@ -1,0 +1,25 @@
+module tinox.ide.lsp
+
+import tinox.ide.ui.Js
+
+namespace tinox.ide.lsp
+{
+    /** The latest document snapshot, retained across server restarts. */
+    class LspDocument
+    {
+        /** Document URI. */
+        var uri: String
+        /** Language id sent to the server. */
+        var language: String
+        /** Latest complete text. */
+        var text: String
+        /** Monotonically increasing version. */
+        var version: Int64
+
+        /** didOpen params for this snapshot. */
+        fn opening() -> String
+        {
+            return Js::object([Js::field("textDocument", Js::object([Js::strField("uri", this.uri), Js::strField("languageId", this.language), Js::intField("version", this.version), Js::strField("text", this.text)]))])
+        }
+    }
+}

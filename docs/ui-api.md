@@ -112,6 +112,20 @@ doc.setDiagnostics("lsp", [Diagnostic::error(Range::create(3, 4, 3, 9), "unknown
   List<CompletionItem>`. A provider that throws answers with no items and the failure is reported, so the popup
   never waits for an answer that will not come.
 
+## Position conversion: `Utf16`
+
+`Utf16::position(text, byteOffset)` and `Utf16::offset(text, position)` convert
+between UTF-8 bytes and the editor/LSP UTF-16 position contract. Invalid positions,
+UTF-8 boundaries and surrogate midpoints throw. `Utf16::uri(path)` encodes a file
+URI. These helpers are shared with the [LSP client library](lsp-client.md).
+
+## Terminal: `Terminal`
+
+`Terminal::create(events, directory, "auto")` loads Konsole or a read-only ANSI
+console. Embed `terminal.id()` with `Ui::embed`; `sendText`, `setTitle`,
+`setDirectory`, `onFinished` and `release` control its lifetime. See
+[terminal.md](terminal.md) for the bridge protocol and fallback behaviour.
+
 ## Dialogs: `Dialogs`
 
 `Dialogs::create(events)` wraps the bridge's dialogs so that none blocks: the call returns, the dialog is up, and a

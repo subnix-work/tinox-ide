@@ -1,0 +1,115 @@
+module tinox.ide.ui
+
+import tinox.core.bytes.Bytes
+
+namespace tinox.ide.ui
+{
+    /** UTF-8 byte offsets to the UTF-16 positions used by LSP and KTextEditor (positions.h). */
+    class Utf16
+    {
+        /** Width of a validated UTF-8 code point starting at index. */
+        fnc width(bytes: Bytes, index: Int64) -> Int64
+        {
+            const lead: Int64 = bytes.get(index)
+            var width: Int64 = 1
+            if (lead >= 194 && lead <= 223) { width = 2 }
+            else if (lead >= 224 && lead <= 239) { width = 3 }
+            else if (lead >= 240 && lead <= 244) { width = 4 }
+            else if (lead >= 128) { throw "Invalid UTF-8 leading byte" }
+            if (index + width > bytes.len()) { throw "Truncated UTF-8 character" }
+            var i: Int64 = 1
+            while (i < width)
+            {
+                const next: Int64 = bytes.get(index + i)
+                if (next < 128 || next > 191) { throw "Invalid UTF-8 continuation" }
+                i = i + 1
+            }
+            if (width >= 3)
+            {
+                const second: Int64 = bytes.get(index + 1)
+                if ((lead == 224 && second < 160) || (lead == 237 && second >= 160) || (lead == 240 && second < 144) || (lead == 244 && second >= 144)) { throw "Invalid UTF-8 code point" }
+            }
+            return width
+        }
+
+        /** Converts a byte offset at a code point boundary to an editor/LSP position. */
+        fnc position(text: String, offset: Int64) -> Position
+        {
+            const bytes: Bytes = Bytes::fromText(text)
+            if (offset < 0 || offset > bytes.len()) { throw "Byte offset outside document" }
+            var at: Int64 = 0
+            var line: Int64 = 0
+            var character: Int64 = 0
+            while (at < offset)
+            {
+                const width: Int64 = Utf16::width(bytes, at)
+                if (at + width > offset) { throw "Byte offset splits a UTF-8 character" }
+                if (bytes.get(at) == 10 || (bytes.get(at) == 13 && (at + 1 == bytes.len() || bytes.get(at + 1) != 10))) { line = line + 1
+                    character = 0 }
+                else if (bytes.get(at) != 13 || at + 1 >= bytes.len() || bytes.get(at + 1) != 10)
+                {
+                    character = character + 1
+                    if (width == 4) { character = character + 1 }
+                }
+                at = at + width
+            }
+            return Position::create(line, character)
+        }
+
+        /** Converts a UTF-16 position to a byte offset; rejects split surrogate pairs and out-of-line columns. */
+        fnc offset(text: String, position: Position) -> Int64
+        {
+            if (position.line < 0 || position.character < 0) { throw "Negative LSP position" }
+            const bytes: Bytes = Bytes::fromText(text)
+            var at: Int64 = 0
+            var line: Int64 = 0
+            var character: Int64 = 0
+            while (at <= bytes.len())
+            {
+                if (line == position.line && character == position.character) { return at }
+                if (at == bytes.len()) { throw "Position outside document" }
+                const byte: Int64 = bytes.get(at)
+                const width: Int64 = Utf16::width(bytes, at)
+                if (byte == 10 || (byte == 13 && (at + 1 == bytes.len() || bytes.get(at + 1) != 10)))
+                {
+                    if (line == position.line) { throw "Position outside line" }
+                    line = line + 1
+                    character = 0
+                }
+                else if (byte == 13 && at + 1 < bytes.len() && bytes.get(at + 1) == 10)
+                {
+                    if (line == position.line) { throw "Position outside line" }
+                }
+                else
+                {
+                    character = character + 1
+                    if (width == 4) { character = character + 1 }
+                    if (line == position.line && character > position.character) { throw "Position splits a surrogate pair" }
+                }
+                at = at + width
+            }
+            throw "Position outside document"
+        }
+
+        /** An absolute local path as a percent-encoded file URI. */
+        fnc uri(path: String) -> String
+        {
+            if (!path.startsWith("/")) { throw "File URI needs an absolute path" }
+            const bytes: Bytes = Bytes::fromText(path)
+            const hex: String = "0123456789ABCDEF"
+            var result: String = "file://"
+            var i: Int64 = 0
+            while (i < bytes.len())
+            {
+                const b: Int64 = bytes.get(i)
+                if ((b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 47 || b == 45 || b == 46 || b == 95 || b == 126)
+                {
+                    result = result + bytes.slice(i, i + 1).toText()
+                }
+                else { result = result + "%" + hex.charAt(b / 16) + hex.charAt(b % 16) }
+                i = i + 1
+            }
+            return result
+        }
+    }
+}

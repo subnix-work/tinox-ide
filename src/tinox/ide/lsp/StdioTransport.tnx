@@ -1,0 +1,190 @@
+module tinox.ide.lsp
+
+import tinox.core.process.InteractiveProcess
+import tinox.core.process.Process
+import tinox.core.semaphore.Mutex
+
+namespace tinox.ide.lsp
+{
+    /** A serialized write queue and concurrent multiplexed stdout/stderr reader. No Qt or IDE bus required. */
+    class StdioTransport
+    {
+        /** Guards all data crossing task boundaries. */
+        var mutex: Mutex
+        /** Frames waiting for the dedicated writer. */
+        var outgoing: List<String>
+        /** Complete incoming JSON messages, consumed by the logic task. */
+        var incoming: List<String>
+        /** Total queued output bytes. */
+        var queued: Int64
+        /** Total queued input bytes. */
+        var received: Int64
+        /** Requests process-group cancellation. */
+        var stopping: Bool
+        /** True after both workers and process cleanup have finished. */
+        var stopped: Bool
+        /** Last transport failure. */
+        var failure: String
+        /** Recent server stderr, limited to 64 KiB. */
+        var stderr: String
+
+        /** Starts a server and its workers; call drain and status from the owning logic task. */
+        fnc start(argv: List<String>, directory: String) -> StdioTransport
+        {
+            const transport: StdioTransport = StdioTransport { mutex: Mutex::new(), outgoing: [], incoming: [], queued: 0, received: 0, stopping: false, stopped: false, failure: "", stderr: "" }
+            spawn StdioTransport::serve(transport, argv, directory)
+            return transport
+        }
+
+        /** Enqueues one complete JSON-RPC message without blocking on child stdin. */
+        fn writeMessage(json: String) -> Nothing
+        {
+            const frame: String = Framing::encode(json)
+            Mutex::lock(this.mutex)
+            if (this.stopping || this.stopped || this.queued + frame.len() > 67108864)
+            {
+                Mutex::unlock(this.mutex)
+                throw "LSP transport stopped or write queue exceeds 64 MiB"
+            }
+            this.outgoing.push(frame)
+            this.queued = this.queued + frame.len()
+            Mutex::unlock(this.mutex)
+        }
+
+        /** Removes all currently available messages. */
+        fn drain() -> List<String>
+        {
+            Mutex::lock(this.mutex)
+            const messages: List<String> = this.incoming
+            this.incoming = []
+            this.received = 0
+            Mutex::unlock(this.mutex)
+            return messages
+        }
+
+        /** Requests a bounded stop; the reader kills the process group before joining a blocked writer. */
+        fn stop() -> Nothing
+        {
+            Mutex::lock(this.mutex)
+            this.stopping = true
+            Mutex::unlock(this.mutex)
+        }
+
+        /** Whether a stop has been requested. */
+        fn shouldStop() -> Bool
+        {
+            Mutex::lock(this.mutex)
+            const stop: Bool = this.stopping
+            Mutex::unlock(this.mutex)
+            return stop
+        }
+
+        /** Whether all native process resources have been released. */
+        fn isStopped() -> Bool
+        {
+            Mutex::lock(this.mutex)
+            const stopped: Bool = this.stopped
+            Mutex::unlock(this.mutex)
+            return stopped
+        }
+
+        /** A transport failure, or an empty string. */
+        fn error() -> String
+        {
+            Mutex::lock(this.mutex)
+            const failure: String = this.failure
+            Mutex::unlock(this.mutex)
+            return failure
+        }
+
+        /** Records a failure and asks both workers to stop. */
+        fn fail(message: String) -> Nothing
+        {
+            Mutex::lock(this.mutex)
+            this.failure = message
+            this.stopping = true
+            Mutex::unlock(this.mutex)
+        }
+
+        /** The sole stdin writer. It never holds the queue lock during a blocking write. */
+        fnc write(transport: StdioTransport, proc: InteractiveProcess) -> Int64
+        {
+            try
+            {
+                while (!transport.shouldStop())
+                {
+                    Mutex::lock(transport.mutex)
+                    const batch: List<String> = transport.outgoing
+                    transport.outgoing = []
+                    transport.queued = 0
+                    Mutex::unlock(transport.mutex)
+                    for frame in batch
+                    {
+                        if (!transport.shouldStop()) { InteractiveProcess::writeStdin(proc, frame) }
+                    }
+                    Process::sleep(2)
+                }
+            }
+            catch (e: String) { transport.fail(e) }
+            return 0
+        }
+
+        /** Owns process lifecycle and all reads; waitReadable drains both pipes concurrently. */
+        fnc serve(transport: StdioTransport, argv: List<String>, directory: String) -> Int64
+        {
+            const proc: InteractiveProcess = InteractiveProcess::startPiped(argv, directory, [])
+            const writer = spawn StdioTransport::write(transport, proc)
+            const framing: Framing = Framing::create()
+            try
+            {
+                var ended: Bool = false
+                while (!transport.shouldStop() && !ended)
+                {
+                    const mask: Int64 = InteractiveProcess::waitReadable(proc, 20)
+                    if ((mask / 2) % 2 == 1)
+                    {
+                        const text: String = InteractiveProcess::readStderr(proc, 0)
+                        Mutex::lock(transport.mutex)
+                        // Keep whole chunks: cutting an arbitrary UTF-8 byte offset is invalid in Tinox.
+                        if (transport.stderr.len() + text.len() > 65536) { transport.stderr = "" }
+                        if (text.len() <= 65536) { transport.stderr = transport.stderr + text }
+                        Mutex::unlock(transport.mutex)
+                    }
+                    if (mask % 2 == 1)
+                    {
+                        const text: String = InteractiveProcess::readOutput(proc, 0)
+                        const messages: List<String> = framing.feed(text)
+                        for message in messages
+                        {
+                            Mutex::lock(transport.mutex)
+                            if (transport.received + message.len() > 67108864)
+                            {
+                                Mutex::unlock(transport.mutex)
+                                throw "LSP read queue exceeds 64 MiB"
+                            }
+                            transport.incoming.push(message)
+                            transport.received = transport.received + message.len()
+                            Mutex::unlock(transport.mutex)
+                        }
+                    }
+                    if (mask == 4)
+                    {
+                        framing.finish()
+                        ended = !InteractiveProcess::isAlive(proc)
+                        if (!ended) { Process::sleep(2) }
+                    }
+                }
+            }
+            catch (e: String) { transport.fail(e) }
+            transport.stop()
+            // Only this task touches lifecycle state; do not close fds underneath the writer.
+            InteractiveProcess::signal(proc, 9)
+            await writer
+            InteractiveProcess::kill(proc)
+            Mutex::lock(transport.mutex)
+            transport.stopped = true
+            Mutex::unlock(transport.mutex)
+            return 0
+        }
+    }
+}

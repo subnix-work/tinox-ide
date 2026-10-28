@@ -7,6 +7,7 @@
 #include "editor/editor.h"
 #include "model/model.h"
 #include "widget/widget.h"
+#include "terminal/terminal.h"
 
 #include <KAboutData>
 #include <KCoreAddons>
@@ -177,6 +178,7 @@ int64_t Bridge::init(const QString &appName, const QString &displayName)
     tkde::dialog::registerCommands(*this);
     tkde::config::registerCommands(*this);
     tkde::notify::registerCommands(*this);
+    tkde::terminal::registerCommands(*this);
 
     QObject::connect(m_app, &QGuiApplication::lastWindowClosed, m_context, [this] { requestQuit(0); });
 

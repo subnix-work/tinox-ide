@@ -1,0 +1,174 @@
+import tinox.core.bytes.Bytes
+import tinox.core.json
+import tinox.ide.lsp.Framing
+import tinox.ide.lsp.LspClient
+import tinox.ide.lsp.RpcFuture
+import tinox.ide.ui.Utf16
+import tinox.ide.ui.Position
+import tinox.ide.ui.Range
+import tinox.ide.ui.TextEdit
+
+class LspTest
+{
+    fnc ready(client: LspClient) -> Nothing
+    {
+        client.pollAt(0)
+        const init: RpcFuture = client.initialize("file:///workspace")
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + init.id.toString() + ",\"result\":{\"capabilities\":{\"positionEncoding\":\"utf-16\",\"textDocumentSync\":{\"openClose\":true,\"change\":2,\"save\":{\"includeText\":true}}}}}")
+    }
+
+    @Test("byte framing accepts fragmented headers, Unicode and multiple messages; malformed lengths and truncated EOF fail")
+    fn testFraming() -> Bool
+    {
+        const decoder: Framing = Framing::create()
+        const json: String = "{\"message\":\"Grüße 🌍\"}"
+        const framed: String = Framing::encode(json)
+        const a: List<String> = decoder.feed("Content-Len")
+        const b: List<String> = decoder.feed(framed.substring(11, framed.len()) + Framing::encode("{}"))
+        const bytes: Bytes = Bytes::fromText(Framing::encode(json))
+        const fragmented: Framing = Framing::create()
+        var pieces: List<String> = []
+        var index: Int64 = 0
+        while (index < bytes.len())
+        {
+            for complete in fragmented.feed(bytes.slice(index, index + 1).toText()) { pieces.push(complete) }
+            index = index + 1
+        }
+        var bad: Int64 = 0
+        for header in ["Content-Length: -1\r\n\r\n", "Content-Length: 999999999999999999999\r\n\r\n", "X: 1\r\n\r\n", "Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}"]
+        {
+            try { Framing::create().feed(header) }
+            catch (e: String) { bad = bad + 1 }
+        }
+        const partial: Framing = Framing::create()
+        partial.feed("Content-Length: 4\r\n\r\n{")
+        try { partial.finish() }
+        catch (e: String) { bad = bad + 1 }
+        return pieces.len() == 1 && pieces[0] == json && a.len() == 0 && b.len() == 2 && b[0] == json && b[1] == "{}" && bad == 5
+    }
+
+    @Test("UTF-16 positions match the editor for emoji, combining marks and CRLF, with strict boundaries and URI escaping")
+    fn testPositions() -> Bool
+    {
+        const text: String = "a🌍é\r\nβ"
+        const position: Position = Utf16::position(text, 5)
+        const offset: Int64 = Utf16::offset(text, Position::create(1, 1))
+        var bad: Int64 = 0
+        try { Utf16::offset(text, Position::create(0, 2)) }
+        catch (e: String) { bad = bad + 1 }
+        try { Utf16::position(text, 2) }
+        catch (e: String) { bad = bad + 1 }
+        try { Utf16::offset(text, Position::create(0, 99)) }
+        catch (e: String) { bad = bad + 1 }
+        return Utf16::position("a\rb", 2).line == 1 && Utf16::offset("a\rb", Position::create(1, 1)) == 3 && position.character == 3 && offset == Bytes::fromText(text).len() && bad == 3 && Utf16::uri("/tmp/a #β.tnx") == "file:///tmp/a%20%23%CE%B2.tnx"
+    }
+
+    @Test("requests correlate out of order; cancellation, timeout, late responses and restart generations settle once")
+    fn testRequests() -> Bool
+    {
+        var sent: List<String> = []
+        const client: LspClient = LspClient::create((json: String) => sent.push(json))
+        LspTest::ready(client)
+        const one: RpcFuture = client.request("one", "{}", 50)
+        const two: RpcFuture = client.request("two", "{}", 100)
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + two.id.toString() + ",\"result\":42}")
+        client.cancel(one)
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + one.id.toString() + ",\"result\":99}")
+        const three: RpcFuture = client.request("three", "{}", 10)
+        client.pollAt(11)
+        const four: RpcFuture = client.request("four", "{}", 50)
+        client.lost("crash")
+        const init: RpcFuture = client.initialize("file:///workspace")
+        return client.state == "initializing" && two.value().getInt() == 42 && one.code == -32800 && three.code == -32098 && four.code == -32097 && init.id > four.id && sent.len() >= 8
+    }
+
+    @Test("document changes use UTF-16 ranges, survive restart, respect capabilities and answer server requests and shutdown")
+    fn testDocumentsAndServerRequests() -> Bool
+    {
+        var sent: List<String> = []
+        const client: LspClient = LspClient::create((json: String) => sent.push(json))
+        client.open("file:///a.tnx", "tinox", "a🌍b", 1)
+        LspTest::ready(client)
+        client.change("file:///a.tnx", 2, [TextEdit::replace(Range::create(0, 1, 0, 3), "hello")])
+        client.save("file:///a.tnx")
+        const changed: Bool = client.documents.get("file:///a.tnx").text == "ahellob"
+        client.configuration = (item: JsonValue) => Json::parse("42")
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":\"config\",\"method\":\"workspace/configuration\",\"params\":{\"items\":[{},{}]}}")
+        const config: JsonValue = Json::parse(sent[sent.len() - 1])
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":\"edit\",\"method\":\"workspace/applyEdit\",\"params\":{\"edit\":{}}}")
+        const refused: JsonValue = Json::parse(sent[sent.len() - 1])
+        client.lost("restart")
+        LspTest::ready(client)
+        const reopened: String = sent[sent.len() - 1]
+        client.close("file:///a.tnx")
+        const shutdown: RpcFuture = client.shutdown()
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + shutdown.id.toString() + ",\"result\":null}")
+        client.pollAt(1)
+        return changed && config.getField("result").len() == 2 && !refused.getField("result").getField("applied").getBool() && reopened.contains("ahellob") && reopened.contains("didOpen") && client.state == "closed" && sent[sent.len() - 1].contains("exit")
+    }
+    @Test("initialization rejects incompatible capabilities, lifecycle misuse and malformed responses; shutdown timeouts are bounded")
+    fn testLifecycleErrors() -> Bool
+    {
+        var sent: List<String> = []
+        const client: LspClient = LspClient::create((json: String) => sent.push(json))
+        client.pollAt(0)
+        var denied: Int64 = 0
+        try { client.notify("tooEarly", "{}") }
+        catch (e: String) { denied = denied + 1 }
+        const init: RpcFuture = client.initialize("")
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + init.id.toString() + ",\"result\":{\"capabilities\":{\"positionEncoding\":\"utf-8\"}}}")
+        const refused: Bool = init.done && init.code != 0 && client.state == "backoff"
+        LspTest::ready(client)
+        try { client.request("shutdown", "null", 50) }
+        catch (e: String) { denied = denied + 1 }
+        const invalid: RpcFuture = client.request("test", "{}", 50)
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + invalid.id.toString() + "}")
+        client.shutdown()
+        client.pollAt(2001)
+        return refused && denied == 2 && invalid.code == -32603 && client.state == "closed" && sent[sent.len() - 1].contains("exit")
+    }
+
+    @Test("server requests preserve string ids, apply edits only through the handler, isolate handler errors and reject unknown methods")
+    fn testServerRequests() -> Bool
+    {
+        var sent: List<String> = []
+        var messages: List<String> = []
+        const client: LspClient = LspClient::create((json: String) => sent.push(json))
+        LspTest::ready(client)
+        client.notification = (method: String, params: JsonValue) => messages.push(method)
+        client.applyEdit = (edit: JsonValue) => true
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":\"edit\",\"method\":\"workspace/applyEdit\",\"params\":{\"edit\":{}}}")
+        const applied: JsonValue = Json::parse(sent[sent.len() - 1])
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"window/showMessageRequest\",\"params\":{\"message\":\"hello\"}}")
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"unknown\",\"params\":{}}")
+        const unsupported: JsonValue = Json::parse(sent[sent.len() - 1])
+        client.configuration = (item: JsonValue) => LspTest::brokenConfiguration(item)
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"workspace/configuration\",\"params\":{\"items\":[{}]}}")
+        const failed: JsonValue = Json::parse(sent[sent.len() - 1])
+        return applied.getField("id").getString() == "edit" && applied.getField("result").getField("applied").getBool() && messages.contains("window/showMessage") && unsupported.getField("error").getField("code").getInt() == -32601 && failed.getField("error").getField("code").getInt() == -32603 && client.state == "ready"
+    }
+
+    fnc brokenConfiguration(item: JsonValue) -> JsonValue
+    {
+        throw "Configuration unavailable"
+    }
+
+    @Test("a lost connection during graceful shutdown is closed without throwing or restarting")
+    fn testShutdownDisconnect() -> Bool
+    {
+        var sent: List<String> = []
+        const client: LspClient = LspClient::create((json: String) => sent.push(json))
+        LspTest::ready(client)
+        const shutdown: RpcFuture = client.shutdown()
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + shutdown.id.toString() + ",\"result\":null}")
+        client.sender = (json: String) => LspTest::brokenSender(json)
+        client.pollAt(1)
+        return client.state == "closed" && client.lastError == "Disconnected"
+    }
+
+    fnc brokenSender(json: String) -> Nothing
+    {
+        throw "Disconnected"
+    }
+
+}

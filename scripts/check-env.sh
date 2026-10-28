@@ -40,6 +40,7 @@ pkg() {
         arch:qt6-base) echo qt6-base ;;               debian:qt6-base) echo qt6-base-dev ;;               fedora:qt6-base) echo qt6-qtbase-devel ;;
         arch:ecm) echo extra-cmake-modules ;;         debian:ecm) echo extra-cmake-modules ;;            fedora:ecm) echo extra-cmake-modules ;;
         arch:Config) echo kconfig ;;                  debian:Config) echo libkf6config-dev ;;            fedora:Config) echo kf6-kconfig-devel ;;
+        arch:Parts) echo kparts ;;                    debian:Parts) echo libkf6parts-dev ;;               fedora:Parts) echo kf6-kparts-devel ;;
         arch:CoreAddons) echo kcoreaddons ;;          debian:CoreAddons) echo libkf6coreaddons-dev ;;    fedora:CoreAddons) echo kf6-kcoreaddons-devel ;;
         arch:I18n) echo ki18n ;;                      debian:I18n) echo libkf6i18n-dev ;;                fedora:I18n) echo kf6-ki18n-devel ;;
         arch:XmlGui) echo kxmlgui ;;                  debian:XmlGui) echo libkf6xmlgui-dev ;;            fedora:XmlGui) echo kf6-kxmlgui-devel ;;
@@ -133,7 +134,7 @@ cmake_has() { # label, min version, find_package arguments...
 if command -v cmake >/dev/null 2>&1; then
     cmake_has "ECM >= $MIN_KF" "$MIN_KF" ecm ECM "$MIN_KF" NO_MODULE
     cmake_has "Qt6 >= $MIN_QT (Core, Widgets, Xml, Test)" "$MIN_QT" qt6-base Qt6 "$MIN_QT" COMPONENTS Core Widgets Xml Test
-    for comp in Config ConfigWidgets WidgetsAddons CoreAddons I18n Crash DBusAddons XmlGui TextEditor SyntaxHighlighting KIO Notifications; do
+    for comp in Parts Config ConfigWidgets WidgetsAddons CoreAddons I18n Crash DBusAddons XmlGui TextEditor SyntaxHighlighting KIO Notifications; do
         cmake_has "KF6 $comp >= $MIN_KF" "$MIN_KF" "$comp" KF6 "$MIN_KF" COMPONENTS "$comp"
     done
 fi

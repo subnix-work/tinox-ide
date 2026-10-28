@@ -1,0 +1,115 @@
+module tinox.ide.lsp
+
+import tinox.core.bytes.Bytes
+
+namespace tinox.ide.lsp
+{
+    /** Incremental byte framing for JSON-RPC over stdio; chunks may split UTF-8 characters. */
+    class Framing
+    {
+        /** Unconsumed bytes. */
+        var buffer: Bytes
+        /** Body size, or -1 while reading headers. */
+        var length: Int64
+        /** Maximum accepted body length in bytes. */
+        var limit: Int64
+
+        /** An empty decoder with an 8 MiB message limit. */
+        fnc create() -> Framing
+        {
+            return Framing { buffer: Bytes::new(0), length: -1, limit: 8388608 }
+        }
+
+        /** An ASCII header followed by a UTF-8 JSON body, counted in bytes. */
+        fnc encode(json: String) -> String
+        {
+            return "Content-Length: " + Bytes::fromText(json).len().toString() + "\r\n\r\n" + json
+        }
+
+        /** Accepts a raw pipe chunk and returns every complete body; malformed headers throw. */
+        fn feed(chunk: String) -> List<String>
+        {
+            this.buffer = this.buffer.concat(Bytes::fromText(chunk))
+            var messages: List<String> = []
+            var more: Bool = true
+            while (more)
+            {
+                if (this.length < 0)
+                {
+                    var end: Int64 = -1
+                    var i: Int64 = 0
+                    while (i + 3 < this.buffer.len() && end < 0)
+                    {
+                        if (this.buffer.get(i) == 13 && this.buffer.get(i + 1) == 10 && this.buffer.get(i + 2) == 13 && this.buffer.get(i + 3) == 10)
+                        {
+                            end = i
+                        }
+                        i = i + 1
+                    }
+                    if (end < 0)
+                    {
+                        if (this.buffer.len() > 8192) { throw "LSP header exceeds 8192 bytes" }
+                        return messages
+                    }
+                    if (end > 8192) { throw "LSP header exceeds 8192 bytes" }
+                    var h: Int64 = 0
+                    while (h < end)
+                    {
+                        const byte: Int64 = this.buffer.get(h)
+                        if (byte > 126 || (byte < 32 && byte != 9 && byte != 10 && byte != 13)) { throw "LSP headers must be ASCII" }
+                        h = h + 1
+                    }
+                    const header: String = this.buffer.slice(0, end).toText()
+                    for line in header.split("\r\n")
+                    {
+                        const colon: Int64 = line.indexOf(":")
+                        if (colon < 1) { throw "Malformed LSP header" }
+                        const name: String = line.substring(0, colon).toLower()
+                        const value: String = line.substring(colon + 1, line.len()).trim()
+                        if (name == "content-length")
+                        {
+                            if (this.length >= 0 || value == "") { throw "Duplicate or empty Content-Length" }
+                            this.length = 0
+                            const digits: Bytes = Bytes::fromText(value)
+                            var n: Int64 = 0
+                            while (n < digits.len())
+                            {
+                                const digit: Int64 = digits.get(n) - 48
+                                if (digit < 0 || digit > 9) { throw "Invalid Content-Length" }
+                                this.length = this.length * 10 + digit
+                                if (this.length > this.limit) { throw "LSP message exceeds limit" }
+                                n = n + 1
+                            }
+                        }
+                        if (name == "content-type")
+                        {
+                            for parameter in value.toLower().split(";")
+                            {
+                                const equal: Int64 = parameter.indexOf("=")
+                                if (equal > 0 && parameter.substring(0, equal).trim() == "charset")
+                                {
+                                    const charset: String = parameter.substring(equal + 1, parameter.len()).trim()
+                                    if (charset != "utf-8" && charset != "utf8") { throw "Unsupported LSP charset" }
+                                }
+                            }
+                        }
+                    }
+                    if (this.length < 1) { throw "Missing or zero Content-Length" }
+                    this.buffer = this.buffer.slice(end + 4, this.buffer.len())
+                }
+                if (this.buffer.len() < this.length) { return messages }
+                messages.push(this.buffer.slice(0, this.length).toText())
+                this.buffer = this.buffer.slice(this.length, this.buffer.len())
+                this.length = -1
+                more = this.buffer.len() > 0
+            }
+            return messages
+        }
+
+        /** Detects a server exiting in the middle of a frame. */
+        fn finish() -> Nothing
+        {
+            if (this.length >= 0 || this.buffer.len() > 0) { throw "Truncated LSP message" }
+        }
+    }
+}

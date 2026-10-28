@@ -1,0 +1,129 @@
+module tinox.ide.terminal
+
+import tinox.ide.app.BusMessage
+import tinox.ide.app.CommandContext
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.MainWindow
+import tinox.ide.app.Store
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Node
+import tinox.ide.ui.Terminal
+import tinox.ide.ui.Ui
+
+namespace tinox.ide.terminal
+{
+    /** A lazily started terminal tab following the workspace root. */
+    class TerminalPanel
+    {
+        /** The main window and its application state. */
+        var window: MainWindow
+        /** The terminal once started. */
+        var terminal: Terminal
+        /** Whether a terminal has been created. */
+        var started: Bool
+        /** Whether the shell has exited. */
+        var finished: Bool
+        /** The index of this bottom panel. */
+        var tabIndex: Int64
+        /** The reason a directory change could not be applied. */
+        var message: String
+
+        /** Installs the tab and its View command before the window starts. */
+        fnc install(window: MainWindow) -> TerminalPanel
+        {
+            const panel: TerminalPanel = TerminalPanel { window: window, terminal: Terminal { events: window.events, terminalId: 0, backend: "", finishedHandler: (ev: Event) => EventLoop::ignore() }, started: false, finished: false, tabIndex: window.bottomPanels.len() + 2, message: "Open Terminal to start a shell" }
+            window.addBottomPanel((s: Store) => panel.describe())
+            window.registry.register(IdeCommand::create("view.terminal", "Open &Terminal").icon("utilities-terminal").shortcut("F4").category("View").run((c: CommandContext) => panel.show()))
+            window.addViewMenu(["view.terminal"])
+            window.mount.onClick("terminalStart", (ev: Event) => panel.show())
+            window.bus.subscribe("workspace.opened", (m: BusMessage) => panel.follow(m.str("path")))
+            window.bus.subscribe("workspace.closed", (m: BusMessage) => panel.follow(panel.home()))
+            return panel
+        }
+
+        /** The home directory used outside a project. */
+        fn home() -> String
+        {
+            const home: String = Bridge::env("HOME")
+            if (home == "")
+            {
+                return "/"
+            }
+            return home
+        }
+
+        /** Starts a shell if needed, then reveals the tab. */
+        fn show() -> Nothing
+        {
+            if (!this.started || this.finished)
+            {
+                var directory: String = this.window.store.get("workspace.path")
+                if (directory == "")
+                {
+                    directory = this.home()
+                }
+                const next: Terminal = Terminal::create(this.window.events, directory, "auto")
+                if (this.started)
+                {
+                    this.terminal.release()
+                }
+                this.terminal = next
+                this.started = true
+                this.finished = false
+                this.terminal.onFinished((ev: Event) => this.exited())
+                this.message = ""
+                if (this.terminal.backend == "console")
+                {
+                    this.message = "Konsole is unavailable. Read-only output console."
+                }
+                this.window.render()
+            }
+            this.window.showBottomTab(this.tabIndex)
+        }
+
+        /** Keeps the terminal in the current workspace without sending input to a running program. */
+        fn follow(directory: String) -> Nothing
+        {
+            if (this.started && !this.finished)
+            {
+                try
+                {
+                    this.terminal.setDirectory(directory)
+                    this.message = ""
+                    if (this.terminal.backend == "console")
+                    {
+                        this.message = "Konsole is unavailable. Read-only output console."
+                    }
+                }
+                catch (e: String)
+                {
+                    this.message = "Terminal directory unchanged: " + e
+                }
+                this.window.render()
+            }
+        }
+
+        /** Marks an exited shell so opening the terminal again starts a fresh one. */
+        fn exited() -> Nothing
+        {
+            this.finished = true
+            this.message = "Shell finished. Open Terminal to start a new shell."
+            this.window.render()
+        }
+
+        /** The terminal tab, keeping the same embed key throughout the shell's lifetime. */
+        fn describe() -> Node
+        {
+            var panel: Node = Ui::column("terminalPanel").inTab("Terminal", "utilities-terminal")
+                .add(Ui::label("terminalMessage", this.message).visible(this.message != ""))
+                .add(Ui::button("terminalStart", "Open Terminal").visible(!this.started || this.finished))
+            if (this.started)
+            {
+                panel = panel.add(Ui::embed("terminalSession" + this.terminal.id().toString(), this.terminal.id()).stretch(1))
+            }
+            return panel
+        }
+    }
+}
