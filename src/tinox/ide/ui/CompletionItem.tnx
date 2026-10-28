@@ -1,0 +1,97 @@
+module tinox.ide.ui
+
+namespace tinox.ide.ui
+{
+    /**
+     * One entry of the completion popup.
+     *
+     *     CompletionItem::create("readFile").kind("method").detail("(path: String) -> String")
+     *         .insertText("readFile(").alsoEdit(TextEdit::insert(Position::create(0, 0), "import tinox.core.fs\n"))
+     *
+     * Choosing it replaces the word being typed by `insertText` (the label when there is
+     * none) and applies the additional edits in the same undo step.
+     */
+    class CompletionItem
+    {
+        /** Text of the entry in the popup. */
+        var label: String
+        /** The kind, which picks the icon. */
+        var kindName: String
+        /** Text shown beside the label. */
+        var detailText: String
+        /** What replaces the word when chosen ("" = the label). */
+        var insert: String
+        /** Edits applied together with the insertion. */
+        var extra: List<TextEdit>
+
+        /** An item with this label. */
+        fnc create(label: String) -> CompletionItem
+        {
+            return CompletionItem { label: label, kindName: "", detailText: "", insert: "", extra: [] }
+        }
+
+        /** "function", "method", "class", "interface", "enum", "variable", "field", "property", "keyword", "module" or "snippet": picks the icon. */
+        fn kind(name: String) -> CompletionItem
+        {
+            this.kindName = name
+            return this
+        }
+
+        /** Shown beside the label, e.g. a signature. */
+        fn detail(text: String) -> CompletionItem
+        {
+            this.detailText = text
+            return this
+        }
+
+        /** What is inserted when the item is chosen, if not the label. */
+        fn insertText(text: String) -> CompletionItem
+        {
+            this.insert = text
+            return this
+        }
+
+        /** An edit applied together with the insertion, such as adding an import. */
+        fn alsoEdit(edit: TextEdit) -> CompletionItem
+        {
+            this.extra.push(edit)
+            return this
+        }
+
+        /** The item as the bridge's editor.setCompletions takes it. */
+        fn toJson() -> String
+        {
+            var fields: List<String> = [Js::strField("label", this.label)]
+            if (this.kindName != "")
+            {
+                fields.push(Js::strField("kind", this.kindName))
+            }
+            if (this.detailText != "")
+            {
+                fields.push(Js::strField("detail", this.detailText))
+            }
+            if (this.insert != "")
+            {
+                fields.push(Js::strField("insertText", this.insert))
+            }
+            if (this.extra.len() > 0)
+            {
+                fields.push(Js::field("additionalTextEdits", TextEdit::array(this.extra)))
+            }
+            return Js::object(fields)
+        }
+
+        /** A JSON array of items. */
+        fnc array(items: List<CompletionItem>) -> String
+        {
+            var parts: List<String> = []
+            var i: Int64 = 0
+            while (i < items.len())
+            {
+                parts.push(items[i].toJson())
+                i = i + 1
+            }
+            return Js::array(parts)
+        }
+    }
+}

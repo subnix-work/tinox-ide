@@ -1,0 +1,365 @@
+module tinox.ide.ui
+
+namespace tinox.ide.ui
+{
+    /**
+     * One node of a widget tree (docs/widget.md): a widget type, a key, properties,
+     * how its parent holds it, and children.
+     *
+     * A tree is *described* every time the UI changes: build it with Ui, hand it to
+     * Mount.render(), and the bridge changes only what differs from the last tree
+     * (matching nodes by key). State lives in Tinox, not in the widgets: to change a
+     * label, render a tree whose label has the new text.
+     *
+     * Setters return the node, so a tree reads like markup:
+     *
+     *     Ui::column("side").add(Ui::label("title", "Files")).add(Ui::treeView("files"))
+     *
+     * A property the widget type does not have is reported by the bridge when the tree
+     * is rendered, naming the node and the property.
+     */
+    class Node
+    {
+        /** The widget type, e.g. "QLabel". */
+        var type: String
+        /** The node's key. */
+        var key: String
+        /** Properties as `"name":value` fragments. */
+        var props: List<String>
+        /** Placement in the parent as fragments. */
+        var place: List<String>
+        /** "box", "grid", "form" or "". */
+        var layoutKind: String
+        /** "vertical" or "horizontal" for a box layout. */
+        var layoutOrientation: String
+        /** Layout margin in pixels, -1 for the style's default. */
+        var layoutMargins: Int64
+        /** Layout spacing in pixels, -1 for the style's default. */
+        var layoutSpacing: Int64
+        /** Object id of an embedded widget, 0 for none. */
+        var embedded: Int64
+        /** The child nodes. */
+        var kids: List<Node>
+
+        /** A node of widget `type` with this key (keys are unique within one tree). */
+        fnc create(type: String, key: String) -> Node
+        {
+            return Node { type: type, key: key, props: [], place: [], layoutKind: "", layoutOrientation: "vertical", layoutMargins: -1, layoutSpacing: -1, embedded: 0, kids: [] }
+        }
+
+        /** The node's key. */
+        fn getKey() -> String
+        {
+            return this.key
+        }
+
+        /** The widget type. */
+        fn getType() -> String
+        {
+            return this.type
+        }
+
+        /** How many children the node has. */
+        fn childCount() -> Int64
+        {
+            return this.kids.len()
+        }
+
+        // ---- properties
+
+        /** Sets a string property by name. */
+        fn str(name: String, value: String) -> Node
+        {
+            this.props.push(Js::strField(name, value))
+            return this
+        }
+
+        /** Sets an integer property by name. */
+        fn int(name: String, value: Int64) -> Node
+        {
+            this.props.push(Js::intField(name, value))
+            return this
+        }
+
+        /** Sets a boolean property by name. */
+        fn bool(name: String, value: Bool) -> Node
+        {
+            this.props.push(Js::boolField(name, value))
+            return this
+        }
+
+        /** Sets a property that is a list of strings. */
+        fn strings(name: String, values: List<String>) -> Node
+        {
+            this.props.push(Js::field(name, Js::strings(values)))
+            return this
+        }
+
+        /** Sets a property that is a list of integers. */
+        fn ints(name: String, values: List<Int64>) -> Node
+        {
+            this.props.push(Js::field(name, Js::ints(values)))
+            return this
+        }
+
+        /** `json` must be valid JSON text. */
+        fn raw(name: String, json: String) -> Node
+        {
+            this.props.push(Js::field(name, json))
+            return this
+        }
+
+        /** The text of a label, button, check box or line edit. */
+        fn text(value: String) -> Node
+        {
+            return this.str("text", value)
+        }
+
+        /** Title of a dock, tool bar or window title (whichever the type uses). */
+        fn title(value: String) -> Node
+        {
+            return this.str("title", value)
+        }
+
+        /** The title of a window. */
+        fn windowTitle(value: String) -> Node
+        {
+            return this.str("windowTitle", value)
+        }
+
+        /** A Breeze icon name. */
+        fn icon(name: String) -> Node
+        {
+            return this.str("icon", name)
+        }
+
+        /** Text shown when the pointer rests on the widget. */
+        fn toolTip(value: String) -> Node
+        {
+            return this.str("toolTip", value)
+        }
+
+        /** Whether the widget reacts to input. */
+        fn enabled(value: Bool) -> Node
+        {
+            return this.bool("enabled", value)
+        }
+
+        /** Whether the widget is shown. */
+        fn visible(value: Bool) -> Node
+        {
+            return this.bool("visible", value)
+        }
+
+        /** Whether a check box or checkable button is checked. */
+        fn checked(value: Bool) -> Node
+        {
+            return this.bool("checked", value)
+        }
+
+        /** Grey hint text of an empty line edit. */
+        fn placeholder(value: String) -> Node
+        {
+            return this.str("placeholder", value)
+        }
+
+        /** Whether the user cannot edit the text. */
+        fn readOnly(value: Bool) -> Node
+        {
+            return this.bool("readOnly", value)
+        }
+
+        /** The current tab, page or combo box item. */
+        fn currentIndex(value: Int64) -> Node
+        {
+            return this.int("currentIndex", value)
+        }
+
+        /** Initial splitter sizes. */
+        fn sizes(values: List<Int64>) -> Node
+        {
+            return this.ints("sizes", values)
+        }
+
+        /** The entries of a combo box. */
+        fn items(values: List<String>) -> Node
+        {
+            return this.strings("items", values)
+        }
+
+        /** The initial size of a window. */
+        fn size(width: Int64, height: Int64) -> Node
+        {
+            return this.ints("size", [width, height])
+        }
+
+        /** The smallest size the widget may be resized to. */
+        fn minimumSize(width: Int64, height: Int64) -> Node
+        {
+            return this.ints("minimumSize", [width, height])
+        }
+
+        // ---- how the parent holds this node
+
+        /** In a tab widget: the tab's title and icon ("" for none). */
+        fn inTab(title: String, icon: String) -> Node
+        {
+            var tab: List<String> = [Js::strField("title", title)]
+            if (icon != "")
+            {
+                tab.push(Js::strField("icon", icon))
+            }
+            this.place.push(Js::field("tab", Js::object(tab)))
+            return this
+        }
+
+        /** In a main window, a dock widget: "left", "right", "top" or "bottom". */
+        fn inArea(area: String) -> Node
+        {
+            this.place.push(Js::strField("area", area))
+            return this
+        }
+
+        /** In a box layout, splitter or status bar: the stretch factor. */
+        fn stretch(factor: Int64) -> Node
+        {
+            this.place.push(Js::intField("stretch", factor))
+            return this
+        }
+
+        /** In a grid layout: row and column. */
+        fn inCell(row: Int64, col: Int64) -> Node
+        {
+            this.place.push(Js::intField("row", row))
+            this.place.push(Js::intField("col", col))
+            return this
+        }
+
+        /** In a grid layout: how many rows and columns the cell covers. */
+        fn spanning(rows: Int64, cols: Int64) -> Node
+        {
+            this.place.push(Js::intField("rowSpan", rows))
+            this.place.push(Js::intField("colSpan", cols))
+            return this
+        }
+
+        /** In a form layout: the label shown beside the field. */
+        fn labelled(text: String) -> Node
+        {
+            this.place.push(Js::strField("label", text))
+            return this
+        }
+
+        /** In a status bar: keep this widget on the right, not pushed aside by messages. */
+        fn permanent() -> Node
+        {
+            this.place.push(Js::boolField("permanent", true))
+            return this
+        }
+
+        // ---- layout of a plain panel
+
+        /** Layout `kind`: "box", "grid" or "form"; only QWidget panels take one. */
+        fn layout(kind: String) -> Node
+        {
+            this.layoutKind = kind
+            return this
+        }
+
+        /** Whether a box layout lays out left to right (otherwise top to bottom). */
+        fn horizontal(value: Bool) -> Node
+        {
+            if (value)
+            {
+                this.layoutOrientation = "horizontal"
+            }
+            else
+            {
+                this.layoutOrientation = "vertical"
+            }
+            return this
+        }
+
+        /** Space around the children of a layout, in pixels. */
+        fn margins(pixels: Int64) -> Node
+        {
+            this.layoutMargins = pixels
+            return this
+        }
+
+        /** Space between the children of a layout, in pixels. */
+        fn spacing(pixels: Int64) -> Node
+        {
+            this.layoutSpacing = pixels
+            return this
+        }
+
+        // ---- children
+
+        /** Adds a child. */
+        fn add(child: Node) -> Node
+        {
+            this.kids.push(child)
+            return this
+        }
+
+        /** Adds several children. */
+        fn addAll(children: List<Node>) -> Node
+        {
+            var i: Int64 = 0
+            while (i < children.len())
+            {
+                this.kids.push(children[i])
+                i = i + 1
+            }
+            return this
+        }
+
+        /** The JSON text the bridge's widget.mount / widget.update take. */
+        fn toJson() -> String
+        {
+            var fields: List<String> = [Js::strField("type", this.type), Js::strField("key", this.key)]
+            if (this.props.len() > 0)
+            {
+                fields.push(Js::field("props", Js::object(this.props)))
+            }
+            if (this.place.len() > 0)
+            {
+                fields.push(Js::field("place", Js::object(this.place)))
+            }
+            if (this.layoutKind != "")
+            {
+                var layout: List<String> = [Js::strField("kind", this.layoutKind)]
+                if (this.layoutKind == "box")
+                {
+                    layout.push(Js::strField("orientation", this.layoutOrientation))
+                }
+                if (this.layoutMargins >= 0)
+                {
+                    layout.push(Js::intField("margins", this.layoutMargins))
+                }
+                if (this.layoutSpacing >= 0)
+                {
+                    layout.push(Js::intField("spacing", this.layoutSpacing))
+                }
+                fields.push(Js::field("layout", Js::object(layout)))
+            }
+            if (this.embedded > 0)
+            {
+                fields.push(Js::intField("object", this.embedded))
+            }
+            if (this.kids.len() > 0)
+            {
+                var children: List<String> = []
+                var i: Int64 = 0
+                while (i < this.kids.len())
+                {
+                    children.push(this.kids[i].toJson())
+                    i = i + 1
+                }
+                fields.push(Js::field("children", Js::array(children)))
+            }
+            return Js::object(fields)
+        }
+    }
+}

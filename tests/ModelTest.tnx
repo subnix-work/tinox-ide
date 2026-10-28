@@ -1,0 +1,212 @@
+import MockBridge
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.ItemView
+import tinox.ide.ui.Model
+import tinox.ide.ui.ModelProxy
+import tinox.ide.ui.Mount
+import tinox.ide.ui.Row
+import tinox.ide.ui.Ui
+
+class ModelTest
+{
+    @Test("a row describes itself as the JSON model.* takes")
+    fn testRowJson() -> Bool
+    {
+        const file: Row = Row::create("src/Main.tnx", "Main.tnx").icon("text-x-generic").cell("1 KB").cell("today").editable(true).draggable(true)
+        const folder: Row = Row::create("src", "src").icon("folder").child(file).droppable(true).bold(true).color("#ff0000").checked(false)
+        const lazy: Row = Row::create("tests", "tests \"x\"").lazy()
+        return file.toJson() == "{\"id\":\"src/Main.tnx\",\"text\":\"Main.tnx\",\"icon\":\"text-x-generic\",\"flags\":{\"editable\":true,\"drag\":true},\"cells\":[\"1 KB\",\"today\"]}" &&
+            folder.toJson() == "{\"id\":\"src\",\"text\":\"src\",\"icon\":\"folder\",\"bold\":true,\"color\":\"#ff0000\",\"checked\":false,\"flags\":{\"drop\":true},\"children\":[" + file.toJson() + "]}" &&
+            lazy.toJson() == "{\"id\":\"tests\",\"text\":\"tests \\\"x\\\"\",\"hasChildren\":true}" &&
+            file.fieldsJson() == "{\"text\":\"Main.tnx\",\"icon\":\"text-x-generic\",\"flags\":{\"editable\":true,\"drag\":true},\"cells\":[\"1 KB\",\"today\"]}"
+    }
+
+    @Test("create, reset, insert, remove, move, update, setChildren send the right commands")
+    fn testCommands() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const object: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("model.create", "{\"id\":" + object.toString() + "}", "")
+        for name in ["model.reset", "model.insert", "model.remove", "model.move", "model.update", "model.setChildren"]
+        {
+            MockBridge::onCommand(name, "", "")
+        }
+        const model: Model = Model::create(EventLoop::create(), ["Name", "Size"], true)
+        model.reset([Row::create("a", "A")])
+        model.insert("", 0, [Row::create("b", "B")])
+        model.append("a", [Row::create("c", "C")])
+        model.remove(["b", "c"])
+        model.move("a", "", -1)
+        model.move("a", "b", 2)
+        model.update("a", Row::create("ignored", "A2").bold(true))
+        model.setChildren("a", [])
+        const o: String = object.toString()
+        return model.id() == object &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.create\",\"columns\":[\"Name\",\"Size\"],\"lazy\":true}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.reset\",\"target\":" + o + ",\"rows\":[{\"id\":\"a\",\"text\":\"A\"}]}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.insert\",\"target\":" + o + ",\"index\":0,\"rows\":[{\"id\":\"b\",\"text\":\"B\"}]}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.insert\",\"target\":" + o + ",\"parent\":\"a\",\"rows\":[{\"id\":\"c\",\"text\":\"C\"}]}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.remove\",\"target\":" + o + ",\"ids\":[\"b\",\"c\"]}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.move\",\"target\":" + o + ",\"id\":\"a\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.move\",\"target\":" + o + ",\"id\":\"a\",\"parent\":\"b\",\"index\":2}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.update\",\"target\":" + o + ",\"id\":\"a\",\"fields\":{\"text\":\"A2\",\"bold\":true}}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.setChildren\",\"target\":" + o + ",\"parent\":\"a\",\"rows\":[]}"
+    }
+
+    @Test("a fetch request is answered with the handler's rows, once per request")
+    fn testLazyFetch() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const object: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("model.create", "{\"id\":" + object.toString() + "}", "")
+        MockBridge::onCommand("model.setChildren", "", "")
+        const events: EventLoop = EventLoop::create()
+        const model: Model = Model::create(events, [], false)
+        MockBridge::nextCommand()
+        var asked: List<String> = []
+        model.onFetch((parent: String) => {
+            asked.push("[" + parent + "]")
+            return [Row::create(parent + "/x", "x"), Row::create(parent + "/y", "y").lazy()]
+        })
+        MockBridge::push("{\"type\":\"model.fetchChildren\",\"target\":" + object.toString() + ",\"id\":\"src\"}")
+        MockBridge::push("{\"type\":\"model.fetchChildren\",\"target\":" + object.toString() + ",\"id\":null}")
+        events.pump(1000)
+        return asked.len() == 2 && asked[0] == "[src]" && asked[1] == "[]" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.setChildren\",\"target\":" + object.toString() + ",\"parent\":\"src\",\"rows\":[{\"id\":\"src/x\",\"text\":\"x\"},{\"id\":\"src/y\",\"text\":\"y\",\"hasChildren\":true}]}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.setChildren\",\"target\":" + object.toString() + ",\"rows\":[{\"id\":\"/x\",\"text\":\"x\"},{\"id\":\"/y\",\"text\":\"y\",\"hasChildren\":true}]}"
+    }
+
+    @Test("a failing fetch handler leaves the row empty and is reported, a missing one answers empty")
+    fn testFetchFailure() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const object: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("model.create", "{\"id\":" + object.toString() + "}", "")
+        MockBridge::onCommand("model.setChildren", "", "")
+        const events: EventLoop = EventLoop::create()
+        const model: Model = Model::create(events, [], false)
+        MockBridge::nextCommand()
+        MockBridge::push("{\"type\":\"model.fetchChildren\",\"target\":" + object.toString() + ",\"id\":\"nohandler\"}")
+        events.pump(1000)
+        const noHandler: String = MockBridge::nextCommand()
+        model.onFetch((parent: String) => {
+            throw "disk on fire"
+            return []
+        })
+        MockBridge::push("{\"type\":\"model.fetchChildren\",\"target\":" + object.toString() + ",\"id\":\"broken\"}")
+        events.pump(1000)
+        const answer: String = MockBridge::nextCommand()
+        return noHandler == "{\"cmd\":\"model.setChildren\",\"target\":" + object.toString() + ",\"parent\":\"nohandler\",\"rows\":[]}" &&
+            answer == "{\"cmd\":\"model.setChildren\",\"target\":" + object.toString() + ",\"parent\":\"broken\",\"rows\":[]}" &&
+            events.failureCount() == 1 && events.failures[0].contains("disk on fire") && events.failures[0].contains("broken")
+    }
+
+    @Test("user actions on rows: check, edit request, drop")
+    fn testUserActions() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const object: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("model.create", "{\"id\":" + object.toString() + "}", "")
+        const events: EventLoop = EventLoop::create()
+        const model: Model = Model::create(events, [], false)
+        var seen: List<String> = []
+        model.onCheck((id: String, checked: Bool) => seen.push("check " + id + " " + checked.toString()))
+        model.onEdit((id: String, column: Int64, text: String) => seen.push("edit " + id + " " + column.toString() + " " + text))
+        model.onDrop((ev: Event) => seen.push("drop " + ev.str("action") + " " + ev.str("parent")))
+        const t: String = object.toString()
+        MockBridge::push("{\"type\":\"model.checkChanged\",\"target\":" + t + ",\"id\":\"test_a\",\"checked\":true}")
+        MockBridge::push("{\"type\":\"model.editRequested\",\"target\":" + t + ",\"id\":\"f\",\"column\":0,\"text\":\"new.tnx\"}")
+        MockBridge::push("{\"type\":\"model.dropRequested\",\"target\":" + t + ",\"ids\":[\"f\"],\"urls\":[],\"parent\":\"dir\",\"index\":-1,\"action\":\"move\"}")
+        events.pump(1000)
+        return seen.len() == 3 && seen[0] == "check test_a true" && seen[1] == "edit f 0 new.tnx" && seen[2] == "drop move dir" && events.failureCount() == 0
+    }
+
+    @Test("queries about the model: count, contains, child ids")
+    fn testQueries() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const object: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("model.create", "{\"id\":" + object.toString() + "}", "")
+        MockBridge::onCommand("model.info", "{\"rows\":42,\"topLevel\":2}", "")
+        MockBridge::onCommand("model.get", "{\"id\":\"a\",\"children\":[\"b\",\"c\"],\"count\":2}", "")
+        const model: Model = Model::create(EventLoop::create(), [], false)
+        return model.count() == 42 && model.contains("a") && model.childIds("a").len() == 2 && model.childIds("a")[1] == "c"
+    }
+
+    @Test("a missing row is not contained")
+    fn testContainsMissing() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const object: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("model.create", "{\"id\":" + object.toString() + "}", "")
+        MockBridge::onCommand("model.get", "{\"ok\":false,\"error\":{\"code\":-5,\"message\":\"no row\"}}", "")
+        const model: Model = Model::create(EventLoop::create(), [], false)
+        return !model.contains("zzz")
+    }
+
+    @Test("proxy: filter, sort, attach; item view: select, selection, expand")
+    fn testProxyAndView() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const object: Int64 = MockBridge::createObject()
+        const proxyObject: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("model.create", "{\"id\":" + object.toString() + "}", "")
+        MockBridge::onCommand("model.createProxy", "{\"id\":" + proxyObject.toString() + "}", "")
+        MockBridge::onCommand("model.setFilter", "", "")
+        MockBridge::onCommand("model.attach", "", "")
+        MockBridge::onCommand("model.select", "", "")
+        MockBridge::onCommand("model.selection", "{\"ids\":[\"a\",\"b\"],\"current\":\"b\"}", "")
+        MockBridge::onCommand("model.expand", "", "")
+        MockBridge::onCommand("model.scrollTo", "", "")
+        MockBridge::onCommand("widget.mount", "{\"id\":" + MockBridge::createObject().toString() + ",\"root\":50,\"nodes\":{\"w\":50,\"tree\":51}}", "")
+        const events: EventLoop = EventLoop::create()
+        const model: Model = Model::create(events, [], false)
+        const mount: Mount = Mount::create(events)
+        mount.render(Ui::window("w", "T").add(Ui::treeView("tree")))
+        const proxy: ModelProxy = model.proxy()
+        proxy.filter("main", false)
+        proxy.sort(1, true)
+        proxy.attach(mount.idOf("tree"))
+        model.attach(mount.idOf("tree"))
+        const view: ItemView = ItemView::of(mount, "tree")
+        view.choose(["a"], "a")
+        const selected: List<String> = view.selection()
+        const current: String = view.current()
+        view.expand("src", true)
+        view.scrollTo("src")
+        const p: String = proxyObject.toString()
+        const o: String = object.toString()
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        return proxy.id() == proxyObject && selected.len() == 2 && current == "b" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.setFilter\",\"target\":" + p + ",\"filter\":{\"text\":\"main\",\"regex\":false}}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.setFilter\",\"target\":" + p + ",\"sort\":{\"column\":1,\"order\":\"desc\"}}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.attach\",\"model\":" + p + ",\"view\":51}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.attach\",\"model\":" + o + ",\"view\":51}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.select\",\"view\":51,\"ids\":[\"a\"],\"current\":\"a\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"model.selection\",\"view\":51}"
+    }
+
+    @Test("release forgets the model's events")
+    fn testRelease() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const object: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("model.create", "{\"id\":" + object.toString() + "}", "")
+        MockBridge::onCommand("model.setChildren", "", "")
+        const events: EventLoop = EventLoop::create()
+        const model: Model = Model::create(events, [], false)
+        var asked: List<String> = []
+        model.onFetch((parent: String) => {
+            asked.push(parent)
+            return []
+        })
+        model.release()
+        MockBridge::push("{\"type\":\"model.fetchChildren\",\"target\":" + object.toString() + ",\"id\":\"x\"}")
+        events.pump(1000)
+        return asked.len() == 0
+    }
+}

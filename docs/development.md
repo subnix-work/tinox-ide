@@ -67,6 +67,8 @@ with `make TINOX=/path/to/tinox`. Put `tinox-lsp` on `PATH` (or
 make test-bridge  # the bridge suite alone, offscreen (see testing.md)
 make test-asan    # bridge tests under AddressSanitizer + UBSan + LeakSanitizer
 make test-tsan    # under ThreadSanitizer (suppressions: bridge/tests/tsan.supp)
+make docs         # API documentation of the Tinox side: build/api/index.html
+make example      # run examples/shell
 make fuzz         # libFuzzer on the command parser, 60 s (FUZZ_SECONDS=600; needs clang)
 ```
 

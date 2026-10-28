@@ -15,33 +15,44 @@ namespace tinox.ide.kde
      */
     class EventLoop
     {
+        /** Handlers by event type. */
         var byType: Map<String, fnc(Event) -> Nothing>
+        /** Handlers by object id (as text). */
         var byTarget: Map<String, fnc(Event) -> Nothing>
+        /** Set by stop(). */
         var stopped: Bool
+        /** Set when core.shutdown was seen. */
         var shutdown: Bool
+        /** How many events were dispatched. */
         var delivered: Int64
+        /** Messages of handlers that threw and of events that could not be read. */
         var failures: List<String>
 
+        /** A loop with no handlers. */
         fnc create() -> EventLoop
         {
             return EventLoop { byType: Map::new(), byTarget: Map::new(), stopped: false, shutdown: false, delivered: 0, failures: [] }
         }
 
+        /** Runs `handler` for every event of this type; replaces an earlier one. */
         fn onType(type: String, handler: fnc(Event) -> Nothing) -> Nothing
         {
             this.byType.set(type, handler)
         }
 
+        /** Removes the handler of an event type. */
         fn offType(type: String) -> Nothing
         {
             this.byType.remove(type)
         }
 
+        /** Runs `handler` for every event that comes from the object with this id; replaces an earlier one. */
         fn onTarget(id: Int64, handler: fnc(Event) -> Nothing) -> Nothing
         {
             this.byTarget.set(id.toString(), handler)
         }
 
+        /** Removes the handler of an object. */
         fn offTarget(id: Int64) -> Nothing
         {
             this.byTarget.remove(id.toString())
@@ -59,11 +70,13 @@ namespace tinox.ide.kde
             return this.shutdown
         }
 
+        /** How many failures were recorded. */
         fn failureCount() -> Int64
         {
             return this.failures.len()
         }
 
+        /** Records a failure and prints it on stderr; the loop carries on. */
         fn fail(message: String) -> Nothing
         {
             this.failures.push(message)

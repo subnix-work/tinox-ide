@@ -1,0 +1,13 @@
+import tinox.ide.examples.ShellExample
+
+// Runs the shell example (src/tinox/ide/examples/ShellExample.tnx): a window with menu,
+// tool bar, file tree, editor and log, made with the UI API.
+//
+//     make bridge && tinox run examples/shell/Main.tnx
+class Main
+{
+    fnc main() -> Int32
+    {
+        return ShellExample::main()
+    }
+}

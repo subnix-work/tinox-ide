@@ -1,0 +1,99 @@
+module tinox.ide.ui
+
+namespace tinox.ide.ui
+{
+    // The runtime's JSON string encoder (quotes and escapes).
+    extern fn tinox_json_encode_string(s: String) -> String
+
+    /**
+     * Small helpers to write the JSON text of commands without building intermediate
+     * objects. Every builder in tinox.ide.ui produces its messages with these.
+     */
+    class Js
+    {
+        /** `text` as a JSON string literal, quotes included, escapes applied. */
+        fnc str(text: String) -> String
+        {
+            return tinox_json_encode_string(text)
+        }
+
+        /** `"key":value`, where `json` is already JSON text. */
+        fnc field(key: String, json: String) -> String
+        {
+            return tinox_json_encode_string(key) + ":" + json
+        }
+
+        /** `"key":"value"`. */
+        fnc strField(key: String, value: String) -> String
+        {
+            return Js::field(key, tinox_json_encode_string(value))
+        }
+
+        /** `"key":123`. */
+        fnc intField(key: String, value: Int64) -> String
+        {
+            return Js::field(key, value.toString())
+        }
+
+        /** `"key":true`. */
+        fnc boolField(key: String, value: Bool) -> String
+        {
+            return Js::field(key, value.toString())
+        }
+
+        /** The parts joined with a separator. */
+        fnc join(parts: List<String>, separator: String) -> String
+        {
+            var out: String = ""
+            var i: Int64 = 0
+            while (i < parts.len())
+            {
+                if (i > 0)
+                {
+                    out = out + separator
+                }
+                out = out + parts[i]
+                i = i + 1
+            }
+            return out
+        }
+
+        /** `{...}` from `"key":value` fragments. */
+        fnc object(fields: List<String>) -> String
+        {
+            return "{" + Js::join(fields, ",") + "}"
+        }
+
+        /** `[...]` from JSON elements. */
+        fnc array(elements: List<String>) -> String
+        {
+            return "[" + Js::join(elements, ",") + "]"
+        }
+
+        /** A JSON array of strings. */
+        fnc strings(values: List<String>) -> String
+        {
+            var elements: List<String> = []
+            var i: Int64 = 0
+            while (i < values.len())
+            {
+                elements.push(tinox_json_encode_string(values[i]))
+                i = i + 1
+            }
+            return Js::array(elements)
+        }
+
+        /** A JSON array of integers. */
+        fnc ints(values: List<Int64>) -> String
+        {
+            var elements: List<String> = []
+            var i: Int64 = 0
+            while (i < values.len())
+            {
+                elements.push(values[i].toString())
+                i = i + 1
+            }
+            return Js::array(elements)
+        }
+    }
+}

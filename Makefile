@@ -11,7 +11,7 @@ TINOX ?= $(shell command -v tinox 2>/dev/null || echo ../tinox/target/release/ti
 BUILD_DIR := bridge/build
 OUT := build/tinox-ide
 
-.PHONY: all bridge ide run test test-bridge test-asan test-tsan fuzz bench fmt clean check-env install-resources
+.PHONY: all bridge ide run example docs test test-bridge test-asan test-tsan fuzz bench fmt clean check-env install-resources
 
 all: ide
 
@@ -29,13 +29,24 @@ run: ide
 test: bridge
 	scripts/test-check-env.sh
 	scripts/test-syntax.sh
+	python3 scripts/check-docs.py
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
 	$(TINOX) test
+	TINOX=$(TINOX) scripts/test-example.sh
 
 bench: bridge
 	QT_QPA_PLATFORM=offscreen $(BUILD_DIR)/bin/bench_queue
 
 # Bridge tests under AddressSanitizer + UBSan (leaks included) and ThreadSanitizer.
+# The shell example (examples/shell): a window with menu, tree and editor built with the UI API
+example: bridge
+	$(TINOX) run examples/shell/Main.tnx
+
+# API documentation of the Tinox side, from the doc comments, to build/api/index.html
+docs:
+	mkdir -p build/api
+	$(TINOX) doc --out build/api/index.html
+
 # The whole bridge suite on Qt's offscreen platform: unit tests per namespace, the ABI contract
 # against the real bridge and the mock, header checks. No display needed.
 test-bridge: bridge

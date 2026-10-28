@@ -1,0 +1,26 @@
+import tinox.ide.ui.CompletionItem
+import tinox.ide.ui.CompletionProvider
+import tinox.ide.ui.CompletionRequest
+
+// A completion provider for tests: answers with two items built from the word being typed,
+// remembers what it was asked and can be told to fail.
+class FakeProvider implements CompletionProvider
+{
+    var asked: List<String>
+    var failing: Bool
+
+    fnc create(failing: Bool) -> FakeProvider
+    {
+        return FakeProvider { asked: [], failing: failing }
+    }
+
+    fn complete(request: CompletionRequest) -> List<CompletionItem>
+    {
+        this.asked.push(request.word + "@" + request.position.toString() + "#" + request.number.toString() + "/" + request.trigger)
+        if (this.failing)
+        {
+            throw "language server is gone"
+        }
+        return [CompletionItem::create(request.word + "A").kind("function").detail("d"), CompletionItem::create(request.word + "B")]
+    }
+}

@@ -1,0 +1,216 @@
+module tinox.ide.ui
+
+namespace tinox.ide.ui
+{
+    /**
+     * One row of a Model (docs/model.md): what a tree, list or table shows for one item.
+     *
+     *     Row::create("src/Main.tnx", "Main.tnx").icon("text-x-generic").cell("1 KB")
+     *     Row::create("src", "src").icon("folder").lazy()      // its children are fetched when it is opened
+     *
+     * `id` is chosen by Tinox (a path, a symbol id) and must be unique within the model.
+     */
+    class Row
+    {
+        /** The row's id. */
+        var id: String
+        /** Fields as `"name":value` fragments. */
+        var fields: List<String>
+        /** Item flags as fragments. */
+        var flagFields: List<String>
+        /** Texts of the further columns as JSON. */
+        var cellList: List<String>
+        /** Child rows. */
+        var kids: List<Row>
+        /** Whether child() / children() was called. */
+        var withChildren: Bool
+
+        /** A row with this id (unique in the model) showing this text. */
+        fnc create(id: String, text: String) -> Row
+        {
+            return Row { id: id, fields: [Js::strField("text", text)], flagFields: [], cellList: [], kids: [], withChildren: false }
+        }
+
+        /** The row's id. */
+        fn getId() -> String
+        {
+            return this.id
+        }
+
+        /** A Breeze icon name. */
+        fn icon(name: String) -> Row
+        {
+            this.fields.push(Js::strField("icon", name))
+            return this
+        }
+
+        /** Text shown when the pointer rests on the row. */
+        fn toolTip(text: String) -> Row
+        {
+            this.fields.push(Js::strField("toolTip", text))
+            return this
+        }
+
+        /** Shows a check box in this state. */
+        fn checked(value: Bool) -> Row
+        {
+            this.fields.push(Js::boolField("checked", value))
+            return this
+        }
+
+        /** The text colour, as a name or #rrggbb. */
+        fn color(value: String) -> Row
+        {
+            this.fields.push(Js::strField("color", value))
+            return this
+        }
+
+        /** Whether the text is bold. */
+        fn bold(value: Bool) -> Row
+        {
+            this.fields.push(Js::boolField("bold", value))
+            return this
+        }
+
+        /** Whether the row can be selected. */
+        fn selectable(value: Bool) -> Row
+        {
+            this.flagFields.push(Js::boolField("selectable", value))
+            return this
+        }
+
+        /** Whether the row can be used; a disabled one is greyed out. */
+        fn enabled(value: Bool) -> Row
+        {
+            this.flagFields.push(Js::boolField("enabled", value))
+            return this
+        }
+
+        /** The user may start renaming it; the new name arrives as Model.onEdit, nothing changes until Tinox says so. */
+        fn editable(value: Bool) -> Row
+        {
+            this.flagFields.push(Js::boolField("editable", value))
+            return this
+        }
+
+        /** Whether the row can be dragged (Model.onDrop hears where it lands). */
+        fn draggable(value: Bool) -> Row
+        {
+            this.flagFields.push(Js::boolField("drag", value))
+            return this
+        }
+
+        /** Accepts drops of rows and of files (Model.onDrop). */
+        fn droppable(value: Bool) -> Row
+        {
+            this.flagFields.push(Js::boolField("drop", value))
+            return this
+        }
+
+        /** The text of the next column. */
+        fn cell(text: String) -> Row
+        {
+            this.cellList.push(Js::str(text))
+            return this
+        }
+
+        /** The texts of the next columns. */
+        fn cells(texts: List<String>) -> Row
+        {
+            var i: Int64 = 0
+            while (i < texts.len())
+            {
+                this.cellList.push(Js::str(texts[i]))
+                i = i + 1
+            }
+            return this
+        }
+
+        /** Shows an expand arrow; the children are loaded when it is opened (Model.onFetch). */
+        fn lazy() -> Row
+        {
+            this.fields.push(Js::boolField("hasChildren", true))
+            return this
+        }
+
+        /** Adds a child row, loaded together with this one. */
+        fn child(row: Row) -> Row
+        {
+            this.kids.push(row)
+            this.withChildren = true
+            return this
+        }
+
+        /** Adds several child rows. */
+        fn children(rows: List<Row>) -> Row
+        {
+            var i: Int64 = 0
+            while (i < rows.len())
+            {
+                this.kids.push(rows[i])
+                i = i + 1
+            }
+            this.withChildren = true
+            return this
+        }
+
+        /** The row's own fields (everything but id and children), as Model.update takes them. */
+        fn fieldsJson() -> String
+        {
+            var all: List<String> = []
+            var i: Int64 = 0
+            while (i < this.fields.len())
+            {
+                all.push(this.fields[i])
+                i = i + 1
+            }
+            if (this.flagFields.len() > 0)
+            {
+                all.push(Js::field("flags", Js::object(this.flagFields)))
+            }
+            if (this.cellList.len() > 0)
+            {
+                all.push(Js::field("cells", Js::array(this.cellList)))
+            }
+            return Js::object(all)
+        }
+
+        /** The row as the bridge's model.* commands take it. */
+        fn toJson() -> String
+        {
+            var all: List<String> = [Js::strField("id", this.id)]
+            var i: Int64 = 0
+            while (i < this.fields.len())
+            {
+                all.push(this.fields[i])
+                i = i + 1
+            }
+            if (this.flagFields.len() > 0)
+            {
+                all.push(Js::field("flags", Js::object(this.flagFields)))
+            }
+            if (this.cellList.len() > 0)
+            {
+                all.push(Js::field("cells", Js::array(this.cellList)))
+            }
+            if (this.withChildren)
+            {
+                all.push(Js::field("children", Row::array(this.kids)))
+            }
+            return Js::object(all)
+        }
+
+        /** A JSON array of rows. */
+        fnc array(rows: List<Row>) -> String
+        {
+            var parts: List<String> = []
+            var i: Int64 = 0
+            while (i < rows.len())
+            {
+                parts.push(rows[i].toJson())
+                i = i + 1
+            }
+            return Js::array(parts)
+        }
+    }
+}

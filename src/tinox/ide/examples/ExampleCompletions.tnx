@@ -1,0 +1,29 @@
+module tinox.ide.examples
+
+import tinox.ide.ui.CompletionItem
+import tinox.ide.ui.CompletionProvider
+import tinox.ide.ui.CompletionRequest
+
+namespace tinox.ide.examples
+{
+    /** Completes the keywords of the language that start with the word being typed: a stand-in for a language server. */
+    class ExampleCompletions implements CompletionProvider
+    {
+        /** Keywords that start with the word of the request, as completion items. */
+        fn complete(request: CompletionRequest) -> List<CompletionItem>
+        {
+            const keywords: List<String> = ["class", "interface", "enum", "fn", "fnc", "const", "var", "return", "import", "namespace"]
+            var items: List<CompletionItem> = []
+            var i: Int64 = 0
+            while (i < keywords.len())
+            {
+                if (keywords[i].startsWith(request.word) && keywords[i] != request.word)
+                {
+                    items.push(CompletionItem::create(keywords[i]).kind("keyword").detail("keyword"))
+                }
+                i = i + 1
+            }
+            return items
+        }
+    }
+}

@@ -1,0 +1,176 @@
+module tinox.ide.ui
+
+namespace tinox.ide.ui
+{
+    /**
+     * Constructors for the widget types of the bridge (docs/widget.md). Every function
+     * returns a Node; compose them with Node.add() and the Node setters.
+     *
+     *     Ui::window("main", "Tinox IDE")
+     *         .add(Ui::dock("files", "Files", "left").add(Ui::treeView("tree")))
+     *         .add(Ui::splitter("split", false)
+     *             .add(Ui::tabs("editors"))
+     *             .add(Ui::log("output")))
+     *         .add(Ui::statusBar("status"))
+     */
+    class Ui
+    {
+        // ---- windows and containers
+
+        /** A main window: dock widgets, tool bars and a status bar are its children; any other child is the central widget. */
+        fnc window(key: String, title: String) -> Node
+        {
+            return Node::create("QMainWindow", key).windowTitle(title)
+        }
+
+        /** A dock widget holding one child; `area` is "left", "right", "top" or "bottom". */
+        fnc dock(key: String, title: String, area: String) -> Node
+        {
+            return Node::create("QDockWidget", key).title(title).inArea(area)
+        }
+
+        /** Children side by side (`vertical` false) or one above the other (`vertical` true), with draggable handles. */
+        fnc splitter(key: String, vertical: Bool) -> Node
+        {
+            const node: Node = Node::create("QSplitter", key)
+            if (vertical)
+            {
+                node.str("orientation", "vertical")
+            }
+            return node
+        }
+
+        /** A tab widget; each child says its tab with Node.inTab(). */
+        fnc tabs(key: String) -> Node
+        {
+            return Node::create("QTabWidget", key)
+        }
+
+        /** Pages of which one is shown (Node.currentIndex()). */
+        fnc stack(key: String) -> Node
+        {
+            return Node::create("QStackedWidget", key)
+        }
+
+        /** Makes one child scrollable. */
+        fnc scroll(key: String) -> Node
+        {
+            return Node::create("QScrollArea", key)
+        }
+
+        /** A tool bar; fill it with action.setToolBar (Actions.toolBar) or with widgets as children. */
+        fnc toolBar(key: String, title: String) -> Node
+        {
+            return Node::create("QToolBar", key).title(title)
+        }
+
+        /** A status bar; its children are widgets, its message is a property. */
+        fnc statusBar(key: String) -> Node
+        {
+            return Node::create("QStatusBar", key)
+        }
+
+        // ---- plain panels with a layout
+
+        /** A panel without a layout. */
+        fnc panel(key: String) -> Node
+        {
+            return Node::create("QWidget", key)
+        }
+
+        /** A panel that stacks its children top to bottom. */
+        fnc column(key: String) -> Node
+        {
+            return Node::create("QWidget", key).layout("box")
+        }
+
+        /** A panel that lines its children up left to right. */
+        fnc row(key: String) -> Node
+        {
+            return Node::create("QWidget", key).layout("box").horizontal(true)
+        }
+
+        /** A panel whose children sit in cells (Node.inCell, Node.spanning). */
+        fnc grid(key: String) -> Node
+        {
+            return Node::create("QWidget", key).layout("grid")
+        }
+
+        /** A panel of label and field rows (Node.labelled on each child). */
+        fnc form(key: String) -> Node
+        {
+            return Node::create("QWidget", key).layout("form")
+        }
+
+        // ---- controls
+
+        /** A text label. */
+        fnc label(key: String, text: String) -> Node
+        {
+            return Node::create("QLabel", key).text(text)
+        }
+
+        /** A push button; its click arrives as Mount.onClick. */
+        fnc button(key: String, text: String) -> Node
+        {
+            return Node::create("QPushButton", key).text(text)
+        }
+
+        /** A check box; the click arrives as Mount.onClick with `checked`. */
+        fnc checkBox(key: String, text: String) -> Node
+        {
+            return Node::create("QCheckBox", key).text(text)
+        }
+
+        /** A one-line text field; typing arrives as Mount.onText. */
+        fnc lineEdit(key: String, text: String) -> Node
+        {
+            return Node::create("QLineEdit", key).text(text)
+        }
+
+        /** A drop-down list of strings; a choice arrives as Mount.onIndex. */
+        fnc comboBox(key: String, items: List<String>) -> Node
+        {
+            return Node::create("QComboBox", key).items(items)
+        }
+
+        /** A read-only multi-line text for logs; append with Mount.append(). */
+        fnc log(key: String) -> Node
+        {
+            return Node::create("QPlainTextEdit", key).readOnly(true)
+        }
+
+        // ---- item views (their data comes from a Model, see Model.attach)
+
+        /** A tree; attach a Model to give it rows. */
+        fnc treeView(key: String) -> Node
+        {
+            return Node::create("QTreeView", key)
+        }
+
+        /** A list; attach a Model to give it rows. */
+        fnc listView(key: String) -> Node
+        {
+            return Node::create("QListView", key)
+        }
+
+        /** A table; attach a Model with columns to give it rows. */
+        fnc tableView(key: String) -> Node
+        {
+            return Node::create("QTableView", key)
+        }
+
+        // ---- widgets owned by other parts
+
+        /**
+         * Places a widget that already exists, such as the widget of an editor view
+         * (EditorView.id). The tree never deletes it; removing the node gives it back.
+         */
+        fnc embed(key: String, objectId: Int64) -> Node
+        {
+            const node: Node = Node::create("Embed", key)
+            node.embedded = objectId
+            return node
+        }
+    }
+}

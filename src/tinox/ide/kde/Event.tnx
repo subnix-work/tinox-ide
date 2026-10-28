@@ -10,12 +10,17 @@ namespace tinox.ide.kde
      */
     class Event
     {
+        /** The event type, "namespace.name". */
         var type: String
+        /** Strictly increasing sequence number. */
         var seq: Int64
+        /** Timestamp on the bridge's monotonic clock, in nanoseconds. */
         var tNs: Int64
         /** Id of the object the event comes from, 0 when it has none. */
         var target: Int64
+        /** The event as received, JSON text. */
         var raw: String
+        /** The parsed event. */
         var json: JsonValue
 
         /** Parses event JSON text; throws a String when it is not an event object. */
@@ -40,26 +45,31 @@ namespace tinox.ide.kde
             return Event { type: type.getString(), seq: json.getField("seq").getInt(), tNs: json.getField("t_ns").getInt(), target: target, raw: text, json: json }
         }
 
+        /** Whether the event has a non-null field `key`. */
         fn has(key: String) -> Bool
         {
             return !this.json.getField(key).isNull()
         }
 
+        /** A string field ("" when absent). */
         fn str(key: String) -> String
         {
             return this.json.getField(key).getString()
         }
 
+        /** An integer field (0 when absent). */
         fn int(key: String) -> Int64
         {
             return this.json.getField(key).getInt()
         }
 
+        /** A boolean field (false when absent). */
         fn bool(key: String) -> Bool
         {
             return this.json.getField(key).getBool()
         }
 
+        /** Any field as parsed JSON, for arrays and objects. */
         fn field(key: String) -> JsonValue
         {
             return this.json.getField(key)

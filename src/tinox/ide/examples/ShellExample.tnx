@@ -1,0 +1,206 @@
+module tinox.ide.examples
+
+import tinox.ide.kde.App
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Action
+import tinox.ide.ui.Actions
+import tinox.ide.ui.Change
+import tinox.ide.ui.Diagnostic
+import tinox.ide.ui.Document
+import tinox.ide.ui.EditorView
+import tinox.ide.ui.ItemView
+import tinox.ide.ui.Menu
+import tinox.ide.ui.Model
+import tinox.ide.ui.Mount
+import tinox.ide.ui.Node
+import tinox.ide.ui.Range
+import tinox.ide.ui.Row
+import tinox.ide.ui.Ui
+
+namespace tinox.ide.examples
+{
+    /**
+     * A small program with the parts of an IDE window, written only with the UI API:
+     * a menu bar and tool bar made of actions, a file tree with lazily loaded folders, an
+     * editor with completion and a diagnostic, a log and a status bar.
+     *
+     * `examples/shell/Main.tnx` runs it. The tests run the same code against the mock
+     * (tests/ShellExampleTest.tnx), `make test` runs it against the real bridge.
+     *
+     * It reads top to bottom as the pattern the IDE itself follows: define actions, build
+     * the model, describe the window as a tree, install menus, then react to events.
+     */
+    class ShellExample
+    {
+        /** The loop the events arrive on. */
+        var events: EventLoop
+        /** The actions of the window. */
+        var actions: Actions
+        /** The window's widgets. */
+        var mount: Mount
+        /** The rows of the file tree. */
+        var files: Model
+        /** The text being edited. */
+        var document: Document
+        /** The editor widget. */
+        var editor: EditorView
+        /** How often "Run" was used. */
+        var runs: Int64
+        /** Whether the window was built. */
+        var running: Bool
+
+        /** Builds the window and starts reacting to events; call it from a core.ready handler. */
+        fnc start(events: EventLoop) -> ShellExample
+        {
+            const mount: Mount = Mount::create(events)
+            const files: Model = Model::create(events, ["Name", "Size"], false)
+            const document: Document = Document::create(events, "// open a file in the tree\n")
+            const editor: EditorView = EditorView::create(events, document)
+            const example: ShellExample = ShellExample {
+                events: events,
+                actions: Actions::create(events),
+                mount: mount,
+                files: files,
+                document: document,
+                editor: editor,
+                runs: 0,
+                running: true
+            }
+            example.defineActions()
+            example.buildModel()
+            example.showWindow()
+            example.installMenus()
+            example.react()
+            return example
+        }
+
+        /** Actions are described once and referred to by id from menus and tool bars. */
+        fn defineActions() -> Nothing
+        {
+            this.actions.define([
+                Action::standard("file_open").onTrigger((ev: Event) => this.log("Open is not wired in this example")),
+                Action::standard("file_save").onTrigger((ev: Event) => this.log("Saved " + this.document.url())),
+                Action::standard("file_quit").onTrigger((ev: Event) => this.quit()),
+                Action::create("build.run").text("&Run").icon("media-playback-start").shortcut("F5").onTrigger((ev: Event) => this.run()),
+                Action::create("view.wrap").text("&Wrap lines").checkable(true).checked(true).onTrigger((ev: Event) => this.log("Wrap lines: " + ev.bool("checked").toString()))
+            ])
+        }
+
+        /** Rows come from ExampleFiles; folders are fetched when the user opens them. */
+        fn buildModel() -> Nothing
+        {
+            this.files.onFetch((parent: String) => ExampleFiles::children(parent))
+            this.files.reset(ExampleFiles::children(""))
+        }
+
+        /** The window as a tree of nodes; the editor is a widget of its own that the tree embeds. */
+        fn describe() -> Node
+        {
+            return Ui::window("main", "Shell example")
+                .size(1000, 640)
+                .add(Ui::toolBar("tools", "Main"))
+                .add(Ui::dock("files", "Files", "left").add(Ui::treeView("tree")))
+                .add(Ui::splitter("split", true).add(Ui::embed("editor", this.editor.id())).add(Ui::log("log")).sizes([420, 140]))
+                .add(Ui::statusBar("status"))
+        }
+
+        /** First render; later renders would only change what differs. */
+        fn showWindow() -> Nothing
+        {
+            this.mount.render(this.describe())
+            this.files.attach(this.mount.idOf("tree"))
+            this.editor.enableCompletion(ExampleCompletions {}, [], 2)
+            this.mount.show()
+        }
+
+        /** Menu bar and tool bar from the actions defined above. */
+        fn installMenus() -> Nothing
+        {
+            const window: Int64 = this.mount.rootWidget()
+            this.actions.menuBar(window, [
+                Menu::create("&File").action("file_open").action("file_save").separator().action("file_quit"),
+                Menu::create("&Build").action("build.run"),
+                Menu::create("&View").action("view.wrap")
+            ])
+            this.actions.toolBar(this.mount.idOf("tools"), ["file_open", "file_save", "-", "build.run"])
+        }
+
+        /** Events: opening a file, editing, closing the window. */
+        fn react() -> Nothing
+        {
+            this.mount.onActivated("tree", (id: String) => this.open(id))
+            this.mount.onCloseRequested("main", (ev: Event) => this.quit())
+            this.document.onChange((change: Change) => this.checkText())
+        }
+
+        /** Shows the file in the editor and tells the status bar. */
+        fn open(path: String) -> Nothing
+        {
+            if (path == "src" || path == "tests" || path == "src/util")
+            {
+                return
+            }
+            this.document.setText(ExampleFiles::content(path))
+            this.log("Opened " + path)
+        }
+
+        /** A hint under the first "TODO", as a language server would report a problem. */
+        fn checkText() -> Nothing
+        {
+            if (this.document.text().contains("TODO"))
+            {
+                this.document.setDiagnostics("example", [Diagnostic::hint(Range::create(5, 11, 5, 15), "unfinished").withSource("shell-example")])
+            }
+            else
+            {
+                this.document.clearDiagnostics("example")
+            }
+        }
+
+        /** The Run action. */
+        fn run() -> Nothing
+        {
+            this.runs = this.runs + 1
+            this.log("Run " + this.runs.toString())
+        }
+
+        /** Appends to the log. */
+        fn log(line: String) -> Nothing
+        {
+            this.mount.append("log", line)
+        }
+
+        /** Ends the program. */
+        fn quit() -> Nothing
+        {
+            this.running = false
+            Bridge::quit()
+        }
+
+        /** The logic task of the example: build the window when the UI is up, then serve events until shutdown. */
+        fnc logic(events: EventLoop) -> Int32
+        {
+            events.onType("core.ready", (ev: Event) => ShellExample::ready(events))
+            events.run()
+            return 0
+        }
+
+        /** The UI is up: build the window; with TINOXIDE_EXAMPLE_QUIT=1 (smoke test) leave right away. */
+        fnc ready(events: EventLoop) -> Nothing
+        {
+            ShellExample::start(events)
+            if (Bridge::env("TINOXIDE_EXAMPLE_QUIT") == "1")
+            {
+                Bridge::quit()
+            }
+        }
+
+        /** The program: `App::run` initialises Qt, starts the logic task and runs Qt's loop. */
+        fnc main() -> Int32
+        {
+            return App::run("tinoxide-shell-example", "Shell example", (events: EventLoop) => ShellExample::logic(events))
+        }
+    }
+}

@@ -1,0 +1,57 @@
+module tinox.ide.ui
+
+import tinox.core.json
+
+namespace tinox.ide.ui
+{
+    /**
+     * What Actions.list() reports about an action, for a command palette or a shortcut
+     * overview.
+     */
+    class ActionInfo
+    {
+        /** The action id. */
+        var id: String
+        /** The text with its mnemonic `&`. */
+        var text: String
+        /** The text without the mnemonic: what a palette shows. */
+        var label: String
+        /** Breeze icon name, "" for none. */
+        var icon: String
+        /** The current (first) shortcut, "" for none. */
+        var shortcut: String
+        /** The shortcut the action was defined with. */
+        var defaultShortcut: String
+        /** Whether it can be triggered now. */
+        var enabled: Bool
+        /** Whether it is shown. */
+        var visible: Bool
+        /** Whether it can be checked. */
+        var checkable: Bool
+        /** Whether it is checked. */
+        var checked: Bool
+        /** Whether it is a KDE standard action. */
+        var standard: Bool
+        /** Its tool tip. */
+        var toolTip: String
+
+        /** Reads one entry of the action.list answer. */
+        fnc parse(json: JsonValue) -> ActionInfo
+        {
+            return ActionInfo {
+                id: json.getField("id").getString(),
+                text: json.getField("text").getString(),
+                label: json.getField("label").getString(),
+                icon: json.getField("icon").getString(),
+                shortcut: json.getField("shortcut").getString(),
+                defaultShortcut: json.getField("defaultShortcut").getString(),
+                enabled: json.getField("enabled").getBool(),
+                visible: json.getField("visible").getBool(),
+                checkable: json.getField("checkable").getBool(),
+                checked: json.getField("checked").getBool(),
+                standard: json.getField("standard").getBool(),
+                toolTip: json.getField("toolTip").getString()
+            }
+        }
+    }
+}

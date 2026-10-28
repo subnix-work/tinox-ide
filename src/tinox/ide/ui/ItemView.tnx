@@ -1,0 +1,74 @@
+module tinox.ide.ui
+
+import tinox.core.json
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+
+namespace tinox.ide.ui
+{
+    /**
+     * Selection, expansion and scrolling of a tree, list or table node of a Mount. The
+     * node is looked up by key at each call, so a view that was re-created by a render
+     * is still found.
+     *
+     *     const tree = ItemView::of(mount, "tree")
+     *     tree.choose(["src/Main.tnx"], "src/Main.tnx")
+     *     tree.expand("src", true)
+     *
+     * Row ids are the ones of the Model, also when a ModelProxy is attached.
+     */
+    class ItemView
+    {
+        /** The widget tree that holds the view. */
+        var mount: Mount
+        /** The key of the view's node. */
+        var key: String
+
+        /** The tree, list or table node `key` of this mount. */
+        fnc of(mount: Mount, key: String) -> ItemView
+        {
+            return ItemView { mount: mount, key: key }
+        }
+
+        /** Selects exactly these rows; `current` gets the focus. Throws when a row is not shown (unknown or filtered out). */
+        fn choose(ids: List<String>, current: String) -> Nothing
+        {
+            var command: Command = Command::named("model.select").int("view", this.mount.idOf(this.key)).raw("ids", Js::strings(ids))
+            if (current != "")
+            {
+                command = command.str("current", current)
+            }
+            Bridge::query(command.build())
+        }
+
+        /** The ids of the selected rows. */
+        fn selection() -> List<String>
+        {
+            const reply: JsonValue = Bridge::query(Command::named("model.selection").int("view", this.mount.idOf(this.key)).build())
+            return Mount::strings(reply.getField("ids"))
+        }
+
+        /** The row with the focus, "" for none. */
+        fn current() -> String
+        {
+            const reply: JsonValue = Bridge::query(Command::named("model.selection").int("view", this.mount.idOf(this.key)).build())
+            if (reply.getField("current").isString())
+            {
+                return reply.getField("current").getString()
+            }
+            return ""
+        }
+
+        /** Opens or closes a row of a tree; opening a lazy row asks the model's onFetch handler. */
+        fn expand(id: String, expanded: Bool) -> Nothing
+        {
+            Bridge::query(Command::named("model.expand").int("view", this.mount.idOf(this.key)).str("id", id).bool("expanded", expanded).build())
+        }
+
+        /** Scrolls the row into view. */
+        fn scrollTo(id: String) -> Nothing
+        {
+            Bridge::query(Command::named("model.scrollTo").int("view", this.mount.idOf(this.key)).str("id", id).build())
+        }
+    }
+}

@@ -1,0 +1,258 @@
+module tinox.ide.ui
+
+import tinox.core.json
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+namespace tinox.ide.ui
+{
+    /**
+     * The actions of the application (docs/action.md): define them, install menus and
+     * tool bars made of them, change their state, and list them for a command palette.
+     *
+     * Actions.create() takes over the events "action.triggered", "action.shortcutChanged"
+     * and "action.recentSelected" of the EventLoop: other code reacts to an action through
+     * Action.onTrigger(), not through those events.
+     */
+    class Actions
+    {
+        /** The loop the action events arrive on. */
+        var events: EventLoop
+        /** Trigger handlers by action id. */
+        var handlers: Map<String, fnc(Event) -> Nothing>
+        /** Called when a shortcut changed. */
+        var onShortcut: fnc(String, List<String>) -> Nothing
+        /** Called when a recent file was chosen. */
+        var onRecent: fnc(String, String) -> Nothing
+
+        /** The registry for this loop; takes over the action.* events of the loop. */
+        fnc create(events: EventLoop) -> Actions
+        {
+            const actions: Actions = Actions { events: events, handlers: Map::new(), onShortcut: (id: String, sequences: List<String>) => Action::ignore(), onRecent: (id: String, url: String) => Action::ignore() }
+            events.onType("action.triggered", (ev: Event) => actions.triggered(ev))
+            events.onType("action.shortcutChanged", (ev: Event) => actions.shortcutChanged(ev))
+            events.onType("action.recentSelected", (ev: Event) => actions.recentSelected(ev))
+            return actions
+        }
+
+        /** Dispatches an action.triggered event to the action's handler. */
+        fn triggered(ev: Event) -> Nothing
+        {
+            const id: String = ev.str("id")
+            if (this.handlers.contains(id))
+            {
+                const handler: fnc(Event) -> Nothing = this.handlers.get(id)
+                handler(ev)
+            }
+        }
+
+        /** Dispatches an action.shortcutChanged event. */
+        fn shortcutChanged(ev: Event) -> Nothing
+        {
+            this.onShortcut(ev.str("id"), Mount::strings(ev.field("shortcuts")))
+        }
+
+        /** Dispatches an action.recentSelected event. */
+        fn recentSelected(ev: Event) -> Nothing
+        {
+            this.onRecent(ev.str("id"), ev.str("url"))
+        }
+
+        /** Tells the logic when the user changed a shortcut (shortcut dialog or setShortcut): the action id and its shortcuts. */
+        fn onShortcutChanged(handler: fnc(String, List<String>) -> Nothing) -> Nothing
+        {
+            this.onShortcut = handler
+        }
+
+        /** Tells the logic which entry of a recent-files action (a "file_open_recent" standard action) the user chose. */
+        fn onRecentSelected(handler: fnc(String, String) -> Nothing) -> Nothing
+        {
+            this.onRecent = handler
+        }
+
+        /**
+         * Creates the actions (or updates those that exist) in one step. A descriptor the
+         * bridge rejects throws and nothing is created. Handlers added with
+         * Action.onTrigger() are kept for the events that follow.
+         */
+        fn define(actions: List<Action>) -> Nothing
+        {
+            var descriptors: List<String> = []
+            var i: Int64 = 0
+            while (i < actions.len())
+            {
+                descriptors.push(actions[i].toJson())
+                i = i + 1
+            }
+            Bridge::query(Command::named("action.define").raw("actions", Js::array(descriptors)).build())
+            i = 0
+            while (i < actions.len())
+            {
+                if (actions[i].hasHandler)
+                {
+                    this.handlers.set(actions[i].id, actions[i].handler)
+                }
+                i = i + 1
+            }
+        }
+
+        /** Defines one action. */
+        fn add(action: Action) -> Nothing
+        {
+            this.define([action])
+        }
+
+        /** Deletes an action and forgets its handler. */
+        fn remove(id: String) -> Nothing
+        {
+            Bridge::query(Command::named("action.remove").str("id", id).build())
+            this.handlers.remove(id)
+        }
+
+        // ---- state, pushed from the logic (never raises "triggered")
+
+        /** Enables or disables an action. */
+        fn setEnabled(id: String, value: Bool) -> Nothing
+        {
+            Bridge::post(Command::named("action.set").str("id", id).bool("enabled", value).build())
+        }
+
+        /** Shows or hides an action. */
+        fn setVisible(id: String, value: Bool) -> Nothing
+        {
+            Bridge::post(Command::named("action.set").str("id", id).bool("visible", value).build())
+        }
+
+        /** Checks or unchecks an action without triggering it. */
+        fn setChecked(id: String, value: Bool) -> Nothing
+        {
+            Bridge::post(Command::named("action.set").str("id", id).bool("checked", value).build())
+        }
+
+        /** Changes the text of an action (with its `&` mnemonic). */
+        fn setText(id: String, text: String) -> Nothing
+        {
+            Bridge::post(Command::named("action.set").str("id", id).str("text", text).build())
+        }
+
+        /** Changes the icon of an action (a Breeze icon name). */
+        fn setIcon(id: String, icon: String) -> Nothing
+        {
+            Bridge::post(Command::named("action.set").str("id", id).str("icon", icon).build())
+        }
+
+        /** Changes the tool tip of an action. */
+        fn setToolTip(id: String, text: String) -> Nothing
+        {
+            Bridge::post(Command::named("action.set").str("id", id).str("toolTip", text).build())
+        }
+
+        /** Triggers an action as if the user had (what a command palette does). Throws when it is disabled or unknown. */
+        fn trigger(id: String) -> Nothing
+        {
+            Bridge::query(Command::named("action.trigger").str("id", id).build())
+        }
+
+        // ---- shortcuts
+
+        /** Where the user's shortcuts are kept ("" file: the application's config). Call before define(). */
+        fn configure(file: String, group: String) -> Nothing
+        {
+            Bridge::query(Command::named("action.configure").str("file", file).str("group", group).build())
+        }
+
+        /** Sets and saves the user's shortcuts for an action; throws, naming the owner, when another action already uses one. */
+        fn setShortcut(id: String, sequences: List<String>) -> Nothing
+        {
+            Bridge::query(Command::named("action.setShortcut").str("id", id).raw("shortcuts", Js::strings(sequences)).build())
+        }
+
+        /** Returns an action to its default shortcut. */
+        fn resetShortcut(id: String) -> Nothing
+        {
+            Bridge::query(Command::named("action.setShortcut").str("id", id).build())
+        }
+
+        /** Opens KDE's shortcut dialog; the dialog does not block, onShortcutChanged hears the result. */
+        fn showShortcutsDialog() -> Nothing
+        {
+            Bridge::query(Command::named("action.showShortcutsDialog").build())
+        }
+
+        /** Every action with its current state, for a command palette. */
+        fn list() -> List<ActionInfo>
+        {
+            const reply: JsonValue = Bridge::query(Command::named("action.list").build())
+            const all: List<JsonValue> = reply.getField("actions").asList()
+            var out: List<ActionInfo> = []
+            var i: Int64 = 0
+            while (i < all.len())
+            {
+                out.push(ActionInfo::parse(all[i]))
+                i = i + 1
+            }
+            return out
+        }
+
+        // ---- menus and tool bars
+
+        /** Installs the menu bar of a window (the widget id of a main window, e.g. Mount.idOf). */
+        fn menuBar(window: Int64, menus: List<Menu>) -> Nothing
+        {
+            var parts: List<String> = []
+            var i: Int64 = 0
+            while (i < menus.len())
+            {
+                parts.push(menus[i].toJson())
+                i = i + 1
+            }
+            Bridge::query(Command::named("action.setMenuBar").target(window).raw("menus", Js::array(parts)).build())
+        }
+
+        /** Puts actions ("-" for a separator) into a tool bar node (Ui.toolBar). */
+        fn toolBar(toolBar: Int64, ids: List<String>) -> Nothing
+        {
+            Bridge::query(Command::named("action.setToolBar").target(toolBar).raw("items", Js::strings(ids)).build())
+        }
+
+        /** Makes the actions the context menu of a widget. */
+        fn contextMenu(widget: Int64, ids: List<String>) -> Nothing
+        {
+            Bridge::query(Command::named("action.setContextMenu").target(widget).raw("items", Js::strings(ids)).build())
+        }
+
+        /** Builds menus and tool bars of a window from a shipped KXmlGui description (tinoxideui.rc) instead of Menu objects. */
+        fn loadUiFile(window: Int64, path: String) -> Nothing
+        {
+            Bridge::query(Command::named("action.loadUi").target(window).str("file", path).build())
+        }
+
+        /** Like loadUiFile, from the XML text itself. */
+        fn loadUiXml(window: Int64, xml: String) -> Nothing
+        {
+            Bridge::query(Command::named("action.loadUi").target(window).str("xml", xml).build())
+        }
+
+        // ---- recent files
+
+        /** Adds a file (path or URL) to a recent-files action ("file_open_recent"); the list is saved at once. */
+        fn recentAdd(id: String, url: String) -> Nothing
+        {
+            Bridge::query(Command::named("action.recentAdd").str("id", id).str("url", url).build())
+        }
+
+        /** The files of a recent-files action, newest first. */
+        fn recentList(id: String) -> List<String>
+        {
+            return Mount::strings(Bridge::query(Command::named("action.recentList").str("id", id).build()).getField("urls"))
+        }
+
+        /** Empties a recent-files action. */
+        fn recentClear(id: String) -> Nothing
+        {
+            Bridge::query(Command::named("action.recentClear").str("id", id).build())
+        }
+    }
+}

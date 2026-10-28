@@ -31,6 +31,7 @@ namespace tinox.ide.kde
             return 1
         }
 
+        /** The ABI version of the loaded library. */
         fnc abiVersion() -> Int64
         {
             return tkde_abi_version()
@@ -60,6 +61,7 @@ namespace tinox.ide.kde
             return "status " + code.toString()
         }
 
+        /** Throws `call failed (reason): message` when `code` is an error status. */
         fnc check(call: String, code: Int64) -> Nothing
         {
             if (code < 0)
@@ -82,6 +84,7 @@ namespace tinox.ide.kde
             return code
         }
 
+        /** Asks the event loop to end (same as the core.quit command). Any thread. */
         fnc quit() -> Nothing
         {
             tkde_quit()
@@ -111,6 +114,7 @@ namespace tinox.ide.kde
             return tkde_next_event(timeoutMs)
         }
 
+        /** Drops the bridge's reference to an object and destroys it; throws for an unknown id. */
         fnc release(id: Int64) -> Nothing
         {
             Bridge::check("tkde_release", tkde_release(id))

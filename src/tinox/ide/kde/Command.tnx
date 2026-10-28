@@ -16,26 +16,32 @@ namespace tinox.ide.kde
      */
     class Command
     {
+        /** The command name, "namespace.verb". */
         var name: String
+        /** The fields added so far, as JSON text starting with a comma. */
         var fields: String
 
+        /** Starts a command with this name. */
         fnc named(name: String) -> Command
         {
             return Command { name: name, fields: "" }
         }
 
+        /** Adds a string field. */
         fn str(key: String, value: String) -> Command
         {
             this.fields = this.fields + "," + tinox_json_encode_string(key) + ":" + tinox_json_encode_string(value)
             return this
         }
 
+        /** Adds an integer field. */
         fn int(key: String, value: Int64) -> Command
         {
             this.fields = this.fields + "," + tinox_json_encode_string(key) + ":" + value.toString()
             return this
         }
 
+        /** Adds a boolean field. */
         fn bool(key: String, value: Bool) -> Command
         {
             this.fields = this.fields + "," + tinox_json_encode_string(key) + ":" + value.toString()
@@ -61,6 +67,7 @@ namespace tinox.ide.kde
             return this.int("req", number)
         }
 
+        /** The command as JSON text, ready for Bridge.post() or Bridge.query(). */
         fn build() -> String
         {
             return "{\"cmd\":" + tinox_json_encode_string(this.name) + this.fields + "}"

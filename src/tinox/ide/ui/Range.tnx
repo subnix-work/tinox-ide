@@ -1,0 +1,51 @@
+module tinox.ide.ui
+
+import tinox.core.json
+
+namespace tinox.ide.ui
+{
+    /** A span of text from `start` up to, not including, `end`. */
+    class Range
+    {
+        /** The first position in the range. */
+        var start: Position
+        /** The position after the last one. */
+        var end: Position
+
+        /** The range from `start` to `end`. */
+        fnc of(start: Position, end: Position) -> Range
+        {
+            return Range { start: start, end: end }
+        }
+
+        /** The range from line/character to line/character. */
+        fnc create(startLine: Int64, startCharacter: Int64, endLine: Int64, endCharacter: Int64) -> Range
+        {
+            return Range { start: Position::create(startLine, startCharacter), end: Position::create(endLine, endCharacter) }
+        }
+
+        /** Reads `{start, end}`. */
+        fnc parse(json: JsonValue) -> Range
+        {
+            return Range { start: Position::parse(json.getField("start")), end: Position::parse(json.getField("end")) }
+        }
+
+        /** Whether start and end are the same place. */
+        fn isEmpty() -> Bool
+        {
+            return this.start.equals(this.end)
+        }
+
+        /** As `{"start":..,"end":..}`. */
+        fn toJson() -> String
+        {
+            return Js::object([Js::field("start", this.start.toJson()), Js::field("end", this.end.toJson())])
+        }
+
+        /** As `start-end`. */
+        fn toString() -> String
+        {
+            return this.start.toString() + "-" + this.end.toString()
+        }
+    }
+}

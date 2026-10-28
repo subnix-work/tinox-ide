@@ -1,0 +1,106 @@
+module tinox.ide.ui
+
+namespace tinox.ide.ui
+{
+    /**
+     * A menu as the menu bar, a submenu or a context menu shows it: a title and items.
+     *
+     *     Menu::create("&File").action("file_open").separator().action("file_quit")
+     *
+     * Titles use `&` mnemonics. Items refer to actions by id; the actions must be defined
+     * (Actions.define) before the menu is installed.
+     */
+    class Menu
+    {
+        /** The menu's title. */
+        var title: String
+        /** A name to find the menu by. */
+        var name: String
+        /** Icon of the menu in a parent menu. */
+        var icon: String
+        /** The items as JSON. */
+        var entries: List<String>
+
+        /** A menu with this title (`&` marks the mnemonic). */
+        fnc create(title: String) -> Menu
+        {
+            return Menu { title: title, name: "", icon: "", entries: [] }
+        }
+
+        /** A name to find the menu by. */
+        fn id(name: String) -> Menu
+        {
+            this.name = name
+            return this
+        }
+
+        /** The icon of a submenu entry. */
+        fn withIcon(icon: String) -> Menu
+        {
+            this.icon = icon
+            return this
+        }
+
+        /** Adds an action by id. */
+        fn action(id: String) -> Menu
+        {
+            this.entries.push(Js::str(id))
+            return this
+        }
+
+        /** Adds several actions. */
+        fn actions(ids: List<String>) -> Menu
+        {
+            var i: Int64 = 0
+            while (i < ids.len())
+            {
+                this.entries.push(Js::str(ids[i]))
+                i = i + 1
+            }
+            return this
+        }
+
+        /** Adds a separator line. */
+        fn separator() -> Menu
+        {
+            this.entries.push(Js::str("-"))
+            return this
+        }
+
+        /** A separator with a caption. */
+        fn section(caption: String) -> Menu
+        {
+            this.entries.push(Js::object([Js::strField("section", caption)]))
+            return this
+        }
+
+        /** Adds a menu as a submenu. */
+        fn submenu(menu: Menu) -> Menu
+        {
+            this.entries.push(Js::object([Js::field("menu", menu.toJson())]))
+            return this
+        }
+
+        /** How many items the menu has. */
+        fn itemCount() -> Int64
+        {
+            return this.entries.len()
+        }
+
+        /** The menu as action.setMenuBar takes it. */
+        fn toJson() -> String
+        {
+            var fields: List<String> = [Js::strField("title", this.title)]
+            if (this.name != "")
+            {
+                fields.push(Js::strField("id", this.name))
+            }
+            if (this.icon != "")
+            {
+                fields.push(Js::strField("icon", this.icon))
+            }
+            fields.push(Js::field("items", Js::array(this.entries)))
+            return Js::object(fields)
+        }
+    }
+}

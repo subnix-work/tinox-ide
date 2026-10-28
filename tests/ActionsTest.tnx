@@ -1,0 +1,163 @@
+import MockBridge
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Action
+import tinox.ide.ui.ActionInfo
+import tinox.ide.ui.Actions
+import tinox.ide.ui.Menu
+
+class ActionsTest
+{
+    @Test("an action describes itself as the descriptor action.define takes")
+    fn testDescriptor() -> Bool
+    {
+        const run: Action = Action::create("build.run").text("&Run").icon("media-playback-start").shortcut("F5").toolTip("Build \"and\" run")
+        const wrap: Action = Action::create("view.wrap").checkable(true).checked(true).group("view").enabled(false).visible(true)
+        const open: Action = Action::standard("file_open")
+        const many: Action = Action::create("x").shortcuts(["Ctrl+K", "Ctrl+Shift+K"]).statusTip("s")
+        return run.toJson() == "{\"id\":\"build.run\",\"text\":\"&Run\",\"icon\":\"media-playback-start\",\"shortcut\":\"F5\",\"toolTip\":\"Build \\\"and\\\" run\"}" &&
+            wrap.toJson() == "{\"id\":\"view.wrap\",\"checkable\":true,\"checked\":true,\"group\":\"view\",\"enabled\":false,\"visible\":true}" &&
+            open.toJson() == "{\"id\":\"file_open\",\"standard\":true}" &&
+            many.toJson() == "{\"id\":\"x\",\"shortcuts\":[\"Ctrl+K\",\"Ctrl+Shift+K\"],\"statusTip\":\"s\"}"
+    }
+
+    @Test("define sends one batch and a trigger event runs the action's handler")
+    fn testDefineAndTrigger() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("action.define", "{\"count\":2}", "")
+        const events: EventLoop = EventLoop::create()
+        const actions: Actions = Actions::create(events)
+        var seen: List<String> = []
+        actions.define([
+            Action::create("a").text("A").onTrigger((ev: Event) => seen.push("a:" + ev.bool("checked").toString())),
+            Action::create("b").checkable(true).onTrigger((ev: Event) => seen.push("b:" + ev.bool("checked").toString()))
+        ])
+        const sent: String = MockBridge::nextCommand()
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"b\",\"checked\":true}")
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"a\",\"checked\":false}")
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"unknown\",\"checked\":false}")
+        events.pump(1000)
+        return sent == "{\"cmd\":\"action.define\",\"actions\":[{\"id\":\"a\",\"text\":\"A\"},{\"id\":\"b\",\"checkable\":true}]}" &&
+            seen.len() == 2 && seen[0] == "b:true" && seen[1] == "a:false" && events.failureCount() == 0
+    }
+
+    @Test("a rejected descriptor throws and registers no handler")
+    fn testDefineRejected() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("action.define", "{\"ok\":false,\"error\":{\"code\":-1,\"message\":\"action 'x': unknown field 'nope'\"}}", "")
+        const events: EventLoop = EventLoop::create()
+        const actions: Actions = Actions::create(events)
+        var ran: List<String> = []
+        var message: String = ""
+        try
+        {
+            actions.add(Action::create("x").onTrigger((ev: Event) => ran.push("ran")))
+        }
+        catch (e: String)
+        {
+            message = e
+        }
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"x\",\"checked\":false}")
+        events.pump(1000)
+        return message.contains("unknown field 'nope'") && ran.len() == 0
+    }
+
+    @Test("state changes, trigger and shortcut commands")
+    fn testCommands() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("action.trigger", "", "")
+        MockBridge::onCommand("action.setShortcut", "", "")
+        MockBridge::onCommand("action.configure", "", "")
+        MockBridge::onCommand("action.remove", "", "")
+        const actions: Actions = Actions::create(EventLoop::create())
+        actions.setEnabled("run", false)
+        actions.setChecked("wrap", true)
+        actions.setText("run", "&Stop")
+        actions.trigger("run")
+        actions.setShortcut("run", ["Ctrl+R"])
+        actions.resetShortcut("run")
+        actions.configure("", "Shortcuts")
+        actions.remove("run")
+        return MockBridge::nextCommand() == "{\"cmd\":\"action.set\",\"id\":\"run\",\"enabled\":false}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"action.set\",\"id\":\"wrap\",\"checked\":true}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"action.set\",\"id\":\"run\",\"text\":\"&Stop\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"action.trigger\",\"id\":\"run\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"action.setShortcut\",\"id\":\"run\",\"shortcuts\":[\"Ctrl+R\"]}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"action.setShortcut\",\"id\":\"run\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"action.configure\",\"file\":\"\",\"group\":\"Shortcuts\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"action.remove\",\"id\":\"run\"}"
+    }
+
+    @Test("a shortcut conflict is thrown with the bridge's explanation")
+    fn testShortcutConflict() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("action.setShortcut", "{\"ok\":false,\"error\":{\"code\":-1,\"message\":\"that shortcut is already used by 'build.run'\"}}", "")
+        const actions: Actions = Actions::create(EventLoop::create())
+        var message: String = ""
+        try
+        {
+            actions.setShortcut("view.wrap", ["F5"])
+        }
+        catch (e: String)
+        {
+            message = e
+        }
+        return message.contains("already used by 'build.run'")
+    }
+
+    @Test("list() turns the bridge's answer into ActionInfo for a palette")
+    fn testList() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("action.list", "{\"actions\":[{\"id\":\"build.run\",\"text\":\"&Run\",\"label\":\"Run\",\"icon\":\"media-playback-start\",\"shortcut\":\"Ctrl+R\",\"defaultShortcut\":\"F5\",\"enabled\":true,\"visible\":true,\"checkable\":false,\"checked\":false,\"standard\":false,\"toolTip\":\"\"},{\"id\":\"file_open\",\"text\":\"&Open\",\"label\":\"Open\",\"icon\":\"document-open\",\"shortcut\":\"Ctrl+O\",\"defaultShortcut\":\"Ctrl+O\",\"enabled\":false,\"visible\":true,\"checkable\":false,\"checked\":false,\"standard\":true,\"toolTip\":\"Open a file\"}]}", "")
+        const actions: Actions = Actions::create(EventLoop::create())
+        const all: List<ActionInfo> = actions.list()
+        return all.len() == 2 && all[0].id == "build.run" && all[0].label == "Run" && all[0].shortcut == "Ctrl+R" && all[0].defaultShortcut == "F5" && all[0].enabled &&
+            all[1].standard && !all[1].enabled && all[1].toolTip == "Open a file" && all[1].icon == "document-open"
+    }
+
+    @Test("menus: nested, separators, sections, and the menu bar command")
+    fn testMenus() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("action.setMenuBar", "", "")
+        MockBridge::onCommand("action.setToolBar", "", "")
+        MockBridge::onCommand("action.setContextMenu", "", "")
+        const theme: Menu = Menu::create("&Theme").withIcon("preferences-desktop-theme").actions(["theme.light", "theme.dark"])
+        const file: Menu = Menu::create("&File").id("file").action("file_open").separator().submenu(theme).section("Recent").action("file_quit")
+        const actions: Actions = Actions::create(EventLoop::create())
+        actions.menuBar(10, [file, Menu::create("&Help").action("help_about")])
+        actions.toolBar(12, ["file_open", "-", "build.run"])
+        actions.contextMenu(14, ["edit_copy"])
+        return file.itemCount() == 5 &&
+            MockBridge::nextCommand() == "{\"cmd\":\"action.setMenuBar\",\"target\":10,\"menus\":[{\"title\":\"&File\",\"id\":\"file\",\"items\":[\"file_open\",\"-\",{\"menu\":{\"title\":\"&Theme\",\"icon\":\"preferences-desktop-theme\",\"items\":[\"theme.light\",\"theme.dark\"]}},{\"section\":\"Recent\"},\"file_quit\"]},{\"title\":\"&Help\",\"items\":[\"help_about\"]}]}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"action.setToolBar\",\"target\":12,\"items\":[\"file_open\",\"-\",\"build.run\"]}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"action.setContextMenu\",\"target\":14,\"items\":[\"edit_copy\"]}"
+    }
+
+    @Test("recent files and shortcut events")
+    fn testRecentAndShortcutEvents() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("action.recentAdd", "", "")
+        MockBridge::onCommand("action.recentList", "{\"urls\":[\"/a/b.tnx\",\"/c.tnx\"]}", "")
+        MockBridge::onCommand("action.recentClear", "", "")
+        const events: EventLoop = EventLoop::create()
+        const actions: Actions = Actions::create(events)
+        var seen: List<String> = []
+        actions.onRecentSelected((id: String, url: String) => seen.push(id + " " + url))
+        actions.onShortcutChanged((id: String, sequences: List<String>) => seen.push(id + " " + sequences.len().toString() + " " + sequences[0]))
+        actions.recentAdd("file_open_recent", "/a/b.tnx")
+        const recent: List<String> = actions.recentList("file_open_recent")
+        actions.recentClear("file_open_recent")
+        MockBridge::push("{\"type\":\"action.recentSelected\",\"id\":\"file_open_recent\",\"url\":\"/a/b.tnx\"}")
+        MockBridge::push("{\"type\":\"action.shortcutChanged\",\"id\":\"run\",\"shortcuts\":[\"Ctrl+R\",\"F5\"]}")
+        events.pump(1000)
+        return recent.len() == 2 && recent[1] == "/c.tnx" && seen.len() == 2 && seen[0] == "file_open_recent /a/b.tnx" && seen[1] == "run 2 Ctrl+R"
+    }
+}

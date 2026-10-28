@@ -1,0 +1,179 @@
+import MockBridge
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Mount
+import tinox.ide.ui.Node
+import tinox.ide.ui.Ui
+
+class UiTest
+{
+    @Test("a tree describes itself as the JSON the bridge takes")
+    fn testNodeJson() -> Bool
+    {
+        const tree: Node = Ui::window("main", "Tinox \"IDE\"")
+            .size(800, 600)
+            .add(Ui::dock("files", "Files", "left").add(Ui::treeView("tree")))
+            .add(Ui::label("hello", "Hi").inTab("Welcome", "go-home"))
+        const expected: String = "{\"type\":\"QMainWindow\",\"key\":\"main\",\"props\":{\"windowTitle\":\"Tinox \\\"IDE\\\"\",\"size\":[800,600]},\"children\":[" +
+            "{\"type\":\"QDockWidget\",\"key\":\"files\",\"props\":{\"title\":\"Files\"},\"place\":{\"area\":\"left\"},\"children\":[{\"type\":\"QTreeView\",\"key\":\"tree\"}]}," +
+            "{\"type\":\"QLabel\",\"key\":\"hello\",\"props\":{\"text\":\"Hi\"},\"place\":{\"tab\":{\"title\":\"Welcome\",\"icon\":\"go-home\"}}}]}"
+        return tree.toJson() == expected
+    }
+
+    @Test("layouts, grid cells, form labels and stretch")
+    fn testLayouts() -> Bool
+    {
+        const grid: Node = Ui::grid("g").spacing(6).add(Ui::label("a", "A").inCell(0, 1).spanning(1, 2))
+        const form: Node = Ui::form("f").margins(4).add(Ui::lineEdit("name", "x").labelled("Name"))
+        const row: Node = Ui::row("r").add(Ui::button("b", "Go").stretch(2))
+        return grid.toJson() == "{\"type\":\"QWidget\",\"key\":\"g\",\"layout\":{\"kind\":\"grid\",\"spacing\":6},\"children\":[{\"type\":\"QLabel\",\"key\":\"a\",\"props\":{\"text\":\"A\"},\"place\":{\"row\":0,\"col\":1,\"rowSpan\":1,\"colSpan\":2}}]}" &&
+            form.toJson() == "{\"type\":\"QWidget\",\"key\":\"f\",\"layout\":{\"kind\":\"form\",\"margins\":4},\"children\":[{\"type\":\"QLineEdit\",\"key\":\"name\",\"props\":{\"text\":\"x\"},\"place\":{\"label\":\"Name\"}}]}" &&
+            row.toJson() == "{\"type\":\"QWidget\",\"key\":\"r\",\"layout\":{\"kind\":\"box\",\"orientation\":\"horizontal\"},\"children\":[{\"type\":\"QPushButton\",\"key\":\"b\",\"props\":{\"text\":\"Go\"},\"place\":{\"stretch\":2}}]}"
+    }
+
+    @Test("typed properties: strings, booleans, lists, splitter orientation, embeds")
+    fn testProps() -> Bool
+    {
+        const split: Node = Ui::splitter("s", true).sizes([30, 70])
+        const combo: Node = Ui::comboBox("c", ["a", "b"]).currentIndex(1).enabled(false)
+        const log: Node = Ui::log("l")
+        const embed: Node = Ui::embed("editor", 12)
+        return split.toJson() == "{\"type\":\"QSplitter\",\"key\":\"s\",\"props\":{\"orientation\":\"vertical\",\"sizes\":[30,70]}}" &&
+            combo.toJson() == "{\"type\":\"QComboBox\",\"key\":\"c\",\"props\":{\"items\":[\"a\",\"b\"],\"currentIndex\":1,\"enabled\":false}}" &&
+            log.toJson() == "{\"type\":\"QPlainTextEdit\",\"key\":\"l\",\"props\":{\"readOnly\":true}}" &&
+            embed.toJson() == "{\"type\":\"Embed\",\"key\":\"editor\",\"object\":12}"
+    }
+
+    @Test("the first render mounts, the next ones update the same mount")
+    fn testRenderMountsThenUpdates() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("widget.mount", "{\"id\":9,\"root\":10,\"nodes\":{\"w\":10,\"b\":11}}", "")
+        MockBridge::onCommand("widget.update", "{\"root\":10,\"nodes\":{\"w\":10,\"b\":11}}", "")
+        const mount: Mount = Mount::create(EventLoop::create())
+        const first: Node = Ui::window("w", "T").add(Ui::button("b", "One"))
+        mount.render(first)
+        const mounted: String = MockBridge::nextCommand()
+        mount.render(Ui::window("w", "T").add(Ui::button("b", "Two")))
+        const updated: String = MockBridge::nextCommand()
+        return mounted == "{\"cmd\":\"widget.mount\",\"tree\":" + first.toJson() + "}" &&
+            updated.startsWith("{\"cmd\":\"widget.update\",\"target\":9,\"tree\":") &&
+            updated.contains("\"text\":\"Two\"") &&
+            mount.idOf("b") == 11 && mount.idOf("w") == 10 && mount.idOf("nope") == 0 &&
+            mount.rootWidget() == 10 && mount.isMounted()
+    }
+
+    @Test("a bridge error in the description is thrown, naming the node")
+    fn testRenderError() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("widget.mount", "{\"ok\":false,\"error\":{\"code\":-1,\"message\":\"node 'b' (QLabel): unknown prop 'nope'\"}}", "")
+        const mount: Mount = Mount::create(EventLoop::create())
+        var message: String = ""
+        try
+        {
+            mount.render(Ui::label("b", "x").str("nope", "1"))
+        }
+        catch (e: String)
+        {
+            message = e
+        }
+        return message.contains("unknown prop 'nope'") && !mount.isMounted()
+    }
+
+    @Test("widget events reach the handler of their node key and event type")
+    fn testEvents() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("widget.mount", "{\"id\":9,\"root\":10,\"nodes\":{\"w\":10,\"run\":11,\"search\":12,\"tabs\":13}}", "")
+        const events: EventLoop = EventLoop::create()
+        const mount: Mount = Mount::create(events)
+        var seen: List<String> = []
+        mount.onClick("run", (ev: Event) => seen.push("run:" + ev.bool("checked").toString()))
+        mount.onText("search", (text: String) => seen.push("text:" + text))
+        mount.onIndex("tabs", (index: Int64) => seen.push("tab:" + index.toString()))
+        mount.render(Ui::window("w", "T"))
+        MockBridge::push("{\"type\":\"widget.clicked\",\"target\":11,\"key\":\"run\",\"checked\":true}")
+        MockBridge::push("{\"type\":\"widget.textChanged\",\"target\":12,\"key\":\"search\",\"text\":\"abc\"}")
+        MockBridge::push("{\"type\":\"widget.currentChanged\",\"target\":13,\"key\":\"tabs\",\"index\":2}")
+        MockBridge::push("{\"type\":\"widget.clicked\",\"target\":12,\"key\":\"search\"}")
+        MockBridge::push("{\"type\":\"widget.clicked\",\"target\":99,\"key\":\"gone\"}")
+        events.pump(1000)
+        return seen.len() == 3 && seen[0] == "run:true" && seen[1] == "text:abc" && seen[2] == "tab:2" && events.failureCount() == 0
+    }
+
+    @Test("after an update, events of removed nodes are no longer delivered and new ones are")
+    fn testRebind() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("widget.mount", "{\"id\":9,\"root\":10,\"nodes\":{\"w\":10,\"old\":11}}", "")
+        MockBridge::onCommand("widget.update", "{\"root\":10,\"nodes\":{\"w\":10,\"fresh\":12}}", "")
+        const events: EventLoop = EventLoop::create()
+        const mount: Mount = Mount::create(events)
+        var seen: List<String> = []
+        mount.onClick("old", (ev: Event) => seen.push("old"))
+        mount.onClick("fresh", (ev: Event) => seen.push("fresh"))
+        mount.render(Ui::window("w", "T"))
+        mount.render(Ui::window("w", "T"))
+        MockBridge::push("{\"type\":\"widget.clicked\",\"target\":11,\"key\":\"old\"}")
+        MockBridge::push("{\"type\":\"widget.clicked\",\"target\":12,\"key\":\"fresh\"}")
+        events.pump(1000)
+        return seen.len() == 1 && seen[0] == "fresh" && mount.idOf("old") == 0
+    }
+
+    @Test("item view events: activation, selection, context menu")
+    fn testItemViewEvents() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("widget.mount", "{\"id\":9,\"root\":10,\"nodes\":{\"w\":10,\"tree\":11}}", "")
+        const events: EventLoop = EventLoop::create()
+        const mount: Mount = Mount::create(events)
+        var seen: List<String> = []
+        mount.onActivated("tree", (id: String) => seen.push("open " + id))
+        mount.onSelection("tree", (ids: List<String>) => seen.push("selected " + ids.len().toString() + " " + ids[0]))
+        mount.onContextMenu("tree", (ev: Event) => seen.push("menu " + ev.int("x").toString()))
+        mount.render(Ui::window("w", "T"))
+        MockBridge::push("{\"type\":\"model.activated\",\"target\":11,\"key\":\"tree\",\"id\":\"src/Main.tnx\"}")
+        MockBridge::push("{\"type\":\"model.selectionChanged\",\"target\":11,\"key\":\"tree\",\"ids\":[\"a\",\"b\"]}")
+        MockBridge::push("{\"type\":\"model.contextMenuRequested\",\"target\":11,\"key\":\"tree\",\"id\":\"a\",\"x\":40,\"y\":50,\"ids\":[\"a\"]}")
+        events.pump(1000)
+        return seen.len() == 3 && seen[0] == "open src/Main.tnx" && seen[1] == "selected 2 a" && seen[2] == "menu 40"
+    }
+
+    @Test("commands on the mount: show, close, focus, append, state")
+    fn testMountCommands() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("widget.mount", "{\"id\":9,\"root\":10,\"nodes\":{\"w\":10,\"log\":11}}", "")
+        MockBridge::onCommand("widget.saveState", "", "")
+        MockBridge::onCommand("widget.restoreState", "{\"restored\":true}", "")
+        const mount: Mount = Mount::create(EventLoop::create())
+        mount.render(Ui::window("w", "T"))
+        MockBridge::nextCommand()
+        mount.show()
+        mount.append("log", "line \"1\"")
+        mount.close(true)
+        mount.saveState("Window")
+        const restored: Bool = mount.restoreState("Window")
+        return MockBridge::nextCommand() == "{\"cmd\":\"widget.show\",\"target\":9}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"widget.append\",\"target\":11,\"text\":\"line \\\"1\\\"\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"widget.close\",\"target\":9,\"force\":true}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"widget.saveState\",\"target\":9,\"group\":\"Window\"}" &&
+            restored
+    }
+
+    @Test("dispose releases the mount and a later render mounts again")
+    fn testDispose() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const object: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("widget.mount", "{\"id\":" + object.toString() + ",\"root\":10,\"nodes\":{\"w\":10}}", "")
+        const mount: Mount = Mount::create(EventLoop::create())
+        mount.render(Ui::window("w", "T"))
+        mount.dispose()
+        const gone: Bool = !mount.isMounted() && mount.idOf("w") == 0
+        mount.render(Ui::window("w", "T"))
+        return gone && mount.isMounted()
+    }
+}
