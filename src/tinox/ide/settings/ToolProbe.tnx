@@ -1,0 +1,76 @@
+module tinox.ide.settings
+
+import tinox.core.process.Process
+import tinox.core.process.ProcessResult
+import tinox.ide.app.FileSystem
+
+namespace tinox.ide.settings
+{
+    /** Finds the programs the IDE runs (tinox, tinox-lsp) and checks a path the user typed. */
+    class ToolProbe
+    {
+        /** The folders searched for a program: the ones in PATH, then the usual places. */
+        fnc folders() -> List<String>
+        {
+            var out: List<String> = []
+            const path: String = Process::env("PATH")
+            if (path != "")
+            {
+                for folder in path.split(":")
+                {
+                    if (folder != "")
+                    {
+                        out.push(folder)
+                    }
+                }
+            }
+            const home: String = Process::env("HOME")
+            var usual: List<String> = ["/usr/local/bin", "/usr/bin"]
+            if (home != "")
+            {
+                usual = [home + "/.cargo/bin", home + "/.local/bin", "/usr/local/bin", "/usr/bin"]
+            }
+            for folder in usual
+            {
+                if (!out.contains(folder))
+                {
+                    out.push(folder)
+                }
+            }
+            return out
+        }
+
+        /** The first executable file called `name` in the folders, "" when there is none. */
+        fnc find(name: String) -> String
+        {
+            for folder in ToolProbe::folders()
+            {
+                const candidate: String = FileSystem::join(folder, name)
+                if (ToolProbe::check(candidate) == "")
+                {
+                    return candidate
+                }
+            }
+            return ""
+        }
+
+        /** Why `path` cannot be run, or "" when it can. */
+        fnc check(path: String) -> String
+        {
+            if (!FileSystem::exists(path))
+            {
+                return "No such file"
+            }
+            if (FileSystem::isDirectory(path))
+            {
+                return "This is a folder, not a program"
+            }
+            const result: ProcessResult = Process::run(["test", "-x", path], 3000, "")
+            if (!result.success())
+            {
+                return "The file is not executable"
+            }
+            return ""
+        }
+    }
+}

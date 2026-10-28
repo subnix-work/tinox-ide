@@ -1,0 +1,69 @@
+module tinox.ide.settings
+
+namespace tinox.ide.settings
+{
+    /**
+     * The definition of one preference: where it is stored, what it is called in the dialog,
+     * its default and what values are allowed. Values are handled as text everywhere ("true" and
+     * "false" for switches); the kind decides how they are checked and stored.
+     */
+    class PrefDef
+    {
+        /** The page of the dialog it appears on. */
+        var page: String
+        /** The group in the config file. */
+        var group: String
+        /** The key in the config file. */
+        var key: String
+        /** `bool`, `int`, `text`, `path` or `choice`. */
+        var kind: String
+        /** The label in the dialog. */
+        var label: String
+        /** The default value as text. */
+        var fallback: String
+        /** For int: the smallest value. */
+        var min: Int64
+        /** For int: the largest value. */
+        var max: Int64
+        /** For choice: the allowed values ("" is shown as "Default"). */
+        var choices: List<String>
+        /** For path: the program name that is searched for when the field is empty ("" for none). */
+        var tool: String
+
+        /** The id `group.key`, which is also the store key without its `pref.` prefix. */
+        fn id() -> String
+        {
+            return this.group + "." + this.key
+        }
+
+        /** A switch. */
+        fnc bool(page: String, group: String, key: String, label: String, fallback: Bool) -> PrefDef
+        {
+            return PrefDef { page: page, group: group, key: key, kind: "bool", label: label, fallback: fallback.toString(), min: 0, max: 0, choices: [], tool: "" }
+        }
+
+        /** A whole number between `min` and `max`. */
+        fnc int(page: String, group: String, key: String, label: String, fallback: Int64, min: Int64, max: Int64) -> PrefDef
+        {
+            return PrefDef { page: page, group: group, key: key, kind: "int", label: label, fallback: fallback.toString(), min: min, max: max, choices: [], tool: "" }
+        }
+
+        /** Free text. */
+        fnc text(page: String, group: String, key: String, label: String, fallback: String) -> PrefDef
+        {
+            return PrefDef { page: page, group: group, key: key, kind: "text", label: label, fallback: fallback, min: 0, max: 0, choices: [], tool: "" }
+        }
+
+        /** The path of a program. Empty means: look for `tool` in the usual places. */
+        fnc path(page: String, group: String, key: String, label: String, tool: String) -> PrefDef
+        {
+            return PrefDef { page: page, group: group, key: key, kind: "path", label: label, fallback: "", min: 0, max: 0, choices: [], tool: tool }
+        }
+
+        /** One of a list of values. */
+        fnc choice(page: String, group: String, key: String, label: String, fallback: String, choices: List<String>) -> PrefDef
+        {
+            return PrefDef { page: page, group: group, key: key, kind: "choice", label: label, fallback: fallback, min: 0, max: 0, choices: choices, tool: "" }
+        }
+    }
+}

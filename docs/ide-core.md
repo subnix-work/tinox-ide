@@ -35,6 +35,7 @@ read the store.
 | `Logger` | Levels (`TINOXIDE_LOG`), a ring of recent lines, `log.line` on the bus (the Output panel), warnings/errors forwarded to the Qt log. |
 | `ErrorReporter` | Unhandled errors (command handler, event handler, bus subscriber, the logic task): logged, shown in the status line and as a desktop toast (`internalError` in `tinoxide.notifyrc`). |
 | `MainWindow` | The window as a function of the store: menu bar, tool bar, project dock, problems/output dock, editor tabs, status bar. |
+| `Preferences`, `SettingsDialog` (`tinox.ide.settings`) | Preferences with defaults and checks, applied live; see `docs/settings.md`. |
 | `Navigation`, `FindInFiles` (`tinox.ide.search`) | Quick open, command palette, find/replace in files; see `docs/search.md`. |
 | `Documents` (`tinox.ide.editor`) | The open files, tabs, split, session; see `docs/documents.md`. |
 | `IdeApp` (`tinox.ide`) | Wires all of it, registers the core commands (Quit, the two view toggles; Quit asks about unsaved files first), persists the layout flags in the settings and the window layout through `Mount.saveState`. |

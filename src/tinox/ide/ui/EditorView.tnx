@@ -128,6 +128,12 @@ namespace tinox.ide.ui
             return Position::parse(Bridge::query(Command::named("editor.getCursor").target(this.viewId).build()).getField("position"))
         }
 
+        /** Opens KTextEditor's own configuration dialog (fonts, indentation, ...) over the active window. */
+        fn showConfigDialog() -> Nothing
+        {
+            Bridge::query(Command::named("editor.showConfigDialog").build())
+        }
+
         /** Moves the cursor; throws for a position outside the text. */
         fn setCursor(position: Position) -> Nothing
         {

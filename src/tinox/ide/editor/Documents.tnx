@@ -121,8 +121,56 @@ namespace tinox.ide.editor
             this.window.mount.onCloseRequested("editors", (ev: Event) => this.closeTab(ev.int("index")))
             this.bus.subscribe("file.openRequested", (m: BusMessage) => this.openQuietly(m.str("path")))
             this.bus.subscribe("workspace.fileOperation", (m: BusMessage) => this.fileOperation(m.str("kind"), m.str("path"), m.str("oldPath")))
+            this.store.watch("pref.Editor.theme", (value: String) => this.applyTheme())
             this.bus.subscribe("editor.tick", (m: BusMessage) => this.tick())
             this.publishState()
+        }
+
+        /** The colour themes the editor offers; empty while no file is open (a theme belongs to a view). */
+        fn themes() -> List<String>
+        {
+            if (this.files.len() == 0)
+            {
+                return []
+            }
+            return this.files[0].views[0].themes()
+        }
+
+        /** Opens the editor's own configuration dialog (it belongs to a view, so a file must be open). */
+        fn showEditorConfig() -> Nothing
+        {
+            if (this.files.len() == 0)
+            {
+                this.dialogs.inform("Configure Editor", "Open a file first: the editor settings are shown by an editor.")
+                return
+            }
+            this.files[0].views[0].showConfigDialog()
+        }
+
+        /** Gives every view the colour theme of the preference `Editor.theme` ("" follows the colour scheme). */
+        fn applyTheme() -> Nothing
+        {
+            const theme: String = this.store.get("pref.Editor.theme")
+            for f in this.files
+            {
+                for v in f.views
+                {
+                    this.themeQuietly(v, theme)
+                }
+            }
+        }
+
+        /** Sets a theme; an unknown one is logged, not thrown. */
+        fn themeQuietly(view: EditorView, theme: String) -> Nothing
+        {
+            try
+            {
+                view.setTheme(theme)
+            }
+            catch (e: String)
+            {
+                this.logger.warn("could not set the editor theme '" + theme + "': " + e)
+            }
         }
 
         /** Starts the task that ticks once a second (autosave, session); the tests tick by hand instead. */
@@ -331,6 +379,10 @@ namespace tinox.ide.editor
         fn wire(f: OpenFile, view: EditorView) -> Nothing
         {
             view.onCursorMoved((p: Position) => this.cursorMoved(f, p))
+            if (this.store.get("pref.Editor.theme") != "")
+            {
+                this.themeQuietly(view, this.store.get("pref.Editor.theme"))
+            }
             if (f.views.len() > 0 && f.views[0].id() != view.id())
             {
                 return
@@ -915,7 +967,7 @@ namespace tinox.ide.editor
         fn restoreSession() -> Nothing
         {
             const entries: List<String> = this.settings.getStrings("Session", "files", [])
-            if (entries.len() == 0 || this.settings.getString("Session", "workspace", "") != this.store.get("workspace.path"))
+            if (!this.settings.getBool("Session", "restore", true) || entries.len() == 0 || this.settings.getString("Session", "workspace", "") != this.store.get("workspace.path"))
             {
                 return
             }

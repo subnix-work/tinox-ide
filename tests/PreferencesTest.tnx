@@ -1,0 +1,112 @@
+import MockBridge
+import TempProject
+import WorkspaceAppTest
+import tinox.ide.IdeApp
+import tinox.ide.app.BusMessage
+import tinox.ide.kde.EventLoop
+import tinox.ide.settings.PrefDef
+import tinox.ide.settings.Preferences
+import tinox.ide.settings.ToolProbe
+
+class PreferencesTest
+{
+    fnc start(events: EventLoop) -> IdeApp
+    {
+        const app: IdeApp = WorkspaceAppTest::start(events, MockBridge::createObject())
+        MockBridge::onCommand("editor.setTheme", "", "")
+        MockBridge::onCommand("config.write", "", "")
+        // nothing is stored: every preference has its default (the shared mock answer claims every key is `true`, the real bridge answers with the default)
+        for d in app.preferences.defs
+        {
+            app.store.set(Preferences::storeKey(d.id()), d.fallback)
+        }
+        return app
+    }
+
+    @Test("every preference has a default; numbers and choices are checked, a refused value changes nothing")
+    fn testDefaultsAndChecks() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = PreferencesTest::start(events)
+        const prefs: Preferences = app.preferences
+        const defaults: Bool = prefs.getBool("Workspace.reopenLast") && prefs.getInt("Editor.autosaveSeconds") == 30 && !prefs.getBool("Editor.autosave") && prefs.get("Tools.lspPath") == "" && prefs.getBool("Appearance.toolbar")
+        const words: String = prefs.set("Editor.autosaveSeconds", "abc")
+        const range: String = prefs.set("Editor.autosaveSeconds", "5000")
+        const unchanged: Bool = prefs.getInt("Editor.autosaveSeconds") == 30
+        WorkspaceAppTest::drain()
+        var heard: List<String> = []
+        app.bus.subscribe("settings.changed", (m: BusMessage) => heard.push(m.str("id") + "=" + m.str("value")))
+        const ok: String = prefs.set("Editor.autosaveSeconds", " 60 ")
+        events.pump(50)
+        const written: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"key\":\"autosaveSeconds\"")
+        prefs.reset("Editor.autosaveSeconds")
+        return defaults && words == "Enter a whole number" && range.contains("from 5 to 3600") && unchanged && ok == "" && prefs.getInt("Editor.autosaveSeconds") == 30 && written.contains("\"value\":60") && heard.len() == 2 && heard[0] == "Editor.autosaveSeconds=60"
+    }
+
+    @Test("a program path must exist and be executable; an empty one searches the usual places")
+    fn testToolPaths() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = PreferencesTest::start(events)
+        const prefs: Preferences = app.preferences
+        const root: String = TempProject::create()
+        const plain: String = TempProject::file(root, "tool", "#!/bin/sh\n")
+        const missing: String = prefs.set("Tools.lspPath", root + "/nope")
+        const folder: String = prefs.set("Tools.lspPath", root)
+        const notRunnable: String = prefs.set("Tools.lspPath", plain)
+        const shell: String = ToolProbe::find("sh")
+        const accepted: String = prefs.set("Tools.lspPath", shell)
+        const chosen: String = prefs.toolPath("Tools.lspPath")
+        prefs.reset("Tools.lspPath")
+        const probed: String = prefs.toolPath("Tools.lspPath")
+        TempProject::remove(root)
+        return missing == "No such file" && folder.contains("folder") && notRunnable.contains("not executable") && shell != "" && accepted == "" && chosen == shell && probed == ToolProbe::find("tinox-lsp")
+    }
+
+    @Test("the editor theme and the tool bar follow their preference at once")
+    fn testLiveApply() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const root: String = TempProject::create()
+        const file: String = TempProject::file(root, "a.txt", "a")
+        const app: IdeApp = PreferencesTest::start(events)
+        MockBridge::onCommand("editor.openDocument", "{\"id\":" + MockBridge::createObject().toString() + "}", "")
+        MockBridge::onCommand("editor.createView", "{\"id\":" + MockBridge::createObject().toString() + "}", "")
+        app.documents.open(file)
+        WorkspaceAppTest::drain()
+        app.preferences.set("Editor.theme", "Breeze Dark")
+        const theme: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"cmd\":\"editor.setTheme\"")
+        app.preferences.set("Appearance.toolbar", "false")
+        const update: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"cmd\":\"widget.update\"")
+        const at: Int64 = update.indexOf("\"key\":\"tools\"")
+        const hidden: Bool = at >= 0 && update.substring(at, at + 140).contains("\"visible\":false")
+        TempProject::remove(root)
+        return theme.contains("Breeze Dark") && hidden
+    }
+
+    @Test("the settings window applies a change when it is made and shows why a value was refused")
+    fn testDialog() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = PreferencesTest::start(events)
+        const nodes: String = "\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"openFolder\":63,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"welcome\":61,\"status\":62,\"prefs\":80,\"prefPages\":81,\"prefsClose\":82,\"pref:Editor.autosave\":83,\"pref:Tools.lspPath\":84,\"prefStack\":85}"
+        MockBridge::onCommand("widget.mount", "{\"id\":" + MockBridge::createObject().toString() + ",\"root\":80," + nodes + "}", "")
+        MockBridge::onCommand("widget.update", "{\"root\":50," + nodes + "}", "")
+        MockBridge::onCommand("model.select", "", "")
+        WorkspaceAppTest::drain()
+        app.registry.execute("options_configure")
+        const shown: List<String> = WorkspaceAppTest::drain()
+        const built: Bool = WorkspaceAppTest::firstWith(shown, "Reopen the last project") != "" && WorkspaceAppTest::firstWith(shown, "Language server (tinox-lsp)") != "" && WorkspaceAppTest::firstWith(shown, "\"cmd\":\"widget.show\"") != ""
+        MockBridge::push("{\"type\":\"widget.clicked\",\"target\":83,\"key\":\"pref:Editor.autosave\",\"checked\":true}")
+        events.pump(1000)
+        const applied: Bool = app.preferences.getBool("Editor.autosave") && app.store.getBool("pref.Editor.autosave")
+        MockBridge::push("{\"type\":\"widget.textChanged\",\"target\":84,\"key\":\"pref:Tools.lspPath\",\"text\":\"/no/such/tinox-lsp\"}")
+        events.pump(1000)
+        const refused: List<String> = WorkspaceAppTest::drain()
+        const message: Bool = WorkspaceAppTest::firstWith(refused, "No such file") != "" && app.preferences.get("Tools.lspPath") == ""
+        MockBridge::push("{\"type\":\"widget.textChanged\",\"target\":84,\"key\":\"pref:Tools.lspPath\",\"text\":\"\"}")
+        events.pump(1000)
+        const cleared: Bool = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "No such file") == ""
+        return built && applied && message && cleared
+    }
+}
