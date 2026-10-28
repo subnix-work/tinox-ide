@@ -1,0 +1,304 @@
+module tinox.ide.settings
+
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Actions
+import tinox.ide.ui.ItemView
+import tinox.ide.ui.Model
+import tinox.ide.ui.Mount
+import tinox.ide.ui.Node
+import tinox.ide.ui.Row
+import tinox.ide.ui.Ui
+
+namespace tinox.ide.settings
+{
+    /**
+     * The settings window: a list of pages on the left, the page's fields on the right. There is
+     * no OK button; every change is saved and applied the moment it is made (Preferences). A field
+     * whose value is refused keeps the text the user typed and shows the reason below it, while the
+     * old value stays in force.
+     *
+     * Two pages hold buttons instead of fields because KDE already has the dialogs: the editor's
+     * own configuration (fonts, indentation, ...) and the shortcut editor.
+     */
+    class SettingsDialog
+    {
+        /** The loop events arrive on. */
+        var events: EventLoop
+        /** The preferences. */
+        var prefs: Preferences
+        /** The action layer, for the shortcut dialog. */
+        var actions: Actions
+        /** The widgets. */
+        var mount: Mount
+        /** The list of pages. */
+        var pages: Model
+        /** Index of the page shown. */
+        var page: Int64
+        /** What the user typed in a field, by preference id (also when it was refused). */
+        var drafts: Map<String, String>
+        /** The reason a draft was refused, by preference id. */
+        var errors: Map<String, String>
+        /** Gives the colour themes the editor offers (empty while no editor is open). */
+        var themes: fnc(Preferences) -> List<String>
+        /** Opens the editor's own configuration dialog. */
+        var editorConfig: fnc(Preferences) -> Nothing
+        /** Whether the widgets exist. */
+        var built: Bool
+
+        /** A dialog that is not shown yet. */
+        fnc create(events: EventLoop, prefs: Preferences, actions: Actions) -> SettingsDialog
+        {
+            return SettingsDialog { events: events, prefs: prefs, actions: actions, mount: Mount::create(events), pages: Model::create(events, ["Page"], false), page: 0, drafts: Map::new(), errors: Map::new(), themes: (p: Preferences) => [], editorConfig: (p: Preferences) => SettingsDialog::nothing(), built: false }
+        }
+
+        /** Does nothing. */
+        fnc nothing() -> Nothing
+        {
+        }
+
+        /** Shows the window (on the given page, or on the last one for -1). */
+        fn open(start: Int64) -> Nothing
+        {
+            if (this.built && this.mount.isMounted())
+            {
+                this.mount.show()
+                return
+            }
+            this.close()
+            if (start >= 0)
+            {
+                this.page = start
+            }
+            this.drafts = Map::new()
+            this.errors = Map::new()
+            this.prepareThemes()
+            this.mount = Mount::create(this.events)
+            this.mount.render(this.describe())
+            this.built = true
+            this.pages.attach(this.mount.idOf("prefPages"))
+            var rows: List<Row> = []
+            var i: Int64 = 0
+            for name in Preferences::pages()
+            {
+                rows.push(Row::create(i.toString(), name))
+                i = i + 1
+            }
+            this.pages.reset(rows)
+            ItemView::of(this.mount, "prefPages").choose([this.page.toString()], this.page.toString())
+            this.bind()
+            this.mount.show()
+        }
+
+        /** Fills the list of colour themes with what the editor offers now. */
+        fn prepareThemes() -> Nothing
+        {
+            const d: PrefDef = this.prefs.def("Editor.theme")
+            var all: List<String> = [""]
+            for name in this.themes(this.prefs)
+            {
+                all.push(name)
+            }
+            const current: String = this.prefs.get("Editor.theme")
+            if (!all.contains(current))
+            {
+                all.push(current)
+            }
+            d.choices = all
+        }
+
+        /** Hides and frees the window. */
+        fn close() -> Nothing
+        {
+            if (this.built)
+            {
+                this.mount.dispose()
+                this.built = false
+            }
+        }
+
+        /** Connects the widgets of every field. */
+        fn bind() -> Nothing
+        {
+            this.mount.onSelection("prefPages", (ids: List<String>) => this.selectPage(ids))
+            this.mount.onClick("prefsClose", (ev: Event) => this.mount.hide())
+            this.mount.onClick("prefAction:shortcuts", (ev: Event) => this.actions.showShortcutsDialog())
+            this.mount.onClick("prefAction:editor", (ev: Event) => this.editorConfig(this.prefs))
+            for d in this.prefs.defs
+            {
+                const id: String = d.id()
+                const key: String = SettingsDialog::fieldKey(id)
+                if (d.kind == "bool")
+                {
+                    this.mount.onClick(key, (ev: Event) => this.change(id, ev.bool("checked").toString()))
+                }
+                else if (d.kind == "choice")
+                {
+                    this.mount.onIndex(key, (index: Int64) => this.chose(id, index))
+                }
+                else
+                {
+                    this.mount.onText(key, (text: String) => this.change(id, text))
+                }
+            }
+        }
+
+        /** The key of a preference's widget. */
+        fnc fieldKey(id: String) -> String
+        {
+            return "pref:" + id
+        }
+
+        /** The user chose a page in the list. */
+        fn selectPage(ids: List<String>) -> Nothing
+        {
+            if (ids.len() == 1)
+            {
+                this.page = ids[0].toInt()
+                this.redraw()
+            }
+        }
+
+        /** The user chose an entry of a choice field. */
+        fn chose(id: String, index: Int64) -> Nothing
+        {
+            const d: PrefDef = this.prefs.def(id)
+            if (index >= 0 && index < d.choices.len())
+            {
+                this.change(id, d.choices[index])
+            }
+        }
+
+        /** The user changed a field: apply it, or remember the reason it was refused. */
+        fn change(id: String, text: String) -> Nothing
+        {
+            this.drafts.set(id, text)
+            this.errors.set(id, this.prefs.set(id, text))
+            this.redraw()
+        }
+
+        /** Draws the window again. */
+        fn redraw() -> Nothing
+        {
+            if (this.built && this.mount.isMounted())
+            {
+                this.mount.render(this.describe())
+            }
+        }
+
+        /** The text a field shows: what the user typed, else the current value. */
+        fn shown(d: PrefDef) -> String
+        {
+            if (this.drafts.contains(d.id()))
+            {
+                return this.drafts.get(d.id())
+            }
+            return this.prefs.get(d.id())
+        }
+
+        /** The reason a field is refused, "" for none. For a path the check also runs on the stored value, so a program that has gone away is noticed. */
+        fn problem(d: PrefDef) -> String
+        {
+            if (this.errors.contains(d.id()) && this.errors.get(d.id()) != "")
+            {
+                return this.errors.get(d.id())
+            }
+            if (d.kind == "path")
+            {
+                return this.prefs.check(d, this.shown(d))
+            }
+            return ""
+        }
+
+        /** The window as a tree. */
+        fn describe() -> Node
+        {
+            var stack: Node = Ui::stack("prefStack").currentIndex(this.page).stretch(4)
+            for name in Preferences::pages()
+            {
+                stack = stack.add(this.pageNode(name))
+            }
+            return Ui::column("prefs")
+                .windowTitle("Settings — Tinox IDE")
+                .minimumSize(780, 460)
+                .add(Ui::row("prefsBody")
+                        .stretch(1)
+                        .add(Ui::listView("prefPages").stretch(1))
+                        .add(stack))
+                .add(Ui::row("prefsButtons")
+                        .add(Ui::label("prefsSpacer", "Changes are saved and applied at once.").stretch(1))
+                        .add(Ui::button("prefsClose", "Close").icon("window-close")))
+        }
+
+        /** One page. */
+        fn pageNode(name: String) -> Node
+        {
+            var form: Node = Ui::form("page:" + name)
+            for d in this.prefs.onPage(name)
+            {
+                form = form.add(this.fieldNode(d))
+            }
+            if (name == "Editor")
+            {
+                form = form.add(Ui::button("prefAction:editor", "Configure Editor…").icon("configure").labelled("Fonts, indentation, ..."))
+            }
+            else if (name == "Shortcuts")
+            {
+                form = form.add(Ui::button("prefAction:shortcuts", "Configure Shortcuts…").icon("configure-shortcuts").labelled("Keyboard"))
+            }
+            return form
+        }
+
+        /** The widgets of one preference. */
+        fn fieldNode(d: PrefDef) -> Node
+        {
+            const key: String = SettingsDialog::fieldKey(d.id())
+            if (d.kind == "bool")
+            {
+                return Ui::checkBox(key, d.label).bool("checked", this.shown(d) == "true").labelled("")
+            }
+            if (d.kind == "choice")
+            {
+                var names: List<String> = []
+                var current: Int64 = 0
+                var i: Int64 = 0
+                for choice in d.choices
+                {
+                    if (choice == "")
+                    {
+                        names.push("Default (follows the colour scheme)")
+                    }
+                    else
+                    {
+                        names.push(choice)
+                    }
+                    if (choice == this.shown(d))
+                    {
+                        current = i
+                    }
+                    i = i + 1
+                }
+                return Ui::comboBox(key, names).currentIndex(current).labelled(d.label)
+            }
+            const problem: String = this.problem(d)
+            var hint: String = ""
+            if (d.kind == "path" && this.shown(d) == "")
+            {
+                const found: String = ToolProbe::find(d.tool)
+                if (found == "")
+                {
+                    hint = d.tool + " was not found; enter its path"
+                }
+                else
+                {
+                    hint = "Using " + found
+                }
+            }
+            return Ui::column("box:" + d.id())
+                .labelled(d.label)
+                .add(Ui::lineEdit(key, this.shown(d)).bool("clearButton", true))
+                .add(Ui::label("hint:" + d.id(), hint).visible(hint != "" && problem == ""))
+                .add(Ui::label("error:" + d.id(), "⚠ " + problem).visible(problem != ""))
+        }
+    }
+}

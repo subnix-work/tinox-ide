@@ -44,6 +44,8 @@ namespace tinox.ide.app
         var editorIndex: fnc(Store) -> Int64
         /** Extra tabs of the bottom panel, each drawn from the store. */
         var bottomPanels: List<fnc(Store) -> Node>
+        /** Command ids of the Settings menu. */
+        var settingsMenu: List<String>
         /** Command ids of the Go menu. */
         var goMenu: List<String>
         /** Command ids of the Search menu. */
@@ -56,7 +58,7 @@ namespace tinox.ide.app
         /** A window drawn from `store`, with menus made of the commands in `registry`. */
         fnc create(events: EventLoop, store: Store, bus: EventBus, registry: CommandRegistry, actions: Actions) -> MainWindow
         {
-            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow", fileMenu: ["file_quit"], viewMenu: ["view.project", "view.bottom"], bottomPanels: [], goMenu: [], searchMenu: [], editorTabs: (s: Store) => MainWindow::welcomeTabs(), editorIndex: (s: Store) => 0 }
+            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow", fileMenu: ["file_quit"], viewMenu: ["view.project", "view.bottom"], bottomPanels: [], goMenu: [], searchMenu: [], settingsMenu: [], editorTabs: (s: Store) => MainWindow::welcomeTabs(), editorIndex: (s: Store) => 0 }
         }
 
         /** The editor area before any file is open. */
@@ -70,6 +72,12 @@ namespace tinox.ide.app
         {
             this.editorTabs = tabs
             this.editorIndex = index
+        }
+
+        /** Gives the window a Settings menu with these commands. */
+        fn addSettingsMenu(items: List<String>) -> Nothing
+        {
+            this.settingsMenu = items
         }
 
         /** Gives the window a Go menu and a Search menu with these commands. */
@@ -160,7 +168,7 @@ namespace tinox.ide.app
             }
             return Ui::window("main", this.title())
                 .size(1200, 760)
-                .add(Ui::toolBar("tools", "Main"))
+                .add(Ui::toolBar("tools", "Main").visible(!this.store.has("pref.Appearance.toolbar") || this.store.getBool("pref.Appearance.toolbar")))
                 .add(Ui::dock("project", projectTitle, "left")
                         .visible(this.store.getBool("ui.projectVisible"))
                         .add(Ui::column("projectPanel")
@@ -208,7 +216,7 @@ namespace tinox.ide.app
         /** The menu bar: File and View, from commands of the registry. */
         fn menus() -> List<Menu>
         {
-            return [Menu::create("&File").id("file").actions(this.fileMenu), Menu::create("&View").id("view").actions(this.viewMenu), Menu::create("&Go").id("go").actions(this.goMenu), Menu::create("&Search").id("search").actions(this.searchMenu)]
+            return [Menu::create("&File").id("file").actions(this.fileMenu), Menu::create("&View").id("view").actions(this.viewMenu), Menu::create("&Go").id("go").actions(this.goMenu), Menu::create("&Search").id("search").actions(this.searchMenu), Menu::create("S&ettings").id("settings").actions(this.settingsMenu)]
         }
 
         /** Builds and shows the window: first render, menus, state changes, saved layout. Call after the registry is attached. */
@@ -224,6 +232,7 @@ namespace tinox.ide.app
             // the window follows the state, never the other way round
             this.store.watch("ui.projectVisible", (value: String) => this.changed())
             this.store.watch("ui.bottomVisible", (value: String) => this.changed())
+            this.store.watch("pref.Appearance.toolbar", (value: String) => this.changed())
             this.store.watch("ui.bottomTab", (value: String) => this.changed())
             this.store.watch("status.message", (value: String) => this.changed())
             this.store.watch("workspace.open", (value: String) => this.changed())

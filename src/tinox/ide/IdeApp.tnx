@@ -15,6 +15,8 @@ import tinox.ide.kde.EventLoop
 import tinox.ide.editor.Documents
 import tinox.ide.search.FindInFiles
 import tinox.ide.search.Navigation
+import tinox.ide.settings.Preferences
+import tinox.ide.settings.SettingsDialog
 import tinox.ide.settings.Settings
 import tinox.ide.ui.Actions
 import tinox.ide.ui.Dialogs
@@ -64,6 +66,10 @@ namespace tinox.ide
         var navigation: Navigation
         /** Find and replace in files. */
         var search: FindInFiles
+        /** The preferences with their defaults and checks. */
+        var preferences: Preferences
+        /** The settings window. */
+        var settingsDialog: SettingsDialog
         /** The user's persistent settings. */
         var settings: Settings
         /** False once the application is quitting. */
@@ -90,7 +96,11 @@ namespace tinox.ide
             const navigation: Navigation = Navigation::create(events, bus, store, registry, settings)
             navigation.openPaths = (s: Store) => documents.paths()
             const search: FindInFiles = FindInFiles::create(events, bus, store, registry, dialogs, window, documents, logger)
-            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, settings: settings, running: true }
+            const preferences: Preferences = Preferences::create(settings, store, bus)
+            const settingsDialog: SettingsDialog = SettingsDialog::create(events, preferences, actions)
+            settingsDialog.themes = (p: Preferences) => documents.themes()
+            settingsDialog.editorConfig = (p: Preferences) => documents.showEditorConfig()
+            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
             app.loadSettings()
             app.registerCommands()
             workspace.registerCommands()
@@ -100,6 +110,7 @@ namespace tinox.ide
             window.addViewMenu(documents.viewItems())
             navigation.registerCommands()
             search.install()
+            window.addSettingsMenu(["options_configure"])
             window.addGoMenu(navigation.menuItems(), search.menuItems())
             registry.attach()
             app.mirrorChecks()
@@ -115,6 +126,7 @@ namespace tinox.ide
         /** Initial state: the layout flags come from the settings (visible by default). */
         fn loadSettings() -> Nothing
         {
+            this.preferences.load()
             this.store.setBool("ui.projectVisible", this.settings.getBool("MainWindow", "projectVisible", true))
             this.store.setBool("ui.bottomVisible", this.settings.getBool("MainWindow", "bottomVisible", true))
             this.store.set("status.message", "Ready")
@@ -124,6 +136,7 @@ namespace tinox.ide
         fn registerCommands() -> Nothing
         {
             this.registry.registerAll([
+                IdeCommand::standard("options_configure").run((c: CommandContext) => this.settingsDialog.open(-1)),
                 IdeCommand::standard("file_quit").run((c: CommandContext) => this.requestQuit()),
                 IdeCommand::create("view.project", "Show &Project").icon("view-list-tree").shortcut("Alt+1").category("View").checkable(true).run((c: CommandContext) => this.store.setBool("ui.projectVisible", c.checked)),
                 IdeCommand::create("view.bottom", "Show &Problems and Output").icon("view-list-details").shortcut("Alt+2").category("View").checkable(true).run((c: CommandContext) => this.store.setBool("ui.bottomVisible", c.checked))

@@ -1,0 +1,251 @@
+module tinox.ide.settings
+
+import tinox.ide.app.EventBus
+import tinox.ide.app.Store
+import tinox.ide.ui.Js
+
+namespace tinox.ide.settings
+{
+    /**
+     * The preferences of the IDE: a list of definitions (PrefDef) with defaults and checks,
+     * stored in the application's config through Settings. Changing one writes the file,
+     * updates the store key `pref.<group>.<key>` and sends `settings.changed {id}` on the bus, so
+     * every module that reads the store key or listens to the message follows at once, without a
+     * restart.
+     *
+     * A value that fails its check is refused and the old one stays; the dialog shows the
+     * reason beside the field.
+     */
+    class Preferences
+    {
+        /** The persistent settings. */
+        var settings: Settings
+        /** The application state. */
+        var store: Store
+        /** Messages between modules. */
+        var bus: EventBus
+        /** Every preference, in the order of the dialog. */
+        var defs: List<PrefDef>
+
+        /** The preferences of the IDE. */
+        fnc create(settings: Settings, store: Store, bus: EventBus) -> Preferences
+        {
+            return Preferences { settings: settings, store: store, bus: bus, defs: Preferences::standard() }
+        }
+
+        /** The names of the pages in the order of the dialog. */
+        fnc pages() -> List<String>
+        {
+            return ["General", "Editor", "Language Server", "Build", "Shortcuts", "Appearance"]
+        }
+
+        /** The preferences the IDE has. */
+        fnc standard() -> List<PrefDef>
+        {
+            return [
+                PrefDef::bool("General", "Workspace", "reopenLast", "Reopen the last project on start", true),
+                PrefDef::bool("General", "Session", "restore", "Restore the open files on start", true),
+                PrefDef::bool("General", "Editor", "autosave", "Save modified files automatically", false),
+                PrefDef::int("General", "Editor", "autosaveSeconds", "Autosave interval in seconds", 30, 5, 3600),
+                PrefDef::bool("General", "Editor", "backup", "Keep a backup copy (name~) when saving", false),
+                PrefDef::choice("Editor", "Editor", "theme", "Colour theme", "", [""]),
+                PrefDef::path("Language Server", "Tools", "lspPath", "Language server (tinox-lsp)", "tinox-lsp"),
+                PrefDef::text("Language Server", "Tools", "lspArgs", "Extra arguments", ""),
+                PrefDef::path("Language Server", "Tools", "tinoxPath", "Tinox compiler", "tinox"),
+                PrefDef::text("Build", "Build", "args", "Extra arguments for tinox", ""),
+                PrefDef::bool("Build", "Build", "saveBefore", "Save all files before building", true),
+                PrefDef::bool("Build", "Build", "showOutput", "Show the output panel when a build starts", true),
+                PrefDef::bool("Appearance", "Appearance", "toolbar", "Show the tool bar", true)
+            ]
+        }
+
+        /** The definition with this id (`group.key`); throws for an unknown one. */
+        fn def(id: String) -> PrefDef
+        {
+            for d in this.defs
+            {
+                if (d.id() == id)
+                {
+                    return d
+                }
+            }
+            throw "unknown preference: " + id
+        }
+
+        /** The definitions of one page. */
+        fn onPage(page: String) -> List<PrefDef>
+        {
+            var out: List<PrefDef> = []
+            for d in this.defs
+            {
+                if (d.page == page)
+                {
+                    out.push(d)
+                }
+            }
+            return out
+        }
+
+        /** The store key of a preference. */
+        fnc storeKey(id: String) -> String
+        {
+            return "pref." + id
+        }
+
+        /** Reads every preference from the settings into the store. Call at start. */
+        fn load() -> Nothing
+        {
+            for d in this.defs
+            {
+                this.store.set(Preferences::storeKey(d.id()), this.read(d))
+            }
+        }
+
+        /** The stored value of a preference as text (the default when none is stored or a stored number or choice is no longer valid). */
+        fn read(d: PrefDef) -> String
+        {
+            var value: String = d.fallback
+            if (d.kind == "bool")
+            {
+                value = this.settings.getBool(d.group, d.key, d.fallback == "true").toString()
+            }
+            else if (d.kind == "int")
+            {
+                value = this.settings.getInt(d.group, d.key, d.fallback.toInt()).toString()
+            }
+            else
+            {
+                value = this.settings.getString(d.group, d.key, d.fallback)
+            }
+            // a program path that stopped working is kept: the dialog shows what is wrong with it
+            if (d.kind != "path" && this.check(d, value) != "")
+            {
+                return d.fallback
+            }
+            return value
+        }
+
+        /** The current value of a preference as text. */
+        fn get(id: String) -> String
+        {
+            return this.store.get(Preferences::storeKey(id))
+        }
+
+        /** The current value of a switch. */
+        fn getBool(id: String) -> Bool
+        {
+            return this.get(id) == "true"
+        }
+
+        /** The current value of a number. */
+        fn getInt(id: String) -> Int64
+        {
+            return this.get(id).toInt()
+        }
+
+        /** Why `text` is not allowed for the preference, or "" when it is. */
+        fn check(d: PrefDef, text: String) -> String
+        {
+            if (d.kind == "int")
+            {
+                if (text.trim() == "" || !Preferences::isNumber(text.trim()))
+                {
+                    return "Enter a whole number"
+                }
+                const n: Int64 = text.trim().toInt()
+                if (n < d.min || n > d.max)
+                {
+                    return "Enter a number from " + d.min.toString() + " to " + d.max.toString()
+                }
+            }
+            else if (d.kind == "choice")
+            {
+                if (d.choices.len() > 1 && !d.choices.contains(text))
+                {
+                    return "Not one of the available choices"
+                }
+            }
+            else if (d.kind == "path" && text != "")
+            {
+                return ToolProbe::check(text)
+            }
+            return ""
+        }
+
+        /** Whether the text is digits only (with an optional minus sign). */
+        fnc isNumber(text: String) -> Bool
+        {
+            if (text.len() == 0)
+            {
+                return false
+            }
+            var i: Int64 = 0
+            if (text.substring(0, 1) == "-")
+            {
+                i = 1
+            }
+            if (i >= text.len())
+            {
+                return false
+            }
+            while (i < text.len())
+            {
+                if (!"0123456789".contains(text.substring(i, i + 1)))
+                {
+                    return false
+                }
+                i = i + 1
+            }
+            return true
+        }
+
+        /** Changes a preference. Returns the reason when the value is refused (nothing changes then), otherwise "". */
+        fn set(id: String, text: String) -> String
+        {
+            const d: PrefDef = this.def(id)
+            const problem: String = this.check(d, text)
+            if (problem != "")
+            {
+                return problem
+            }
+            var value: String = text
+            if (d.kind == "int")
+            {
+                value = text.trim().toInt().toString()
+                this.settings.setInt(d.group, d.key, value.toInt())
+            }
+            else if (d.kind == "bool")
+            {
+                this.settings.setBool(d.group, d.key, text == "true")
+            }
+            else
+            {
+                this.settings.setString(d.group, d.key, text)
+            }
+            if (this.store.get(Preferences::storeKey(id)) != value)
+            {
+                this.store.set(Preferences::storeKey(id), value)
+                this.bus.publish("settings.changed", Js::object([Js::strField("id", id), Js::strField("value", value)]))
+            }
+            return ""
+        }
+
+        /** Puts a preference back to its default. */
+        fn reset(id: String) -> Nothing
+        {
+            this.set(id, this.def(id).fallback)
+        }
+
+        /** The program to run for a path preference: the configured file, or else the first one found in the usual places, or "" when there is none. */
+        fn toolPath(id: String) -> String
+        {
+            const d: PrefDef = this.def(id)
+            const configured: String = this.get(id)
+            if (configured != "")
+            {
+                return configured
+            }
+            return ToolProbe::find(d.tool)
+        }
+    }
+}

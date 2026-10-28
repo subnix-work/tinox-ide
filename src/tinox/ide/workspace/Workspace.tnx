@@ -160,7 +160,7 @@ namespace tinox.ide.workspace
                     path = args[1]
                 }
             }
-            if (path == "")
+            if (path == "" && this.settings.getBool("Workspace", "reopenLast", true))
             {
                 const last: String = this.settings.getString("Workspace", "last", "")
                 if (last != "" && FileSystem::isDirectory(last))
