@@ -1,0 +1,90 @@
+import MockBridge
+import TempProject
+import tinox.ide.IdeApp
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.EventLoop
+import tinox.ide.lsp.LanguageService
+import tinox.ide.lsp.LspClient
+import tinox.ide.ui.Utf16
+import tinox.ide.ui.Js
+
+class DiagnosticsHarness
+{
+    fnc start() -> IdeApp
+    {
+        Bridge::init("diagnostics-test", "Diagnostics Test")
+        const mount: Int64 = MockBridge::createObject()
+        const model: Int64 = MockBridge::createObject()
+        const nodes: String = "{\"main\":50,\"tools\":51,\"project\":52,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"status\":62,\"searchResults\":71}"
+        MockBridge::onCommand("widget.mount", "{\"id\":" + mount.toString() + ",\"root\":50,\"nodes\":" + nodes + "}", "")
+        MockBridge::onCommand("widget.update", "{\"root\":50,\"nodes\":" + nodes + "}", "")
+        MockBridge::onCommand("model.create", "{\"id\":" + model.toString() + "}", "")
+        MockBridge::onCommand("config.read", "{\"exists\":false,\"value\":true}", "")
+        MockBridge::onCommand("widget.restoreState", "{\"restored\":false}", "")
+        for name in ["model.attach", "model.reset", "model.select", "model.expand", "config.write", "core.log", "action.define", "action.set", "action.setMenuBar", "action.setToolBar", "widget.show", "widget.append", "widget.saveState", "editor.setDiagnostics", "editor.setCursor", "editor.saveDocument", "editor.loadDocument", "core.release"]
+        {
+            MockBridge::onCommand(name, "", "")
+        }
+        const app: IdeApp = IdeApp::start(EventLoop::create())
+        app.logger.toStderr = false
+        app.workspace.watchFiles = false
+        // An injected protocol peer avoids starting a process in presenter tests.
+        app.preferences.store.set("pref.Tools.lspPath", "/usr/bin/python3")
+        app.language.factory = (argv: List<String>, directory: String, uri: String) => DiagnosticsHarness::client(uri)
+        app.language.start()
+        DiagnosticsHarness::drain()
+        return app
+    }
+
+    fnc client(uri: String) -> LspClient
+    {
+        const client: LspClient = LspClient::create((text: String) => LspClient::ignore())
+        const init = client.initialize(uri)
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + init.id.toString() + ",\"result\":{\"capabilities\":{\"textDocumentSync\":{\"openClose\":true,\"change\":2,\"save\":true}}}}")
+        return client
+    }
+
+    fnc open(app: IdeApp, path: String, text: String) -> OpenFile
+    {
+        const doc: Int64 = MockBridge::createObject()
+        const view: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.openDocument", "{\"id\":" + doc.toString() + "}", "")
+        MockBridge::onCommand("editor.createView", "{\"id\":" + view.toString() + "}", "")
+        MockBridge::onCommand("editor.getText", "{\"text\":" + Js::str(text) + ",\"version\":0}", "")
+        MockBridge::onCommand("editor.info", "{\"version\":0}", "")
+        return app.documents.open(path)
+    }
+
+    fnc publish(service: LanguageService, path: String, version: String, diagnostics: String) -> Nothing
+    {
+        service.client.receive("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":" + Js::str(Utf16::uri(path)) + ",\"version\":" + version + ",\"diagnostics\":" + diagnostics + "}}")
+    }
+
+    fnc item(message: String, severity: String, code: String) -> String
+    {
+        return "{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}},\"severity\":" + severity + ",\"message\":" + Js::str(message) + ",\"source\":\"tinox\",\"code\":" + code + "}"
+    }
+
+    fnc drain() -> List<String>
+    {
+        var commands: List<String> = []
+        var text: String = MockBridge::nextCommand()
+        while (text != "")
+        {
+            commands.push(text)
+            text = MockBridge::nextCommand()
+        }
+        return commands
+    }
+
+    fnc last(commands: List<String>, name: String) -> String
+    {
+        var found: String = ""
+        for command in commands
+        {
+            if (command.contains("\"cmd\":\"" + name + "\"")) { found = command }
+        }
+        return found
+    }
+}

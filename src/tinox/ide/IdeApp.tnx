@@ -8,6 +8,7 @@ import tinox.ide.app.IdeCommand
 import tinox.ide.app.Logger
 import tinox.ide.app.MainWindow
 import tinox.ide.app.Store
+import tinox.ide.lsp.LanguageService
 import tinox.ide.kde.App
 import tinox.ide.kde.Bridge
 import tinox.ide.kde.Event
@@ -67,6 +68,8 @@ namespace tinox.ide
         var navigation: Navigation
         /** Find and replace in files. */
         var search: FindInFiles
+        /** Language-server lifecycle and the shared problems/editor diagnostics. */
+        var language: LanguageService
         /** The integrated terminal. */
         var terminal: TerminalPanel
         /** The preferences with their defaults and checks. */
@@ -105,7 +108,8 @@ namespace tinox.ide
             settingsDialog.editorConfig = (p: Preferences) => documents.showEditorConfig()
             search.install()
             const terminal: TerminalPanel = TerminalPanel::install(window)
-            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, terminal: terminal, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
+            const language: LanguageService = LanguageService::create(window, documents, preferences)
+            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, language: language, terminal: terminal, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
             app.loadSettings()
             app.registerCommands()
             workspace.registerCommands()
@@ -114,8 +118,10 @@ namespace tinox.ide
             window.addFileMenu(documents.fileItems())
             window.addViewMenu(documents.viewItems())
             navigation.registerCommands()
-            window.addSettingsMenu(["options_configure"])
-            window.addGoMenu(navigation.menuItems(), search.menuItems())
+            var go: List<String> = navigation.menuItems()
+            go.push("problems.next")
+            go.push("problems.previous")
+            window.addGoMenu(go, search.menuItems())
             registry.attach()
             app.mirrorChecks()
             window.start()
@@ -123,6 +129,7 @@ namespace tinox.ide
             documents.bind()
             navigation.bind()
             search.bind()
+            language.problems.bind()
             logger.info("Tinox IDE started")
             return app
         }
@@ -191,6 +198,7 @@ namespace tinox.ide
             }
             this.running = false
             this.logger.info("Tinox IDE is quitting")
+            this.language.shutdown()
             this.workspace.shutdown()
             this.documents.shutdown()
             this.search.shutdown()
@@ -220,6 +228,7 @@ namespace tinox.ide
             app.workspace.restore()
             app.documents.restoreSession()
             app.documents.startTicker()
+            app.language.start()
             if (Bridge::env("TINOXIDE_SMOKE") == "1")
             {
                 app.actions.trigger("file_quit")

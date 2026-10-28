@@ -1,0 +1,38 @@
+module tinox.ide.diagnostics
+
+import tinox.ide.ui.Diagnostic
+import tinox.ide.ui.Row
+
+namespace tinox.ide.diagnostics
+{
+    /** One navigable problem, shared by the editor decoration and problems tree. */
+    class Problem
+    {
+        /** Stable row id for this published batch. */
+        var id: String
+        /** The open file containing it. */
+        var path: String
+        /** Document version when this row was published. */
+        var version: Int64
+        /** The exact diagnostic sent to the editor. */
+        var diagnostic: Diagnostic
+
+        /** Breeze severity icon. */
+        fn icon() -> String
+        {
+            if (this.diagnostic.severity == 1) { return "dialog-error" }
+            if (this.diagnostic.severity == 2) { return "dialog-warning" }
+            if (this.diagnostic.severity == 3) { return "dialog-information" }
+            return "ktip"
+        }
+
+        /** A row with message, location, diagnostic code and source. */
+        fn row() -> Row
+        {
+            const d: Diagnostic = this.diagnostic
+            return Row::create(this.id, d.message.split("\n")[0]).icon(this.icon()).toolTip(d.message)
+                .cell((d.range.start.line + 1).toString() + ":" + (d.range.start.character + 1).toString())
+                .cell(d.code).cell(d.source)
+        }
+    }
+}

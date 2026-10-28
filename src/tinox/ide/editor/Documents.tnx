@@ -13,6 +13,8 @@ import tinox.ide.app.Store
 import tinox.ide.kde.Event
 import tinox.ide.kde.EventLoop
 import tinox.ide.settings.Settings
+import tinox.ide.ui.Change
+import tinox.ide.ui.TextEdit
 import tinox.ide.ui.Dialogs
 import tinox.ide.ui.Document
 import tinox.ide.ui.EditorView
@@ -387,6 +389,8 @@ namespace tinox.ide.editor
             {
                 return
             }
+            f.doc.onChange((change: Change) => this.contentChanged(f, change))
+            f.doc.onReloaded((doc: Document) => this.bus.publish("editor.reloaded", Js::object([Js::strField("path", f.path)])))
             f.doc.onModified((modified: Bool) => this.modifiedChanged(f, modified))
             f.doc.onSaved((url: String) => this.savedOnDisk(f))
             f.doc.onExternalChange((reason: String) => this.externalChange(f, reason))
@@ -522,6 +526,12 @@ namespace tinox.ide.editor
 
         // ---------------------------------------------------------------- document events
 
+        /** Publishes the editor's sequential UTF-16 changes without replacing its other event handlers. */
+        fn contentChanged(f: OpenFile, change: Change) -> Nothing
+        {
+            this.bus.publish("editor.changed", Js::object([Js::strField("path", f.path), Js::intField("version", change.version), Js::field("changes", TextEdit::array(change.edits))]))
+        }
+
         /** A document gained or lost unsaved changes: the tab marker follows. */
         fn modifiedChanged(f: OpenFile, modified: Bool) -> Nothing
         {
@@ -628,8 +638,11 @@ namespace tinox.ide.editor
             }
             try
             {
+                const oldPath: String = f.path
                 f.doc.saveAs(path)
+                this.bus.publish("editor.closing", Js::object([Js::strField("path", oldPath)]))
                 f.path = path
+                this.bus.publish("editor.retargeted", Js::object([Js::strField("path", path), Js::strField("oldPath", oldPath)]))
                 f.missing = false
                 this.sessionDirty = true
                 this.changedTabs()
@@ -730,6 +743,7 @@ namespace tinox.ide.editor
             {
                 return
             }
+            this.bus.publish("editor.closing", Js::object([Js::strField("path", f.path)]))
             var next: List<OpenFile> = []
             var i: Int64 = 0
             while (i < this.files.len())
@@ -910,7 +924,10 @@ namespace tinox.ide.editor
                     {
                         f.doc.load(target)
                     }
+                    const oldPath: String = f.path
+                    this.bus.publish("editor.closing", Js::object([Js::strField("path", oldPath)]))
                     f.path = target
+                    this.bus.publish("editor.retargeted", Js::object([Js::strField("path", target), Js::strField("oldPath", oldPath)]))
                     f.missing = false
                 }
             }

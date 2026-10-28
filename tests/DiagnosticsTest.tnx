@@ -1,0 +1,147 @@
+import DiagnosticsHarness
+import MockBridge
+import TempProject
+import tinox.core.json
+import tinox.ide.IdeApp
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.EventLoop
+import tinox.ide.lsp.LanguageService
+import tinox.ide.settings.Arguments
+import tinox.ide.ui.Diagnostic
+import tinox.ide.ui.Js
+import tinox.ide.ui.Utf16
+
+class DiagnosticsTest
+{
+    @Test("one publish batch drives grouped problem rows, code/source columns, editor decorations, counts and wrapped navigation")
+    fn testPublishAndNavigate() -> Bool
+    {
+        const app: IdeApp = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "α #.tnx", "abc")
+        const b: String = TempProject::file(root, "Other.tnx", "abc")
+        const first: OpenFile = DiagnosticsHarness::open(app, a, "abc")
+        DiagnosticsHarness::open(app, b, "abc")
+        DiagnosticsHarness::drain()
+        DiagnosticsHarness::publish(app.language, a, "0", "[" + DiagnosticsHarness::item("broken", "1", "42") + "," + DiagnosticsHarness::item("careful", "2", "\"W1\"") + "]")
+        DiagnosticsHarness::publish(app.language, b, "0", "[" + DiagnosticsHarness::item("hint", "4", "null") + "]")
+        const commands: List<String> = DiagnosticsHarness::drain()
+        const model: String = DiagnosticsHarness::last(commands, "model.reset")
+        const editor: String = DiagnosticsHarness::last(commands, "editor.setDiagnostics")
+        const state: Bool = app.store.getInt("problems.total") == 3 && app.store.getInt("problems.errors") == 1 && app.store.getInt("problems.warnings") == 1 && app.store.getInt("problems.hints") == 1
+        app.registry.execute("problems.next")
+        const navigated: List<String> = DiagnosticsHarness::drain()
+        const cursor: String = DiagnosticsHarness::last(navigated, "editor.setCursor")
+        app.registry.execute("problems.previous")
+        const wrapped: Bool = app.language.problems.current == app.language.problems.ordered[2].id
+        app.language.shutdown()
+        TempProject::remove(root)
+        return state && wrapped && model.contains("dialog-error") && model.contains("dialog-warning") && model.contains("\"42\"") && model.contains("tinox") && model.contains("Other.tnx") && editor.contains("hint") && cursor.contains("\"target\":" + first.views[0].id().toString()) && app.registry.has("lsp.restart")
+    }
+
+    @Test("editing clears both views immediately, rejects older/future versions and closed URIs, and restart clears every file")
+    fn testFreshnessAndClose() -> Bool
+    {
+        const app: IdeApp = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Main.tnx", "abc")
+        const file: OpenFile = DiagnosticsHarness::open(app, path, "abc")
+        const item: String = "[" + DiagnosticsHarness::item("broken", "1", "\"E1\"") + "]"
+        DiagnosticsHarness::publish(app.language, path, "0", item)
+        app.events.handle("{\"type\":\"editor.changed\",\"target\":" + file.doc.id().toString() + ",\"version\":1,\"origin\":\"user\",\"changes\":[{\"range\":{\"start\":{\"line\":0,\"character\":1},\"end\":{\"line\":0,\"character\":1}},\"text\":\"x\"}]}")
+        const cleared: Bool = app.store.getInt("problems.total") == 0 && app.language.client.documents.get(Utf16::uri(path)).text == "axbc"
+        DiagnosticsHarness::publish(app.language, path, "0", item)
+        DiagnosticsHarness::publish(app.language, path, "2", item)
+        const stale: Bool = app.store.getInt("problems.total") == 0
+        DiagnosticsHarness::publish(app.language, path, "1", item)
+        const current: Bool = app.store.getInt("problems.total") == 1
+        app.language.client.lost("crash")
+        const restarted: Bool = app.store.getInt("problems.total") == 0 && !app.registry.isEnabled("problems.next")
+        app.language.client.initialize("")
+        app.language.client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + app.language.client.initialization.id.toString() + ",\"result\":{\"capabilities\":{\"textDocumentSync\":2}}}")
+        DiagnosticsHarness::publish(app.language, path, "1", item)
+        app.documents.discard(file)
+        DiagnosticsHarness::publish(app.language, path, "1", item)
+        const closed: Bool = app.store.getInt("problems.total") == 0 && !app.language.paths.contains(Utf16::uri(path))
+        app.language.shutdown()
+        TempProject::remove(root)
+        return cleared && stale && current && restarted && closed && app.events.failureCount() == 0
+    }
+
+    @Test("malformed ranges cannot corrupt the snapshot, and a failed tree update rolls back the editor and counts")
+    fn testValidationAndRollback() -> Bool
+    {
+        const app: IdeApp = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Main.tnx", "abc")
+        DiagnosticsHarness::open(app, path, "abc")
+        DiagnosticsHarness::publish(app.language, path, "0", "[" + DiagnosticsHarness::item("old", "1", "7") + "]")
+        DiagnosticsHarness::publish(app.language, path, "0", "[{\"message\":\"invalid\",\"range\":{\"start\":{\"line\":99,\"character\":0},\"end\":{\"line\":99,\"character\":1}}}]")
+        const rejected: Bool = app.store.getInt("problems.total") == 1 && app.language.problems.ordered[0].diagnostic.message == "old"
+        MockBridge::onCommand("model.reset", "{\"ok\":false,\"error\":{\"code\":-7,\"message\":\"model rejected\"}}", "")
+        DiagnosticsHarness::drain()
+        DiagnosticsHarness::publish(app.language, path, "0", "[" + DiagnosticsHarness::item("new", "2", "8") + "]")
+        const calls: List<String> = DiagnosticsHarness::drain()
+        const rollback: Bool = app.language.problems.items.get(path)[0].message == "old" && app.store.getInt("problems.errors") == 1 && DiagnosticsHarness::last(calls, "editor.setDiagnostics").contains("old")
+        MockBridge::onCommand("model.reset", "", "")
+        app.language.shutdown()
+        TempProject::remove(root)
+        return rejected && rollback
+    }
+
+    @Test("Save As changes the synchronized URI and drops old diagnostics; reload reopens the newest whole buffer")
+    fn testRetargetAndReload() -> Bool
+    {
+        const app: IdeApp = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Old.tnx", "abc")
+        const target: String = root + "/New.tnx"
+        const file: OpenFile = DiagnosticsHarness::open(app, path, "abc")
+        DiagnosticsHarness::publish(app.language, path, "0", "[" + DiagnosticsHarness::item("old", "1", "null") + "]")
+        app.documents.saveAs(file, true, target)
+        const moved: Bool = app.store.getInt("problems.total") == 0 && !app.language.paths.contains(Utf16::uri(path)) && app.language.paths.contains(Utf16::uri(target))
+        DiagnosticsHarness::publish(app.language, path, "0", "[" + DiagnosticsHarness::item("late", "1", "null") + "]")
+        MockBridge::onCommand("editor.getText", "{\"text\":\"new\",\"version\":3}", "")
+        MockBridge::onCommand("editor.info", "{\"version\":3}", "")
+        app.events.handle("{\"type\":\"editor.reloaded\",\"target\":" + file.doc.id().toString() + ",\"version\":3}")
+        const reloaded: Bool = app.language.client.documents.get(Utf16::uri(target)).text == "new" && app.language.client.documents.get(Utf16::uri(target)).version == 3
+        app.language.shutdown()
+        TempProject::remove(root)
+        return moved && reloaded && app.store.getInt("problems.total") == 0
+    }
+
+    @Test("normalization accepts omitted severities and numeric codes, rejects surrogate midpoints, and arguments never invoke a shell")
+    fn testParsing() -> Bool
+    {
+        const diagnostic: Diagnostic = LanguageService::diagnostic(Json::parse(DiagnosticsHarness::item("message", "null", "42")), "abc")
+        var denied: Int64 = 0
+        try { LanguageService::diagnostic(Json::parse(DiagnosticsHarness::item("bad", "9", "null")), "abc") }
+        catch (e: String) { denied = denied + 1 }
+        try { LanguageService::diagnostic(Json::parse(DiagnosticsHarness::item("bad", "1", "null")), "🌍") }
+        catch (e: String) { denied = denied + 1 }
+        const arguments: List<String> = Arguments::parse(" --one 'two words' \"\" λ\\ value '$(touch /tmp/never)' ")
+        try { Arguments::parse("'unclosed") }
+        catch (e: String) { denied = denied + 1 }
+        return diagnostic.severity == 1 && diagnostic.code == "42" && denied == 3 && arguments.len() == 5 && arguments[1] == "two words" && arguments[2] == "" && arguments[3] == "λ value" && arguments[4] == "$(touch /tmp/never)"
+    }
+    @Test("invalid server configuration is reported once; fixing preferences restarts and synchronizes existing buffers")
+    fn testConfigurationRecovery() -> Bool
+    {
+        const app: IdeApp = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Main.tnx", "abc")
+        app.preferences.store.set("pref.Tools.lspPath", root)
+        DiagnosticsHarness::open(app, path, "abc")
+        const refused: Bool = app.language.unavailable && !app.language.connected && app.store.get("status.message").contains("folder")
+        app.preferences.set("Tools.lspPath", "/usr/bin/python3")
+        const recovered: Bool = app.language.connected && app.language.paths.contains(Utf16::uri(path))
+        app.preferences.set("Tools.lspArgs", "'unclosed")
+        const badArguments: Bool = app.language.unavailable && !app.language.connected && app.store.get("status.message").contains("Unclosed quote")
+        app.preferences.set("Tools.lspArgs", "")
+        const retried: Bool = app.language.connected && !app.language.unavailable
+        app.language.shutdown()
+        TempProject::remove(root)
+        return refused && recovered && badArguments && retried
+    }
+
+}

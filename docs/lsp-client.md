@@ -1,8 +1,8 @@
 # LSP client library
 
 Issue #24. `tinox.ide.lsp` implements JSON-RPC over stdio and LSP lifecycle,
-independently of Qt's event queue. Editor language features and their UI wiring
-are tracked separately in issues #25–29.
+independently of Qt's event queue. The [live diagnostics integration](diagnostics.md) uses it in the IDE; further
+editor language features are tracked in issues #26–29.
 
 ## Ownership and use
 
@@ -30,6 +30,9 @@ Use `initialize` only with `LspClient::create(sender)` for an injected transport
 `launch` initializes automatically. `pollAt(milliseconds)` supplies a deterministic
 clock for tests or a caller-provided monotonic clock; use one clock consistently
 for the client's entire lifetime. `poll()` uses `Time.now()`.
+
+`lifecycle(state)` observes transitions before subsequent protocol messages can
+publish a new generation; observer failures are isolated.
 
 Server notifications are delivered through `notification(method, params)` on the
 owning task. `configuration(item)` supplies each workspace/configuration result.

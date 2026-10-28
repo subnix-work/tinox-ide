@@ -1,0 +1,283 @@
+module tinox.ide.lsp
+
+import tinox.core.fs.Fs
+import tinox.core.json
+import tinox.core.process.Process
+import tinox.ide.app.BusMessage
+import tinox.ide.app.CommandContext
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.FileSystem
+import tinox.ide.app.MainWindow
+import tinox.ide.diagnostics.Problems
+import tinox.ide.editor.Documents
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.EventLoop
+import tinox.ide.settings.Arguments
+import tinox.ide.settings.Preferences
+import tinox.ide.settings.ToolProbe
+import tinox.ide.ui.Diagnostic
+import tinox.ide.ui.Position
+import tinox.ide.ui.Range
+import tinox.ide.ui.TextEdit
+import tinox.ide.ui.Utf16
+
+namespace tinox.ide.lsp
+{
+    /** Owns the IDE's language-server session and version-checked push diagnostics. All methods run on the logic task. */
+    class LanguageService
+    {
+        /** Window, bus, store and events. */
+        var window: MainWindow
+        /** Open editor documents. */
+        var documents: Documents
+        /** Language server program and argument preferences. */
+        var preferences: Preferences
+        /** The single diagnostics presenter. */
+        var problems: Problems
+        /** Current client; unused until connected is true. */
+        var client: LspClient
+        /** Injectable factory for protocol/service tests. */
+        var factory: fnc(List<String>, String, String) -> LspClient
+        /** Whether the IDE has enabled the service. */
+        var enabled: Bool
+        /** Whether a session has been created. */
+        var connected: Bool
+        /** Avoids retrying a missing/invalid configured program on every file event. */
+        var unavailable: Bool
+        /** Whether an event-loop polling hook is installed. */
+        var polling: Bool
+        /** URI to currently open editor path, restricted to Tinox buffers. */
+        var paths: Map<String, String>
+        /** Number of accepted diagnostic batches, for verification and latency measurements. */
+        var reports: Int64
+
+        /** Installs the diagnostics presenter, commands and editor/workspace subscriptions. */
+        fnc create(window: MainWindow, documents: Documents, preferences: Preferences) -> LanguageService
+        {
+            const service: LanguageService = LanguageService { window: window, documents: documents, preferences: preferences, problems: Problems::create(window, documents), client: LspClient::create((json: String) => LspClient::ignore()), factory: (argv: List<String>, directory: String, uri: String) => LspClient::launch(argv, directory, uri), enabled: false, connected: false, unavailable: false, polling: false, paths: Map::new(), reports: 0 }
+            window.registry.register(IdeCommand::create("lsp.restart", "Restart &Language Server").icon("view-refresh").category("Tools").run((c: CommandContext) => service.restart()))
+            window.addSettingsMenu(["options_configure", "lsp.restart"])
+            window.bus.subscribe("editor.opened", (m: BusMessage) => service.opened(m.str("path")))
+            window.bus.subscribe("editor.changed", (m: BusMessage) => service.changed(m))
+            window.bus.subscribe("editor.closing", (m: BusMessage) => service.closed(m.str("path")))
+            window.bus.subscribe("editor.reloaded", (m: BusMessage) => service.resync(m.str("path")))
+            window.bus.subscribe("editor.retargeted", (m: BusMessage) => service.retargeted(m.str("oldPath"), m.str("path")))
+            window.bus.subscribe("editor.saved", (m: BusMessage) => service.saved(m.str("path")))
+            window.bus.subscribe("workspace.opened", (m: BusMessage) => service.restart())
+            window.bus.subscribe("workspace.closed", (m: BusMessage) => service.restart())
+            window.bus.subscribe("settings.changed", (m: BusMessage) => service.settingChanged(m.str("id")))
+            return service
+        }
+
+        /** Enables automatic operation after session restore; tests explicitly enable or inject it. */
+        fn start() -> Nothing
+        {
+            this.enabled = true
+            if (!this.polling)
+            {
+                this.window.events.onPoll((events: EventLoop) => this.poll())
+                this.polling = true
+            }
+            for file in this.documents.files { this.opened(file.path) }
+        }
+
+        /** Pumps the client even while the IDE is idle. */
+        fn poll() -> Nothing
+        {
+            if (this.enabled && this.connected) { this.client.poll() }
+        }
+
+        /** Configured program, environment override, PATH lookup or the sibling development checkout. */
+        fn program() -> String
+        {
+            var program: String = this.preferences.get("Tools.lspPath")
+            if (program == "") { program = Process::env("TINOX_LSP") }
+            if (program == "") { program = this.preferences.toolPath("Tools.lspPath") }
+            if (program == "" && FileSystem::exists("../tinox/target/release/tinox-lsp")) { program = "../tinox/target/release/tinox-lsp" }
+            if (program == "") { throw "Language server not found; configure tinox-lsp in Settings" }
+            // Resolve before changing the child cwd, including relative configured tool paths.
+            const resolved: String = Fs::realPath(program)
+            const problem: String = ToolProbe::check(resolved)
+            if (problem != "") { throw "Cannot start language server: " + problem + ". Configure tinox-lsp in Settings" }
+            return resolved
+        }
+
+        /** Creates one session lazily for the first Tinox document, keeping errors actionable. */
+        fn connect() -> Bool
+        {
+            if (this.connected) { return true }
+            if (this.unavailable || !this.enabled) { return false }
+            try
+            {
+                var argv: List<String> = [this.program()]
+                for argument in Arguments::parse(this.preferences.get("Tools.lspArgs")) { argv.push(argument) }
+                const directory: String = this.window.store.get("workspace.path")
+                var root: String = ""
+                if (directory != "") { root = Utf16::uri(directory) }
+                this.client = this.factory(argv, directory, root)
+                this.client.notification = (method: String, params: JsonValue) => this.notification(method, params)
+                this.client.lifecycle = (state: String) => this.lifecycle(state)
+                this.connected = true
+                return true
+            }
+            catch (e: String)
+            {
+                this.unavailable = true
+                this.window.store.set("status.message", e)
+                return false
+            }
+        }
+
+        /** Synchronizes a Tinox buffer once; unrelated file types never start a server. */
+        fn opened(path: String) -> Nothing
+        {
+            if (!this.enabled || FileSystem::extension(path) != "tnx" || this.documents.indexOf(path) < 0) { return }
+            const uri: String = Utf16::uri(path)
+            if (this.paths.contains(uri) || !this.connect()) { return }
+            const file: OpenFile = this.documents.files[this.documents.indexOf(path)]
+            const snapshot: JsonValue = file.doc.snapshot()
+            this.client.open(uri, "tinox", snapshot.getField("text").getString(), snapshot.getField("version").getInt())
+            this.paths.set(uri, path)
+        }
+
+        /** Clears stale marks immediately, then forwards sequential edits with the editor's version. */
+        fn changed(message: BusMessage) -> Nothing
+        {
+            const path: String = message.str("path")
+            if (!this.enabled || FileSystem::extension(path) != "tnx") { return }
+            this.opened(path)
+            const uri: String = Utf16::uri(path)
+            if (!this.connected || !this.paths.contains(uri)) { return }
+            const version: Int64 = message.int("version")
+            if (version <= this.client.documents.get(uri).version) { return }
+            this.problems.clear(path)
+            var changes: List<TextEdit> = []
+            for item in message.payload.getField("changes").asList()
+            {
+                changes.push(TextEdit::replace(Range::parse(item.getField("range")), item.getField("newText").getString()))
+            }
+            this.client.change(uri, version, changes)
+        }
+
+        /** Clears marks before document release and ignores every subsequent report for the closed URI. */
+        fn closed(path: String) -> Nothing
+        {
+            const uri: String = Utf16::uri(path)
+            this.problems.clear(path)
+            if (this.connected && this.paths.contains(uri)) { this.client.close(uri) }
+            this.paths.remove(uri)
+        }
+
+        /** Resynchronizes a reload using the complete buffer, avoiding duplicate reopen notifications. */
+        fn resync(path: String) -> Nothing
+        {
+            if (!this.enabled || FileSystem::extension(path) != "tnx") { return }
+            const uri: String = Utf16::uri(path)
+            if (!this.paths.contains(uri)) { this.opened(path)
+                return }
+            const file: OpenFile = this.documents.files[this.documents.indexOf(path)]
+            const snapshot: JsonValue = file.doc.snapshot()
+            const text: String = snapshot.getField("text").getString()
+            const version: Int64 = snapshot.getField("version").getInt()
+            if (this.client.documents.get(uri).version == version && this.client.documents.get(uri).text == text) { return }
+            this.closed(path)
+            this.opened(path)
+        }
+
+        /** Drops the old URI on Save As/rename/move, then opens its replacement. */
+        fn retargeted(oldPath: String, path: String) -> Nothing
+        {
+            this.closed(oldPath)
+            this.opened(path)
+        }
+
+        /** Sends didSave only for a currently synchronized buffer. */
+        fn saved(path: String) -> Nothing
+        {
+            const uri: String = Utf16::uri(path)
+            if (this.enabled && this.connected && this.paths.contains(uri)) { this.client.save(uri) }
+        }
+
+        /** Clears all decorations before any restart can publish a new generation. */
+        fn lifecycle(state: String) -> Nothing
+        {
+            if (state == "backoff" || state == "initializing" || state == "stopping" || state == "closed") { this.problems.clearAll() }
+            this.window.store.set("lsp.state", state)
+        }
+
+        /** Detaches an old client before stopping it, so it cannot affect the next workspace session. */
+        fn retire() -> Nothing
+        {
+            if (this.connected)
+            {
+                this.client.notification = (method: String, params: JsonValue) => LspClient::ignore()
+                this.client.lifecycle = (state: String) => LspClient::ignore()
+                this.client.stop()
+            }
+            this.connected = false
+            this.paths = Map::new()
+            this.problems.clearAll()
+        }
+
+        /** Restarts after root or executable/argument changes, retaining open buffers. */
+        fn restart() -> Nothing
+        {
+            if (!this.enabled) { return }
+            this.retire()
+            this.unavailable = false
+            for file in this.documents.files { this.opened(file.path) }
+        }
+
+        /** Applies only language-server preferences to this session. */
+        fn settingChanged(id: String) -> Nothing
+        {
+            if (id == "Tools.lspPath" || id == "Tools.lspArgs") { this.restart() }
+        }
+
+        /** Stops the session before the editors and the Qt bridge are destroyed. */
+        fn shutdown() -> Nothing
+        {
+            this.enabled = false
+            this.retire()
+        }
+
+        /** Accepts only current open-buffer reports and commits one validated batch to both views. */
+        fn notification(method: String, params: JsonValue) -> Nothing
+        {
+            if (method != "textDocument/publishDiagnostics" || !this.connected || this.client.state != "ready") { return }
+            const uri: String = params.getField("uri").getString()
+            if (!this.paths.contains(uri) || !this.client.documents.contains(uri)) { return }
+            const document: LspDocument = this.client.documents.get(uri)
+            const version: JsonValue = params.getField("version")
+            if (!version.isNull() && (!version.isInt() || version.getInt() != document.version)) { return }
+            if (!params.getField("diagnostics").isArray()) { throw "Malformed publishDiagnostics items" }
+            var diagnostics: List<Diagnostic> = []
+            for item in params.getField("diagnostics").asList() { diagnostics.push(LanguageService::diagnostic(item, document.text)) }
+            this.problems.replace(this.paths.get(uri), diagnostics, document.version)
+            this.reports = this.reports + 1
+        }
+
+        /** Validates range/UTF-16 boundaries and normalizes default severity and numeric diagnostic codes. */
+        fnc diagnostic(item: JsonValue, text: String) -> Diagnostic
+        {
+            if (!item.getField("message").isString()) { throw "Diagnostic has no message" }
+            const span: JsonValue = item.getField("range")
+            for position in [span.getField("start"), span.getField("end")]
+            {
+                if (!position.getField("line").isInt() || !position.getField("character").isInt()) { throw "Diagnostic has no integer range" }
+            }
+            const range: Range = Range::parse(span)
+            if (Utf16::offset(text, range.end) < Utf16::offset(text, range.start)) { throw "Reversed diagnostic range" }
+            var severity: Int64 = 1
+            if (!item.getField("severity").isNull())
+            {
+                if (!item.getField("severity").isInt()) { throw "Invalid diagnostic severity" }
+                severity = item.getField("severity").getInt()
+            }
+            if (severity < 1 || severity > 4) { throw "Invalid diagnostic severity" }
+            var code: String = item.getField("code").getString()
+            if (item.getField("code").isInt()) { code = item.getField("code").getInt().toString() }
+            return Diagnostic { range: range, severity: severity, message: item.getField("message").getString(), code: code, source: item.getField("source").getString() }
+        }
+    }
+}

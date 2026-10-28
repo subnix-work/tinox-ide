@@ -333,6 +333,25 @@ static double contrast(const QColor &a, const QColor &b)
     return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
 }
 
+static void testVersionedDiagnostics()
+{
+    const int64_t doc = newDoc(QStringLiteral("abc"));
+    const QJsonArray items{Obj{{"range", range(0, 0, 0, 1)}, {"severity", 1}, {"message", "current"}}};
+    EXPECT(query(cmd("editor.setDiagnostics", Obj{{"target", double(doc)}, {"version", 0}, {"items", items}}))["ok"].toBool());
+    query(cmd("editor.setText", Obj{{"target", double(doc)}, {"text", "abcd"}}));
+    const auto version = infoOf(doc)["version"].toInteger();
+    EXPECT(version > 0);
+    EXPECT_EQ(errorCode(query(cmd("editor.setDiagnostics", Obj{{"target", double(doc)}, {"version", 0}, {"items", QJsonArray{}}}))),
+              int(TKDE_E_FAILED));
+    EXPECT_EQ(query(cmd("editor.getDiagnostics", Obj{{"target", double(doc)}}))["items"].toArray().size(), 1);
+    EXPECT_EQ(errorCode(query(cmd("editor.setDiagnostics", Obj{{"target", double(doc)}, {"version", 0.5}, {"items", items}}))),
+              int(TKDE_E_INVALID_ARG));
+    EXPECT(query(cmd("editor.setDiagnostics", Obj{{"target", double(doc)}, {"version", double(version)}, {"items", QJsonArray{}}}))["ok"]
+               .toBool());
+    EXPECT(query(cmd("editor.getDiagnostics", Obj{{"target", double(doc)}}))["items"].toArray().isEmpty());
+    tkde_release(doc);
+}
+
 static void testDiagnostics()
 {
     int64_t doc = newDoc(QStringLiteral("let a = 1\nlet b = 2\nlet c = 3\nlet d = 4"));
@@ -539,6 +558,7 @@ static void driver(QString dir)
     testExternalModification(dir);
     testHighlightingAndThemes();
     testDiagnostics();
+    testVersionedDiagnostics();
     testCompletionAndHover();
     testLifecycleCleanup();
     tkde_post("{\"cmd\":\"core.quit\"}");

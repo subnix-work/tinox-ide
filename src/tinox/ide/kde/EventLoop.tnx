@@ -19,6 +19,8 @@ namespace tinox.ide.kde
         var byType: Map<String, fnc(Event) -> Nothing>
         /** Handlers by object id (as text). */
         var byTarget: Map<String, fnc(Event) -> Nothing>
+        /** Nonblocking pollers, run on the logic task between events and while idle. */
+        var pollers: List<fnc(EventLoop) -> Nothing>
         /** Set by stop(). */
         var stopped: Bool
         /** Set when core.shutdown was seen. */
@@ -33,7 +35,7 @@ namespace tinox.ide.kde
         /** A loop with no handlers. */
         fnc create() -> EventLoop
         {
-            return EventLoop { byType: Map::new(), byTarget: Map::new(), stopped: false, shutdown: false, delivered: 0, failures: [], failureHandler: (message: String) => EventLoop::ignore() }
+            return EventLoop { byType: Map::new(), byTarget: Map::new(), pollers: [], stopped: false, shutdown: false, delivered: 0, failures: [], failureHandler: (message: String) => EventLoop::ignore() }
         }
 
         /** Runs `handler` for every event of this type; replaces an earlier one. */
@@ -58,6 +60,22 @@ namespace tinox.ide.kde
         fn offTarget(id: Int64) -> Nothing
         {
             this.byTarget.remove(id.toString())
+        }
+
+        /** Adds a nonblocking poller; pump waits at most 20 ms while pollers are installed. */
+        fn onPoll(handler: fnc(EventLoop) -> Nothing) -> Nothing
+        {
+            this.pollers.push(handler)
+        }
+
+        /** Runs pollers in isolation, so one failure cannot starve other services. */
+        fn pollServices() -> Nothing
+        {
+            for handler in this.pollers
+            {
+                try { handler(this) }
+                catch (e: String) { this.fail("poll handler failed: " + e) }
+            }
         }
 
         /** Makes run() return after the current event. */
@@ -162,9 +180,13 @@ namespace tinox.ide.kde
             var wait: Int64 = timeoutMs
             while (!this.stopped && !this.shutdown)
             {
+                this.pollServices()
+                if (this.stopped || this.shutdown) { return handled }
+                if (this.pollers.len() > 0 && (wait < 0 || wait > 20)) { wait = 20 }
                 const text: String = Bridge::nextEvent(wait)
                 if (text == "")
                 {
+                    this.pollServices()
                     return handled
                 }
                 this.handle(text)

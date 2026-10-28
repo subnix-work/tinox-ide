@@ -185,7 +185,7 @@ namespace tinox.ide.app
                         .visible(this.store.getBool("ui.bottomVisible"))
                         .add(Ui::tabs("bottomTabs")
                                 .currentIndex(this.store.getInt("ui.bottomTab"))
-                                .add(Ui::listView("problems").inTab("Problems", "dialog-warning"))
+                                .add(Ui::treeView("problems").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Problems", "dialog-warning"))
                                 .add(Ui::log("output").inTab("Output", "utilities-terminal"))
                                 .addAll(this.panels())))
                 .add(Ui::tabs("editors")
@@ -193,7 +193,8 @@ namespace tinox.ide.app
                         .bool("movable", true)
                         .currentIndex(this.editorIndex(this.store))
                         .addAll(this.editorTabs(this.store)))
-                .add(Ui::statusBar("status").str("message", this.store.get("status.message")))
+                .add(Ui::statusBar("status").str("message", this.store.get("status.message"))
+                        .add(Ui::label("problemCounts", this.store.get("problems.summary")).permanent().visible(this.store.has("problems.summary"))))
         }
 
         /** The nodes of the extra bottom tabs. */
@@ -234,6 +235,7 @@ namespace tinox.ide.app
             this.store.watch("ui.bottomVisible", (value: String) => this.changed())
             this.store.watch("pref.Appearance.toolbar", (value: String) => this.changed())
             this.store.watch("ui.bottomTab", (value: String) => this.changed())
+            this.store.watch("problems.summary", (value: String) => this.changed())
             this.store.watch("status.message", (value: String) => this.changed())
             this.store.watch("workspace.open", (value: String) => this.changed())
             this.store.watch("workspace.name", (value: String) => this.changed())

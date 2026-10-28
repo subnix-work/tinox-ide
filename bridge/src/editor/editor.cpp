@@ -366,6 +366,7 @@ Reply getText(Bridge &b, const QJsonObject &cmd)
     }
     QJsonObject f;
     f.insert(QStringLiteral("text"), text);
+    f.insert(QStringLiteral("version"), double(DocState::of(doc)->version()));
     return Reply::success(f);
 }
 
@@ -697,6 +698,11 @@ Reply debugType(Bridge &b, const QJsonObject &cmd)
     return Reply::success();
 }
 } // namespace
+
+int64_t documentVersion(KTextEditor::Document *document)
+{
+    return DocState::of(document)->version();
+}
 
 void registerCommands(Bridge &bridge)
 {

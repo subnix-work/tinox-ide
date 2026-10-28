@@ -1,4 +1,5 @@
 #include "diagnostics.h"
+#include "editor.h"
 
 #include "../bridge.h"
 #include "positions.h"
@@ -291,6 +292,16 @@ void registerDiagnosticCommands(Bridge &bridge)
         Diagnostics *d = diagnosticsOf(bridge, cmd, fail);
         if (!d) {
             return fail;
+        }
+        const QJsonValue version = cmd.value(QStringLiteral("version"));
+        if (!version.isUndefined()) {
+            if (!version.isDouble() || version.toDouble() < 0 || version.toDouble() != double(version.toInteger())) {
+                return Reply::failure(TKDE_E_INVALID_ARG, QStringLiteral("version must be a nonnegative integer"));
+            }
+            auto *doc = qobject_cast<Document *>(bridge.object(cmd.value(QStringLiteral("target")).toInteger()));
+            if (version.toInteger() != documentVersion(doc)) {
+                return Reply::failure(TKDE_E_FAILED, QStringLiteral("document changed before diagnostics could be applied"));
+            }
         }
         QString error;
         const QString owner = cmd.value(QStringLiteral("owner")).toString(QStringLiteral("default"));

@@ -1,0 +1,188 @@
+module tinox.ide.diagnostics
+
+import tinox.ide.app.CommandContext
+import tinox.ide.app.MainWindow
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.Store
+import tinox.ide.editor.Documents
+import tinox.ide.editor.OpenFile
+import tinox.ide.ui.Diagnostic
+import tinox.ide.ui.ItemView
+import tinox.ide.ui.Model
+import tinox.ide.ui.Row
+
+namespace tinox.ide.diagnostics
+{
+    /** One published diagnostic snapshot drives editor decorations, the tree, counts and navigation. */
+    class Problems
+    {
+        /** Application window, state and command registry. */
+        var window: MainWindow
+        /** Open document/view ownership. */
+        var documents: Documents
+        /** The problems tree model. */
+        var model: Model
+        /** Accepted diagnostics by absolute path. */
+        var items: Map<String, List<Diagnostic>>
+        /** Version associated with each accepted batch. */
+        var versions: Map<String, Int64>
+        /** Navigable rows in displayed order. */
+        var ordered: List<Problem>
+        /** Current row, or empty if none is selected. */
+        var current: String
+
+        /** Installs commands before the main window is started. */
+        fnc create(window: MainWindow, documents: Documents) -> Problems
+        {
+            const problems: Problems = Problems { window: window, documents: documents, model: Model::create(window.events, ["Message", "Location", "Code", "Source"], false), items: Map::new(), versions: Map::new(), ordered: [], current: "" }
+            window.registry.registerAll([
+                IdeCommand::create("view.problems", "Show &Problems").icon("dialog-warning").category("View").run((c: CommandContext) => window.showBottomTab(0)),
+                IdeCommand::create("problems.next", "&Next Problem").icon("go-down").shortcut("F8").category("Go").enabledWhen((s: Store) => s.getInt("problems.total") > 0).run((c: CommandContext) => problems.step(1)),
+                IdeCommand::create("problems.previous", "&Previous Problem").icon("go-up").shortcut("Shift+F8").category("Go").enabledWhen((s: Store) => s.getInt("problems.total") > 0).run((c: CommandContext) => problems.step(-1))
+            ])
+            window.addViewMenu(["view.problems"])
+            problems.counts(0, 0, 0, 0)
+            return problems
+        }
+
+        /** Attaches the model and single-click/keyboard navigation after the window is mounted. */
+        fn bind() -> Nothing
+        {
+            this.model.attach(this.window.mount.idOf("problems"))
+            this.window.mount.onActivated("problems", (id: String) => this.visit(id))
+            this.window.mount.onSelection("problems", (ids: List<String>) => this.selected(ids))
+        }
+
+        /** Applies an entire batch to the editor first; rolls it back if the tree refuses the update. */
+        fn replace(path: String, diagnostics: List<Diagnostic>, version: Int64) -> Nothing
+        {
+            const index: Int64 = this.documents.indexOf(path)
+            if (index < 0) { return }
+            if (diagnostics.len() == 0 && !this.items.contains(path)) { return }
+            var previous: List<Diagnostic> = []
+            if (this.items.contains(path)) { previous = this.items.get(path) }
+            const file: OpenFile = this.documents.files[index]
+            file.doc.setDiagnosticsAtVersion("lsp", diagnostics, version)
+            var previousVersion: Int64 = 0
+            if (this.versions.contains(path)) { previousVersion = this.versions.get(path) }
+            this.items.set(path, diagnostics)
+            this.versions.set(path, version)
+            try { this.draw() }
+            catch (e: String)
+            {
+                this.items.set(path, previous)
+                this.versions.set(path, previousVersion)
+                file.doc.setDiagnostics("lsp", previous)
+                throw e
+            }
+            if (diagnostics.len() == 0) { this.items.remove(path)
+                this.versions.remove(path) }
+        }
+
+        /** Clears a file while its editor still exists (before release). */
+        fn clear(path: String) -> Nothing
+        {
+            if (this.items.contains(path)) { this.replace(path, [], -1) }
+        }
+
+        /** Clears every accepted batch on a server or workspace generation change. */
+        fn clearAll() -> Nothing
+        {
+            for path in this.items.keys() { this.clear(path) }
+        }
+
+        /** Rebuilds grouped rows from the same objects sent to each editor. */
+        fn draw() -> Nothing
+        {
+            var rows: List<Row> = []
+            var ordered: List<Problem> = []
+            var errors: Int64 = 0
+            var warnings: Int64 = 0
+            var information: Int64 = 0
+            var hints: Int64 = 0
+            for file in this.documents.files
+            {
+                if (this.items.contains(file.path) && this.items.get(file.path).len() > 0)
+                {
+                    const diagnostics: List<Diagnostic> = this.items.get(file.path)
+                    const group: Row = Row::create("file:" + file.path, file.path + " (" + diagnostics.len().toString() + ")").icon("text-x-generic")
+                    var index: Int64 = 0
+                    for diagnostic in diagnostics
+                    {
+                        const problem: Problem = Problem { id: "problem:" + file.path + ":" + index.toString(), path: file.path, version: this.versions.get(file.path), diagnostic: diagnostic }
+                        group.child(problem.row())
+                        ordered.push(problem)
+                        if (diagnostic.severity == 1) { errors = errors + 1 }
+                        else if (diagnostic.severity == 2) { warnings = warnings + 1 }
+                        else if (diagnostic.severity == 3) { information = information + 1 }
+                        else { hints = hints + 1 }
+                        index = index + 1
+                    }
+                    rows.push(group)
+                }
+            }
+            this.model.reset(rows)
+            this.ordered = ordered
+            this.current = ""
+            this.counts(errors, warnings, information, hints)
+        }
+
+        /** Updates status-bar counts and command availability after both views accepted the batch. */
+        fn counts(errors: Int64, warnings: Int64, information: Int64, hints: Int64) -> Nothing
+        {
+            const store: Store = this.window.store
+            store.setInt("problems.errors", errors)
+            store.setInt("problems.warnings", warnings)
+            store.setInt("problems.information", information)
+            store.setInt("problems.hints", hints)
+            store.setInt("problems.total", errors + warnings + information + hints)
+            var summary: String = errors.toString() + " errors · " + warnings.toString() + " warnings"
+            if (information > 0) { summary = summary + " · " + information.toString() + " information" }
+            if (hints > 0) { summary = summary + " · " + hints.toString() + " hints" }
+            store.set("problems.summary", summary)
+            this.window.registry.refresh()
+        }
+
+        /** Follows a single clicked diagnostic, while group selections only expand the tree. */
+        fn selected(ids: List<String>) -> Nothing
+        {
+            if (ids.len() > 0 && ids[0] != this.current) { this.visit(ids[0]) }
+        }
+
+        /** Opens a diagnostic at its zero-based UTF-16 location. */
+        fn visit(id: String) -> Nothing
+        {
+            for problem in this.ordered
+            {
+                if (problem.id == id)
+                {
+                    const index: Int64 = this.documents.indexOf(problem.path)
+                    if (index < 0 || this.documents.files[index].doc.version() != problem.version) { return }
+                    this.current = id
+                    this.documents.openAt(problem.path, problem.diagnostic.range.start.line, problem.diagnostic.range.start.character)
+                    return
+                }
+            }
+        }
+
+        /** Moves forward/backward with wrapping, using exactly the order of the displayed tree. */
+        fn step(direction: Int64) -> Nothing
+        {
+            if (this.ordered.len() == 0) { return }
+            var index: Int64 = -1
+            var at: Int64 = 0
+            for problem in this.ordered
+            {
+                if (problem.id == this.current) { index = at }
+                at = at + 1
+            }
+            if (index < 0 && direction < 0) { index = this.ordered.len() }
+            index = (index + direction + this.ordered.len()) % this.ordered.len()
+            const next: Problem = this.ordered[index]
+            this.window.showBottomTab(0)
+            ItemView::of(this.window.mount, "problems").expand("file:" + next.path, true)
+            ItemView::of(this.window.mount, "problems").choose([next.id], next.id)
+            this.visit(next.id)
+        }
+    }
+}

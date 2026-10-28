@@ -33,6 +33,7 @@ test: bridge
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
 	$(TINOX) test
 	TINOX=$(TINOX) scripts/test-example.sh
+	TINOX=$(TINOX) scripts/test-diagnostics.sh
 
 bench: bridge
 	QT_QPA_PLATFORM=offscreen $(BUILD_DIR)/bin/bench_queue

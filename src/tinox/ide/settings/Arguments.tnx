@@ -1,0 +1,59 @@
+module tinox.ide.settings
+
+import tinox.core.bytes.Bytes
+import tinox.ide.ui.Utf16
+
+namespace tinox.ide.settings
+{
+    /** Quoted argument lists without shell expansion or execution. */
+    class Arguments
+    {
+        /** Splits whitespace, single/double quotes and backslash escapes; preserves quoted empty arguments. */
+        fnc parse(text: String) -> List<String>
+        {
+            const bytes: Bytes = Bytes::fromText(text)
+            var arguments: List<String> = []
+            var value: String = ""
+            var quote: Int64 = 0
+            var started: Bool = false
+            var at: Int64 = 0
+            while (at < bytes.len())
+            {
+                const byte: Int64 = bytes.get(at)
+                const width: Int64 = Utf16::width(bytes, at)
+                if (byte == 92 && quote != 39)
+                {
+                    at = at + 1
+                    if (at == bytes.len()) { throw "Argument list ends with a backslash" }
+                    const escaped: Int64 = Utf16::width(bytes, at)
+                    value = value + text.substring(at, at + escaped)
+                    started = true
+                    at = at + escaped
+                }
+                else if ((byte == 34 || byte == 39) && (quote == 0 || quote == byte))
+                {
+                    if (quote == 0) { quote = byte }
+                    else { quote = 0 }
+                    started = true
+                    at = at + 1
+                }
+                else if (quote == 0 && (byte == 32 || byte == 9 || byte == 10 || byte == 13))
+                {
+                    if (started) { arguments.push(value) }
+                    value = ""
+                    started = false
+                    at = at + 1
+                }
+                else
+                {
+                    value = value + text.substring(at, at + width)
+                    started = true
+                    at = at + width
+                }
+            }
+            if (quote != 0) { throw "Unclosed quote in argument list" }
+            if (started) { arguments.push(value) }
+            return arguments
+        }
+    }
+}

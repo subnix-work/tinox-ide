@@ -17,6 +17,8 @@ namespace tinox.ide.lsp
         var sender: fnc(String) -> Nothing
         /** Receives server notifications on the owning task. */
         var notification: fnc(String, JsonValue) -> Nothing
+        /** Observes lifecycle transitions on the owning task, before a new generation can publish results. */
+        var lifecycle: fnc(String) -> Nothing
         /** Supplies one workspace/configuration item. */
         var configuration: fnc(JsonValue) -> JsonValue
         /** Applies an entire workspace edit atomically; defaults to refusal. */
@@ -65,7 +67,16 @@ namespace tinox.ide.lsp
         /** Creates a protocol client using an injected sender; initialize and poll it explicitly. */
         fnc create(sender: fnc(String) -> Nothing) -> LspClient
         {
-            return LspClient { sender: sender, notification: (method: String, params: JsonValue) => LspClient::ignore(), configuration: (item: JsonValue) => Json::parse("null"), applyEdit: (edit: JsonValue) => false, pending: Map::new(), documents: Map::new(), nextId: 0, state: "idle", capabilities: Json::parse("{}"), syncKind: 0, openClose: false, saveSupported: false, saveText: false, lastError: "", initialization: RpcFuture::create(0, 0), shutdownRequest: RpcFuture::create(0, 0), clock: Time::now(), deadline: 0, retries: 0, readyAt: 0, argv: [], directory: "", rootUri: "", transport: StdioTransport { mutex: Mutex::new(), outgoing: [], incoming: [], queued: 0, received: 0, stopping: true, stopped: true, failure: "", stderr: "" } }
+            return LspClient { sender: sender, notification: (method: String, params: JsonValue) => LspClient::ignore(), lifecycle: (state: String) => LspClient::ignore(), configuration: (item: JsonValue) => Json::parse("null"), applyEdit: (edit: JsonValue) => false, pending: Map::new(), documents: Map::new(), nextId: 0, state: "idle", capabilities: Json::parse("{}"), syncKind: 0, openClose: false, saveSupported: false, saveText: false, lastError: "", initialization: RpcFuture::create(0, 0), shutdownRequest: RpcFuture::create(0, 0), clock: Time::now(), deadline: 0, retries: 0, readyAt: 0, argv: [], directory: "", rootUri: "", transport: StdioTransport { mutex: Mutex::new(), outgoing: [], incoming: [], queued: 0, received: 0, stopping: true, stopped: true, failure: "", stderr: "" } }
+        }
+
+        /** Changes lifecycle state before notifying observers; observer errors never break protocol cleanup. */
+        fn transition(state: String) -> Nothing
+        {
+            if (this.state == state) { return }
+            this.state = state
+            try { this.lifecycle(state) }
+            catch (e: String) { this.lastError = e }
         }
 
         /** No-op default notification handler. */
@@ -100,7 +111,7 @@ namespace tinox.ide.lsp
         {
             if (this.state != "idle" && this.state != "backoff") { throw "LSP initialization already started" }
             this.rootUri = rootUri
-            this.state = "initializing"
+            this.transition("initializing")
             var root: String = "null"
             var folders: String = "null"
             if (rootUri != "")
@@ -108,7 +119,7 @@ namespace tinox.ide.lsp
                 root = Js::str(rootUri)
                 folders = "[{\"uri\":" + root + ",\"name\":\"workspace\"}]"
             }
-            const params: String = "{\"processId\":" + Process::pid().toString() + ",\"rootUri\":" + root + ",\"workspaceFolders\":" + folders + ",\"clientInfo\":{\"name\":\"tinox-ide\",\"version\":\"0.1.0\"},\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-16\"]},\"workspace\":{\"configuration\":true,\"applyEdit\":true,\"workspaceFolders\":true},\"textDocument\":{\"synchronization\":{\"dynamicRegistration\":false,\"didSave\":true}}}}"
+            const params: String = "{\"processId\":" + Process::pid().toString() + ",\"rootUri\":" + root + ",\"workspaceFolders\":" + folders + ",\"clientInfo\":{\"name\":\"tinox-ide\",\"version\":\"0.1.0\"},\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-16\"]},\"workspace\":{\"configuration\":true,\"applyEdit\":true,\"workspaceFolders\":true},\"textDocument\":{\"publishDiagnostics\":{\"versionSupport\":true},\"synchronization\":{\"dynamicRegistration\":false,\"didSave\":true}}}}"
             this.initialization = this.call("initialize", params, 10000)
             return this.initialization
         }
@@ -224,7 +235,7 @@ namespace tinox.ide.lsp
             if (future.id == this.initialization.id && this.state == "initializing")
             {
                 this.notify("initialized", "{}")
-                this.state = "ready"
+                this.transition("ready")
                 this.readyAt = this.clock
                 for uri in this.documents.keys()
                 {
@@ -358,7 +369,7 @@ namespace tinox.ide.lsp
             for key in this.pending.keys() { this.pending.get(key).resolve(Json::parse("null"), -32097, reason) }
             this.pending = Map::new()
             if (this.argv.len() > 0) { this.transport.stop() }
-            this.state = "backoff"
+            this.transition("backoff")
             var delay: Int64 = 100
             var i: Int64 = 0
             while (i < this.retries && delay < 5000) { delay = delay * 2
@@ -372,7 +383,7 @@ namespace tinox.ide.lsp
         fn shutdown() -> RpcFuture
         {
             if (this.state != "ready") { throw "LSP server is not ready for shutdown" }
-            this.state = "closing"
+            this.transition("closing")
             this.shutdownRequest = this.call("shutdown", "null", 2000)
             return this.shutdownRequest
         }
@@ -382,9 +393,9 @@ namespace tinox.ide.lsp
         {
             for key in this.pending.keys() { this.pending.get(key).resolve(Json::parse("null"), -32097, "LSP client stopped") }
             this.pending = Map::new()
-            this.state = "stopping"
+            this.transition("stopping")
             if (this.argv.len() > 0) { this.transport.stop() }
-            else { this.state = "closed" }
+            else { this.transition("closed") }
         }
 
         /** Drives reads, deadlines, shutdown and restart using the system clock. Never waits for child I/O. */
@@ -427,7 +438,7 @@ namespace tinox.ide.lsp
                 if (this.transport.isStopped() && this.state != "backoff")
                 {
                     if (this.state == "closing" || this.state == "exiting" || this.state == "stopping") { this.stop()
-                        this.state = "closed" }
+                        this.transition("closed") }
                     else { this.lost("LSP server exited: " + this.transport.error()) }
                 }
             }
@@ -446,9 +457,9 @@ namespace tinox.ide.lsp
             if (this.state == "closing" && this.shutdownRequest.done)
             {
                 this.notify("exit", "null")
-                this.state = "exiting"
+                this.transition("exiting")
                 this.deadline = now + 2000
-                if (this.argv.len() == 0) { this.state = "closed" }
+                if (this.argv.len() == 0) { this.transition("closed") }
             }
             if (this.state == "exiting" && now >= this.deadline) { this.stop() }
             if (this.state == "backoff" && this.argv.len() > 0 && now >= this.deadline && this.transport.isStopped()) { this.connect() }

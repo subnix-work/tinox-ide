@@ -68,3 +68,9 @@ started by `Documents.startTicker`). Sent: `editor.opened {path}`, `editor.close
 `tests/DocumentsTest.tnx` runs the whole application against the mock bridge with real temp files: open, modified marker,
 close prompts, reorder / middle click, split, external changes, file operations, session round trip, quit. Two views of one
 document staying in sync is the bridge's `EditorView` contract (`bridge/tests/editor_test.cpp`).
+
+Document changes are also published as `editor.changed {path, version, changes}`
+(sequential UTF-16 TextEdit JSON), reloads as `editor.reloaded {path}`, and path
+changes as `editor.retargeted {oldPath, path}`. `editor.closing {path}` is emitted
+before release or retarget, so language services clear marks while the old
+document identity still exists. See [diagnostics.md](diagnostics.md).

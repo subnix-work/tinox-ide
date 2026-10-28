@@ -134,4 +134,20 @@ class EventLoopTest
         events.fail("third")
         return told.len() == 2 && told[0].contains("first") && told[1].contains("unreadable") && events.failureCount() == 3
     }
+    @Test("nonblocking services are polled while idle and during event bursts; a failing service is isolated")
+    fn testPollers() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        var calls: List<String> = []
+        events.onPoll((owner: EventLoop) => { throw "poll failed" })
+        events.onPoll((owner: EventLoop) => calls.push("poll"))
+        events.pump(20)
+        const idle: Bool = calls.len() >= 2 && events.failureCount() >= 2
+        MockBridge::push("{\"type\":\"one\"}")
+        MockBridge::push("{\"type\":\"two\"}")
+        const count: Int64 = events.pump(0)
+        return idle && count == 2 && calls.len() >= 5
+    }
+
 }

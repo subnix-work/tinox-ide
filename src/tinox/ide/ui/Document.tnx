@@ -168,6 +168,12 @@ namespace tinox.ide.ui
             return Bridge::query(Command::named("editor.getText").target(this.docId).build()).getField("text").getString()
         }
 
+        /** The whole text and its version captured atomically on Qt's thread. */
+        fn snapshot() -> JsonValue
+        {
+            return Bridge::query(Command::named("editor.getText").target(this.docId).build())
+        }
+
         /** The text in a range. */
         fn textIn(range: Range) -> String
         {
@@ -291,6 +297,12 @@ namespace tinox.ide.ui
          */
         fn setDiagnostics(owner: String, diagnostics: List<Diagnostic>) -> Nothing
         {
+            this.setDiagnosticsAtVersion(owner, diagnostics, -1)
+        }
+
+        /** Rejects stale results atomically on Qt's thread; a negative version omits the precondition (clearing). */
+        fn setDiagnosticsAtVersion(owner: String, diagnostics: List<Diagnostic>, version: Int64) -> Nothing
+        {
             var parts: List<String> = []
             var i: Int64 = 0
             while (i < diagnostics.len())
@@ -298,7 +310,9 @@ namespace tinox.ide.ui
                 parts.push(diagnostics[i].toJson())
                 i = i + 1
             }
-            Bridge::query(Command::named("editor.setDiagnostics").target(this.docId).str("owner", owner).raw("items", Js::array(parts)).build())
+            var command: Command = Command::named("editor.setDiagnostics").target(this.docId).str("owner", owner).raw("items", Js::array(parts))
+            if (version >= 0) { command = command.int("version", version) }
+            Bridge::query(command.build())
         }
 
         /** Removes the problems this owner showed. */

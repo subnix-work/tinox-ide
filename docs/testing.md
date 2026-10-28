@@ -79,6 +79,13 @@ exactly what Tinox can call in a release build.
   event queue after the `Bridge` singleton had been destroyed. The singleton is now never destroyed
   and `tkde_exec` deletes all registered objects before it returns.
 
+## Live IDE diagnostics
+
+`make test` runs `scripts/test-diagnostics.sh` on the real bridge and tinox-lsp,
+checking error/fix latency below 300 ms, tree/editor agreement, gutter, hover,
+navigation, server loss/restart and closing with private temporary settings.
+See [diagnostics.md](diagnostics.md) for version guards and the unit tests.
+
 ## Language server client
 
 `tests/LspTest.tnx` checks the protocol and document synchronization independently

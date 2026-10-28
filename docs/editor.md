@@ -24,7 +24,7 @@ view id as noted. Every position is LSP-shaped, `{"line":L,"character":C}`, wher
 
 ## Text
 
-* `editor.getText` `{target, range?}`; `editor.setText` `{target, text}` (one undo step).
+* `editor.getText` `{target, range?}` returns `{text, version}` atomically; `editor.setText` `{target, text}` (one undo step).
 * `editor.edit` `{target, edits:[{range,newText}]}`: all ranges refer to the **original**
   text, are validated first (overlap, bad range, bad column, missing `newText` reject the whole
   list, nothing changes) and are applied as ONE undo step.
@@ -45,9 +45,11 @@ view id as noted. Every position is LSP-shaped, `{"line":L,"character":C}`, wher
 
 ## Diagnostics
 
-`editor.setDiagnostics` `{target (doc), owner?, items:[{range,severity 1..4,message,code?,source?}]}`
+`editor.setDiagnostics` `{target (doc), owner?, version?, items:[{range,severity 1..4,message,code?,source?}]}`
 replaces the list of one owner (several owners coexist, e.g. `lsp` and `build`); all or
-nothing. Wavy underlines (dotted for hints) follow the text through edits, gutter marks use
+nothing. An optional nonnegative integer `version` must match the document on the
+UI thread; stale results fail with `TKDE_E_FAILED`, changing nothing.
+Wavy underlines (dotted for hints) follow the text through edits, gutter marks use
 mark types 6..9 and the colours come from the application palette, so they are legible on a
 dark and a light scheme and follow a palette change. `editor.getDiagnostics` `{target, owner?}`
 returns the current (moved) ranges. Hover shows the messages (HTML-escaped).
