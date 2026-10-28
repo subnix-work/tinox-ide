@@ -223,6 +223,12 @@ namespace tinox.ide.ui
             Bridge::query(Command::named("action.setContextMenu").target(widget).raw("items", Js::strings(ids)).build())
         }
 
+        /** Shows a context menu of these actions ("-" for a separator) at a global screen position; choosing one raises its onTrigger. */
+        fn popup(ids: List<String>, x: Int64, y: Int64) -> Nothing
+        {
+            Bridge::query(Command::named("action.popup").raw("items", Js::strings(ids)).int("x", x).int("y", y).build())
+        }
+
         /** Builds menus and tool bars of a window from a shipped KXmlGui description (tinoxideui.rc) instead of Menu objects. */
         fn loadUiFile(window: Int64, path: String) -> Nothing
         {

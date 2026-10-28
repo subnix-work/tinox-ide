@@ -1,0 +1,263 @@
+import MockBridge
+import TempProject
+import tinox.ide.app.BusMessage
+import tinox.ide.app.EventBus
+import tinox.ide.IdeApp
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Row
+import tinox.ide.workspace.FileOps
+import tinox.ide.workspace.FileSystem
+import tinox.ide.workspace.FileTree
+import tinox.ide.workspace.GitStatus
+import tinox.ide.workspace.TinoxManifest
+import tinox.ide.workspace.TreeEntry
+import tinox.ide.workspace.Workspace
+import tinox.ide.workspace.WorkspaceWatcher
+
+class WorkspaceTest
+{
+    /** The application on the mock bridge; the model object has id `model`. */
+    fnc start(events: EventLoop, model: Int64) -> IdeApp
+    {
+        Bridge::init("test", "Test")
+        const mountObject: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("widget.mount", "{\"id\":" + mountObject.toString() + ",\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"openFolder\":63,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"welcome\":61,\"status\":62}}", "")
+        MockBridge::onCommand("model.create", "{\"id\":" + model.toString() + "}", "")
+        MockBridge::onCommand("config.read", "{\"exists\":false,\"value\":true}", "")
+        for name in ["model.attach", "model.reset", "model.insert", "model.remove", "model.update", "model.setChildren", "model.select", "model.expand", "config.write", "config.delete", "core.log", "action.define", "action.set", "action.setMenuBar", "action.setToolBar", "action.popup", "action.recentAdd", "widget.update", "widget.restoreState", "widget.saveState", "widget.show", "widget.append", "dialog.input", "dialog.message", "dialog.openDirectory", "notify.send", "core.log"]
+        {
+            MockBridge::onCommand(name, "", "")
+        }
+        MockBridge::onCommand("widget.restoreState", "{\"restored\":false}", "")
+        const app: IdeApp = IdeApp::start(events)
+        app.logger.toStderr = false
+        while (MockBridge::nextCommand() != "")
+        {
+        }
+        return app
+    }
+
+    fnc drain() -> List<String>
+    {
+        var out: List<String> = []
+        var next: String = MockBridge::nextCommand()
+        while (next != "")
+        {
+            out.push(next)
+            next = MockBridge::nextCommand()
+        }
+        return out
+    }
+
+    fnc firstWith(all: List<String>, needle: String) -> String
+    {
+        var i: Int64 = 0
+        while (i < all.len())
+        {
+            if (all[i].contains(needle))
+            {
+                return all[i]
+            }
+            i = i + 1
+        }
+        return ""
+    }
+
+    fnc count(all: List<String>, needle: String) -> Int64
+    {
+        var n: Int64 = 0
+        var i: Int64 = 0
+        while (i < all.len())
+        {
+            if (all[i].contains(needle))
+            {
+                n = n + 1
+            }
+            i = i + 1
+        }
+        return n
+    }
+
+    /** A small project: tinox.toml, src/, tests/, a .gitignore, ignored build output. */
+    fnc makeProject() -> String
+    {
+        const root: String = TempProject::create()
+        TempProject::file(root, "tinox.toml", "[package]\nname = \"demo\"\nentry = \"src/App.tnx\"\n")
+        TempProject::file(root, ".gitignore", "build/\n*.log\n")
+        TempProject::file(root, "src/App.tnx", "class App {}\n")
+        TempProject::file(root, "src/util/Strings.tnx", "class Strings {}\n")
+        TempProject::file(root, "tests/AppTest.tnx", "class AppTest {}\n")
+        TempProject::file(root, "build/out.o", "x")
+        TempProject::file(root, "notes.log", "x")
+        TempProject::file(root, "README.md", "# demo\n")
+        TempProject::file(root, "zeta.txt", "z")
+        TempProject::file(root, "Alpha.txt", "a")
+        return root
+    }
+
+    @Test("the manifest: package, entry, dependencies, native libraries, comments and sections")
+    fn testManifest() -> Bool
+    {
+        const text: String = "# a project\n[package]\ncompiler = \"2.8.0\"\nname = \"tinox-ide\"  # the name\nversion = \"0.1.0\"\ndescription = \"A # inside\"\nentry = \"src/Main.tnx\"\n\n[[dependencies]]\ngroup      = \"tinox.core\"\nartifactId = \"json\"\nversion    = \"1.1.0\"\n\n[[dependencies]]\ngroup = \"x.y\"\nartifactId = \"z\"\nversion = \"2\"\n\n[native]\nlibs = [\"tinoxkde\", \"other\"]\nlib_dirs = [\"a\"]\n\n[native.test]\nlibs = [\"mock\"]\n"
+        const m: TinoxManifest = TinoxManifest::parse(text, true)
+        const none: TinoxManifest = TinoxManifest::parse("", false)
+        const root: String = WorkspaceTest::makeProject()
+        const onDisk: TinoxManifest = TinoxManifest::load(root)
+        const without: TinoxManifest = TinoxManifest::load(TempProject::dir(root, "src/util"))
+        TempProject::remove(root)
+        return m.present && m.name == "tinox-ide" && m.version == "0.1.0" && m.compiler == "2.8.0" && m.description == "A # inside" && m.entry == "src/Main.tnx" &&
+            m.dependencies.len() == 2 && m.dependencies[0] == "tinox.core:json:1.1.0" && m.dependencies[1] == "x.y:z:2" && m.nativeLibs.len() == 2 && m.nativeLibs[1] == "other" &&
+            !none.present && none.entry == "src/Main.tnx" && none.title("/home/me/thing") == "thing" && m.title("/x") == "tinox-ide" &&
+            onDisk.present && onDisk.name == "demo" && onDisk.entry == "src/App.tnx" && onDisk.sourceRoots.len() == 2 && onDisk.sourceRoots[0] == "src" && onDisk.sourceRoots[1] == "tests" && !without.present
+    }
+
+    @Test("listing a directory: folders first, then by name without regard to case, ignored entries left out, rows lazy for folders")
+    fn testFileTree() -> Bool
+    {
+        const root: String = WorkspaceTest::makeProject()
+        const tree: FileTree = FileTree::create(root)
+        const entries: List<TreeEntry> = tree.entries(root)
+        var names: List<String> = []
+        for entry in entries
+        {
+            names.push(entry.name)
+        }
+        const rows: List<Row> = tree.rows(root)
+        const first: String = rows[0].toJson()
+        const file: String = rows[rows.len() - 1].toJson()
+        tree.showIgnored = true
+        const withIgnored: Int64 = tree.entries(root).len()
+        const loaded: Bool = tree.isLoaded(root) && !tree.isLoaded(root + "/src")
+        tree.forget(root)
+        TempProject::remove(root)
+        return names.len() == 7 && names[0] == "src" && names[1] == "tests" && names[2] == ".gitignore" && names[3] == "Alpha.txt" && names[4] == "README.md" && names[5] == "tinox.toml" && names[6] == "zeta.txt" &&
+            withIgnored == 9 && first.contains("\"icon\":\"folder\"") && first.contains("\"hasChildren\":true") && first.contains("\"drop\":true") && first.contains("\"editable\":true") && first.contains("\"drag\":true") &&
+            file.contains("\"icon\":\"text-x-generic\"") && !file.contains("hasChildren") && loaded && !tree.isLoaded(root)
+    }
+
+    @Test("sorting treats a thousand entries correctly and quickly")
+    fn testSortingAndSpeed() -> Bool
+    {
+        const root: String = TempProject::create()
+        var i: Int64 = 0
+        while (i < 600)
+        {
+            TempProject::file(root, "f" + (999 - i).toString() + ".txt", "x")
+            i = i + 1
+        }
+        i = 0
+        while (i < 100)
+        {
+            TempProject::dir(root, "d" + (99 - i).toString())
+            i = i + 1
+        }
+        const tree: FileTree = FileTree::create(root)
+        const started: Int64 = Bridge::nowNs()
+        const rows: List<Row> = tree.rows(root)
+        const elapsedMs: Int64 = (Bridge::nowNs() - started) / 1000000
+        println("700 entries listed in " + elapsedMs.toString() + " ms")
+        const entries: List<TreeEntry> = tree.entries(root)
+        var sorted: Bool = true
+        i = 1
+        while (i < entries.len())
+        {
+            if (entries[i].before(entries[i - 1]))
+            {
+                sorted = false
+            }
+            i = i + 1
+        }
+        TempProject::remove(root)
+        return rows.len() == 700 && sorted && entries[0].name == "d0" && entries[99].name == "d99" && entries[100].name == "f400.txt" && elapsedMs < 3000
+    }
+
+    @Test("git status: modified, added, untracked, renamed, conflicts, and folders take the strongest status of what is inside")
+    fn testGitStatus() -> Bool
+    {
+        const output: String = " M src/App.tnx\n?? notes.txt\nA  new/File.tnx\nR  old.txt -> renamed.txt\nUU conflict.txt\n D gone.txt\n?? \"quoted name.txt\"\nxx\n"
+        const status: GitStatus = GitStatus::parse(output, "/p")
+        return status.codeOf("/p/src/App.tnx") == "M" && status.codeOf("/p/src") == "M" && status.codeOf("/p/notes.txt") == "?" && status.codeOf("/p/new/File.tnx") == "A" && status.codeOf("/p/new") == "A" &&
+            status.codeOf("/p/renamed.txt") == "M" && status.codeOf("/p/conflict.txt") == "U" && status.codeOf("/p/gone.txt") == "D" && status.codeOf("/p/quoted name.txt") == "?" && status.codeOf("/p/clean.txt") == "" &&
+            GitStatus::colorFor("M") == "#f67400" && GitStatus::colorFor("?") == "#27ae60" && GitStatus::colorFor("U") == "#da4453" && GitStatus::colorFor("") == "" &&
+            GitStatus::parse(" M a/b/c.txt\nUU a/x.txt\n", "/p").codeOf("/p/a") == "U" && GitStatus::parse("", "/p").count() == 0
+    }
+
+    @Test("file operations: create, rename, move, copy, undo, and what is refused")
+    fn testFileOps() -> Bool
+    {
+        const root: String = TempProject::create()
+        TempProject::dir(root, "sub")
+        TempProject::file(root, "a.txt", "A")
+        const bus: EventBus = EventBus::create()
+        var seen: List<String> = []
+        bus.subscribe("workspace.fileOperation", (m: BusMessage) => seen.push(m.str("kind") + " " + FileSystem::baseName(m.str("path"))))
+        const ops: FileOps = FileOps::create(bus)
+        const created: String = ops.createFile(root, "new.txt")
+        const folder: String = ops.createFolder(root, "dir")
+        const renamed: String = ops.rename(root + "/a.txt", "b.txt")
+        const moved: String = ops.move(renamed, root + "/sub")
+        const copy1: String = ops.copyInto(moved, root + "/sub")
+        const copy2: String = ops.copyInto(moved, root + "/sub")
+        const afterOps: Bool = FileSystem::exists(created) && FileSystem::isDirectory(folder) && FileSystem::exists(moved) && FileSystem::read(copy1) == "A" && copy1.endsWith("b.txt copy") && copy2.endsWith("b.txt copy 2")
+        var errors: List<String> = []
+        for attempt in [0, 1, 2, 3, 4, 5]
+        {
+            try
+            {
+                if (attempt == 0)
+                {
+                    ops.createFile(root, "")
+                }
+                else if (attempt == 1)
+                {
+                    ops.createFile(root, "a/b")
+                }
+                else if (attempt == 2)
+                {
+                    ops.createFile(root, "new.txt")
+                }
+                else if (attempt == 3)
+                {
+                    ops.rename(root + "/new.txt", "..")
+                }
+                else if (attempt == 4)
+                {
+                    ops.move(root + "/sub", root + "/sub/deeper")
+                }
+                else
+                {
+                    ops.copyInto(root + "/sub", root + "/sub")
+                }
+            }
+            catch (e: String)
+            {
+                errors.push(e)
+            }
+        }
+        const unchanged: Bool = ops.rename(root + "/new.txt", "new.txt") == root + "/new.txt"
+        const stepsBefore: Int64 = ops.undoStack.len()
+        // undo takes back the copies (trash needed: use real removal for the test by undoing renames/moves only)
+        ops.undoStack = [ops.undoStack[2], ops.undoStack[3]]
+        const hint: String = ops.undoDescription()
+        const firstUndo: String = ops.undo()
+        const movedBack: Bool = FileSystem::exists(root + "/b.txt") && !FileSystem::exists(moved)
+        const secondUndo: String = ops.undo()
+        const renamedBack: Bool = FileSystem::exists(root + "/a.txt") && !FileSystem::exists(root + "/b.txt")
+        var nothing: String = ""
+        try
+        {
+            ops.undo()
+        }
+        catch (e: String)
+        {
+            nothing = e
+        }
+        ops.deleteForGood(root + "/dir")
+        const deleted: Bool = !FileSystem::exists(root + "/dir")
+        TempProject::remove(root)
+        return afterOps && errors.len() == 6 && errors[0].contains("empty") && errors[1].contains("not a valid") && errors[2].contains("already exists") && errors[3].contains("not a valid") && errors[4].contains("itself") && errors[5].contains("itself") &&
+            unchanged && stepsBefore == 6 && hint == "move b.txt back to " + root && firstUndo.contains("move") && movedBack && secondUndo.contains("rename") && renamedBack && nothing.contains("Nothing to undo") && deleted &&
+            seen.len() >= 8 && seen[0] == "create new.txt" && seen[2] == "rename b.txt" && seen[3] == "move b.txt" && seen[4] == "copy b.txt copy"
+    }
+}

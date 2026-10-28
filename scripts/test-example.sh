@@ -30,6 +30,15 @@ run() {
 }
 
 RUN_FILE= run "the IDE" TINOXIDE_SMOKE=1
+# opening a project: this repository, which has a tinox.toml; it must take well under a second
+opened=$(env QT_QPA_PLATFORM=offscreen TKDE_NO_KCRASH=1 TINOXIDE_SMOKE=1 TINOXIDE_OPEN="$here" XDG_CONFIG_HOME="$sandbox/config" XDG_DATA_HOME="$sandbox/data" XDG_CACHE_HOME="$sandbox/cache" \
+    timeout 120 "${TINOX:-tinox}" run 2>&1 >/dev/null | grep 'opened project' || true)
+case "$opened" in
+*" in "*" ms"*) ms=${opened##* in }; ms=${ms% ms*}
+    if [ "$ms" -ge 1000 ]; then echo "opening the project took $ms ms" >&2; exit 1; fi
+    echo "workspace: opened this repository in $ms ms" ;;
+*) echo "the IDE did not open the project: $opened" >&2; exit 1 ;;
+esac
 test -s "$sandbox/config/tinoxiderc" || { echo "the IDE did not save its layout to tinoxiderc" >&2; exit 1; }
 echo "ide: window, docks, menus built; Quit command works; layout saved to tinoxiderc"
 RUN_FILE=examples/shell/Main.tnx run "the shell example" TINOXIDE_EXAMPLE_QUIT=1

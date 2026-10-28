@@ -21,7 +21,7 @@ namespace tinox.ide.app
      */
     class Background
     {
-        /** Sends a message with a JSON payload ("" for none) to the bus. Safe to call from any task. */
+        /** Sends a message with a JSON payload ("" for none) to the bus. Safe to call from any task; after the bridge has shut down the message is dropped. */
         fnc report(topic: String, payloadJson: String) -> Nothing
         {
             var command: Command = Command::named("core.message").str("topic", topic)
@@ -29,7 +29,14 @@ namespace tinox.ide.app
             {
                 command = command.raw("payload", payloadJson)
             }
-            Bridge::post(command.build())
+            try
+            {
+                Bridge::post(command.build())
+            }
+            catch (e: String)
+            {
+                // the bridge is gone (the IDE is quitting): nobody is left to tell
+            }
         }
 
         /** Sends a message whose payload is a single string, `{"text": ...}`. */

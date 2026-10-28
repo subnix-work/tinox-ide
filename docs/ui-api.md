@@ -71,6 +71,7 @@ actions.toolBar(mount.idOf("tools"), ["file_open", "-", "build.run"])
 * State is pushed with `setEnabled/setChecked/setText/...` and never raises `onTrigger`.
 * `list()` returns `ActionInfo` for every action (label, shortcut, enabled): the data of a command palette;
   `trigger(id)` runs one.
+* `popup(ids, x, y)` shows a context menu of actions where the user clicked (`Mount.onContextMenu` gives the position).
 * `loadUiFile`/`loadUiXml` build menus from a KXmlGui description instead of `Menu` objects.
 * `Actions.create` takes over the `action.*` events of the loop.
 
@@ -111,6 +112,13 @@ doc.setDiagnostics("lsp", [Diagnostic::error(Range::create(3, 4, 3, 9), "unknown
   List<CompletionItem>`. A provider that throws answers with no items and the failure is reported, so the popup
   never waits for an answer that will not come.
 
+## Dialogs: `Dialogs`
+
+`Dialogs::create(events)` wraps the bridge's dialogs so that none blocks: the call returns, the dialog is up, and a
+handler runs when it is answered. `chooseFolder`, `chooseFile`, `askText` (accepted + text), `confirm` (yes/no),
+`ask` (your own buttons, answered with the button's id), `inform` and `error`. Answers are matched by request number,
+so many dialogs can be open at once.
+
 ## Application structure
 
 How these classes are used in the application (bus, store, command registry, main window) is in
@@ -118,9 +126,8 @@ How these classes are used in the application (bus, store, command registry, mai
 
 ## Not wrapped here
 
-Dialogs, config and notifications (`dialog.*`, `config.*`, `notify.*`) are used through `Command` and
-`Bridge.query` until the IDE core needs them (#19 and later); their messages are documented in
-[dialog.md](dialog.md).
+`config.*` and `notify.*` are used through `tinox.ide.settings.Settings` (typed reads and writes) and `Command`;
+their messages are documented in [dialog.md](dialog.md).
 
 ## Language notes
 

@@ -129,6 +129,14 @@ static void testStructure()
     EXPECT_EQ(errorCode(query(cmd("model.move", Obj{{"target", double(m)}, {"id", "docs"}, {"parent", "docs"}}))), -1);
     EXPECT_EQ(outline(m), QStringLiteral("README\nsrc\n  main\n  first\n  second\ndocs\n  a\n  util\ntests"));
 
+    // a colour can be set and cleared again
+    EXPECT(ok(query(cmd("model.update", Obj{{"target", double(m)}, {"id", "first"}, {"fields", Obj{{"color", "#ff0000"}}}}))));
+    EXPECT_EQ(query(cmd("model.debug.data", Obj{{"target", double(m)}, {"id", "first"}})).value(QStringLiteral("color")).toString(),
+              QStringLiteral("#ff0000"));
+    EXPECT(ok(query(cmd("model.update", Obj{{"target", double(m)}, {"id", "first"}, {"fields", Obj{{"color", ""}}}}))));
+    EXPECT_EQ(query(cmd("model.debug.data", Obj{{"target", double(m)}, {"id", "first"}})).value(QStringLiteral("color")).toString(),
+              QString());
+
     // update: fields change, data changes, structure does not
     EXPECT(ok(query(cmd(
         "model.update",
@@ -408,6 +416,7 @@ static void testDragAndDrop()
               Obj{{"target", double(m)}, {"urls", QJsonArray{"file:///tmp/a.txt", "file:///tmp/b.txt"}}, {"action", "copy"}}));
     Obj ext = waitFor("model.dropRequested", 1000);
     EXPECT_EQ(ext.value(QStringLiteral("urls")).toArray().size(), 2);
+    EXPECT_EQ(ext.value(QStringLiteral("files")).toArray(), QJsonArray({QStringLiteral("/tmp/a.txt"), QStringLiteral("/tmp/b.txt")}));
     EXPECT(ext.value(QStringLiteral("parent")).isNull());
     EXPECT_EQ(ext.value(QStringLiteral("action")).toString(), QStringLiteral("copy"));
     tkde_release(m);

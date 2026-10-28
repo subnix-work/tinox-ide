@@ -1,0 +1,164 @@
+module tinox.ide.workspace
+
+import tinox.core.fs.WatchEvent
+import tinox.core.fs.Watcher
+import tinox.core.process.Process
+import tinox.ide.app.Background
+import tinox.ide.ui.Js
+
+namespace tinox.ide.workspace
+{
+    /**
+     * Tells the IDE when files change behind its back: a git checkout, a formatter, a build, a
+     * file manager. A background task waits for the kernel's change notifications (inotify) and
+     * reports batches as "workspace.fsChanged" on the bus, whose payload is
+     * `{"paths": [directories that changed]}`.
+     *
+     * Only the directories the tree has opened are watched (one non-recursive watch each), so a
+     * huge repository does not use up the system's watch limit. If watching is not possible (limit
+     * reached, no inotify) the watcher falls back to polling: every few seconds it reports
+     * "workspace.fsChanged" with an empty path list, which means "look at everything you have loaded".
+     */
+    class WorkspaceWatcher
+    {
+        /** The notification source; absent while polling. */
+        var watcher: Watcher
+        /** Whether the notification source works. */
+        var watching: Bool
+        /** Ends the background task. */
+        var control: WatchControl
+        /** The directories being watched. */
+        var directories: Map<String, Bool>
+        /** Why watching is not used, "" when it is. */
+        var fallbackReason: String
+
+        /** A watcher that does nothing: the state before a project is open. */
+        fnc idle() -> WorkspaceWatcher
+        {
+            return WorkspaceWatcher { watcher: Watcher { handle: 0, debounceMs: 0 }, watching: false, control: WatchControl::create(), directories: Map::new(), fallbackReason: "" }
+        }
+
+        /** Starts the background task. Falls back to polling when inotify cannot be used. */
+        fnc start() -> WorkspaceWatcher
+        {
+            const control: WatchControl = WatchControl::create()
+            try
+            {
+                const w: Watcher = Watcher::create(100)
+                const instance: WorkspaceWatcher = WorkspaceWatcher { watcher: w, watching: true, control: control, directories: Map::new(), fallbackReason: "" }
+                spawn WorkspaceWatcher::listen(w, control)
+                return instance
+            }
+            catch (e: String)
+            {
+                const w: Watcher = Watcher { handle: 0, debounceMs: 0 }
+                spawn WorkspaceWatcher::pollLoop(control)
+                return WorkspaceWatcher { watcher: w, watching: false, control: control, directories: Map::new(), fallbackReason: e }
+            }
+        }
+
+        /** Watches a directory (not its subdirectories). Switches to polling when the system refuses. */
+        fn add(directory: String) -> Nothing
+        {
+            if (this.directories.contains(directory) || !this.watching)
+            {
+                return
+            }
+            try
+            {
+                Watcher::watch(this.watcher, directory, false)
+                this.directories.set(directory, true)
+            }
+            catch (e: String)
+            {
+                this.fallBack(e)
+            }
+        }
+
+        /** Stops watching a directory. */
+        fn remove(directory: String) -> Nothing
+        {
+            if (this.directories.contains(directory) && this.watching)
+            {
+                Watcher::unwatch(this.watcher, directory)
+                this.directories.remove(directory)
+            }
+        }
+
+        /** Gives up on notifications: from now on the task polls. */
+        fn fallBack(reason: String) -> Nothing
+        {
+            this.fallbackReason = reason
+            this.control.stopped = true
+            this.watching = false
+            this.control = WatchControl::create()
+            spawn WorkspaceWatcher::pollLoop(this.control)
+        }
+
+        /** Ends the background task. */
+        fn stop() -> Nothing
+        {
+            this.control.stopped = true
+        }
+
+        /** The background task: waits for changes and reports the directories they happened in. */
+        fnc listen(w: Watcher, control: WatchControl) -> Int64
+        {
+            while (!control.stopped)
+            {
+                const events: List<WatchEvent> = Watcher::poll(w, 500)
+                if (events.len() > 0)
+                {
+                    var paths: List<String> = []
+                    var seen: Map<String, Bool> = Map::new()
+                    var overflow: Bool = false
+                    for e in events
+                    {
+                        if (e.kind == "overflow")
+                        {
+                            overflow = true
+                        }
+                        else
+                        {
+                            const dir: String = FileSystem::parent(e.path)
+                            if (!seen.contains(dir))
+                            {
+                                seen.set(dir, true)
+                                paths.push(dir)
+                            }
+                            if (e.isDirectory && !seen.contains(e.path))
+                            {
+                                seen.set(e.path, true)
+                                paths.push(e.path)
+                            }
+                        }
+                    }
+                    if (overflow)
+                    {
+                        paths = []
+                    }
+                    Background::report("workspace.fsChanged", Js::object([Js::field("paths", Js::strings(paths))]))
+                }
+            }
+            Watcher::close(w)
+            return 0
+        }
+
+        /** The fallback task: asks for a look at everything every three seconds. */
+        fnc pollLoop(control: WatchControl) -> Int64
+        {
+            var waited: Int64 = 0
+            while (!control.stopped)
+            {
+                Process::sleep(100)
+                waited = waited + 100
+                if (waited >= 3000)
+                {
+                    waited = 0
+                    Background::report("workspace.fsChanged", Js::object([Js::field("paths", "[]")]))
+                }
+            }
+            return 0
+        }
+    }
+}

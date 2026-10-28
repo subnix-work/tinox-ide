@@ -31,6 +31,12 @@ namespace tinox.ide.ui
             return Row { id: id, fields: [Js::strField("text", text)], flagFields: [], cellList: [], kids: [], withChildren: false }
         }
 
+        /** A row with only an id and no fields, to change some fields of an existing row: `model.update(id, Row::patch(id).color(""))`. */
+        fnc patch(id: String) -> Row
+        {
+            return Row { id: id, fields: [], flagFields: [], cellList: [], kids: [], withChildren: false }
+        }
+
         /** The row's id. */
         fn getId() -> String
         {

@@ -1,0 +1,143 @@
+module tinox.ide.ui
+
+import tinox.core.json
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+namespace tinox.ide.ui
+{
+    /**
+     * Dialogs (docs/dialog.md). None of them blocks: the call returns at once, the dialog is
+     * up, and `handler` runs on the logic task when the user has answered. Meanwhile events
+     * keep being handled.
+     *
+     *     dialogs.askText("Rename", "New name:", "Main.tnx", (accepted: Bool, text: String) => Main::rename(accepted, text))
+     *     dialogs.confirm("Delete", "Delete Main.tnx?", "", (yes: Bool) => Main::delete(yes))
+     *
+     * Dialogs.create takes over the "dialog.result" event of the loop.
+     */
+    class Dialogs
+    {
+        /** The loop the answers arrive on. */
+        var events: EventLoop
+        /** The number of the next request. */
+        var nextRequest: Int64
+        /** What to do with each answer, by request number. */
+        var waiting: Map<String, fnc(Event) -> Nothing>
+
+        /** Dialogs that answer on this loop. */
+        fnc create(events: EventLoop) -> Dialogs
+        {
+            const dialogs: Dialogs = Dialogs { events: events, nextRequest: 1, waiting: Map::new() }
+            events.onType("dialog.result", (ev: Event) => dialogs.answered(ev))
+            return dialogs
+        }
+
+        /** Runs the handler that waits for this answer (each answer is used once). */
+        fn answered(ev: Event) -> Nothing
+        {
+            const name: String = ev.int("req").toString()
+            if (this.waiting.contains(name))
+            {
+                const handler: fnc(Event) -> Nothing = this.waiting.get(name)
+                this.waiting.remove(name)
+                handler(ev)
+            }
+        }
+
+        /** How many dialogs are waiting for an answer. */
+        fn pending() -> Int64
+        {
+            return this.waiting.keys().len()
+        }
+
+        /** Registers a handler and returns its request number. */
+        fn expect(handler: fnc(Event) -> Nothing) -> Int64
+        {
+            const number: Int64 = this.nextRequest
+            this.nextRequest = this.nextRequest + 1
+            this.waiting.set(number.toString(), handler)
+            return number
+        }
+
+        /** Asks for a folder; the handler gets its path, or "" when the user cancelled. */
+        fn chooseFolder(title: String, start: String, handler: fnc(String) -> Nothing) -> Nothing
+        {
+            const number: Int64 = this.expect((ev: Event) => handler(Dialogs::firstFile(ev)))
+            Bridge::query(Command::named("dialog.openDirectory").str("title", title).str("dir", start).int("req", number).build())
+        }
+
+        /** Asks for a file to open; `filters` are like "Tinox (*.tnx)". The handler gets the path, or "" when cancelled. */
+        fn chooseFile(title: String, start: String, filters: List<String>, handler: fnc(String) -> Nothing) -> Nothing
+        {
+            const number: Int64 = this.expect((ev: Event) => handler(Dialogs::firstFile(ev)))
+            Bridge::query(Command::named("dialog.openFile").str("title", title).str("dir", start).raw("filters", Js::strings(filters)).int("req", number).build())
+        }
+
+        /** The first chosen file of a file dialog's answer, "" when there is none. */
+        fnc firstFile(ev: Event) -> String
+        {
+            const files: List<JsonValue> = ev.field("files").asList()
+            if (!ev.bool("accepted") || files.len() == 0)
+            {
+                return ""
+            }
+            return files[0].getString()
+        }
+
+        /** Asks for a line of text. The handler gets whether the user accepted, and the text. */
+        fn askText(title: String, label: String, value: String, handler: fnc(Bool, String) -> Nothing) -> Nothing
+        {
+            const number: Int64 = this.expect((ev: Event) => handler(ev.bool("accepted"), ev.str("value")))
+            Bridge::query(Command::named("dialog.input").str("title", title).str("label", label).str("value", value).int("req", number).build())
+        }
+
+        /** Asks a yes/no question; the handler gets true for Yes. `details` is shown on request, "" for none. */
+        fn confirm(title: String, text: String, details: String, handler: fnc(Bool) -> Nothing) -> Nothing
+        {
+            const number: Int64 = this.expect((ev: Event) => handler(ev.str("button") == "yes"))
+            var command: Command = Command::named("dialog.message").str("kind", "yesNo").str("title", title).str("text", text).int("req", number)
+            if (details != "")
+            {
+                command = command.str("details", details)
+            }
+            Bridge::query(command.build())
+        }
+
+        /**
+         * Asks with buttons of your own: `ids` and `texts` are parallel lists; the first is the
+         * default, the last answers Escape. The handler gets the id of the button used.
+         */
+        fn ask(title: String, text: String, ids: List<String>, texts: List<String>, handler: fnc(String) -> Nothing) -> Nothing
+        {
+            var buttons: List<String> = []
+            var i: Int64 = 0
+            while (i < ids.len())
+            {
+                var role: String = "accept"
+                if (i == ids.len() - 1)
+                {
+                    role = "reject"
+                }
+                buttons.push(Js::object([Js::strField("id", ids[i]), Js::strField("text", texts[i]), Js::strField("role", role)]))
+                i = i + 1
+            }
+            const number: Int64 = this.expect((ev: Event) => handler(ev.str("button")))
+            Bridge::query(Command::named("dialog.message").str("kind", "question").str("title", title).str("text", text).raw("buttons", Js::array(buttons)).str("default", ids[0]).int("req", number).build())
+        }
+
+        /** Tells the user something; nothing is answered. */
+        fn inform(title: String, text: String) -> Nothing
+        {
+            Bridge::query(Command::named("dialog.message").str("kind", "info").str("title", title).str("text", text).build())
+        }
+
+        /** Tells the user about an error; nothing is answered. */
+        fn error(title: String, text: String) -> Nothing
+        {
+            Bridge::query(Command::named("dialog.message").str("kind", "error").str("title", title).str("text", text).build())
+        }
+    }
+}

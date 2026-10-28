@@ -1,0 +1,41 @@
+import tinox.core.fs.Fs
+import tinox.core.process.Process
+import tinox.core.process.ProcessResult
+import tinox.ide.workspace.FileSystem
+
+// A throw-away directory for tests that need real files.
+class TempProject
+{
+    /** A new empty directory (without a trailing slash). */
+    fnc create() -> String
+    {
+        const result: ProcessResult = Process::run(["mktemp", "-d", "/tmp/tinoxide-test-XXXXXX"], 5000, "")
+        return result.stdout.trim()
+    }
+
+    /** Writes a file (and the directories above it). */
+    fnc file(root: String, relative: String, content: String) -> String
+    {
+        const path: String = FileSystem::join(root, relative)
+        FileSystem::makeDirectories(FileSystem::parent(path))
+        FileSystem::write(path, content)
+        return path
+    }
+
+    /** Makes a directory. */
+    fnc dir(root: String, relative: String) -> String
+    {
+        const path: String = FileSystem::join(root, relative)
+        FileSystem::makeDirectories(path)
+        return path
+    }
+
+    /** Removes it all. */
+    fnc remove(root: String) -> Nothing
+    {
+        if (root.startsWith("/tmp/tinoxide-test-"))
+        {
+            FileSystem::deleteTree(root)
+        }
+    }
+}

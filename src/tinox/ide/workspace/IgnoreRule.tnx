@@ -1,0 +1,84 @@
+module tinox.ide.workspace
+
+namespace tinox.ide.workspace
+{
+    /** One line of a .gitignore: what it names, and where it applies. */
+    class IgnoreRule
+    {
+        /** The glob, without a leading `!` or `/` and without a trailing `/`. */
+        var pattern: String
+        /** A `!` rule: matching files are *not* ignored. */
+        var negated: Bool
+        /** The pattern ended with `/`: it matches directories only. */
+        var directoryOnly: Bool
+        /** The pattern had a slash in it (or started with one): it is matched against the path below `base`, not against any name. */
+        var anchored: Bool
+        /** The directory the .gitignore was in; the rule applies below it. */
+        var base: String
+
+        /** Reads one line; null-like result: a blank line or a comment gives a rule with an empty pattern (see isEmpty). */
+        fnc parse(line: String, base: String) -> IgnoreRule
+        {
+            var text: String = line.trim()
+            var negated: Bool = false
+            var directoryOnly: Bool = false
+            var anchored: Bool = false
+            if (text == "" || text.startsWith("#"))
+            {
+                return IgnoreRule { pattern: "", negated: false, directoryOnly: false, anchored: false, base: base }
+            }
+            if (text.startsWith("!"))
+            {
+                negated = true
+                text = text.substring(1, text.len())
+            }
+            if (text.endsWith("/"))
+            {
+                directoryOnly = true
+                text = text.substring(0, text.len() - 1)
+            }
+            if (text.startsWith("/"))
+            {
+                anchored = true
+                text = text.substring(1, text.len())
+            }
+            else if (text.contains("/"))
+            {
+                anchored = true
+            }
+            return IgnoreRule { pattern: text, negated: negated, directoryOnly: directoryOnly, anchored: anchored, base: base }
+        }
+
+        /** Whether this line names nothing (blank or comment). */
+        fn isEmpty() -> Bool
+        {
+            return this.pattern == ""
+        }
+
+        /** Whether the rule names this path. `isDirectory` says what the path is. */
+        fn matches(path: String, isDirectory: Bool) -> Bool
+        {
+            if (this.directoryOnly && !isDirectory)
+            {
+                return false
+            }
+            const prefix: String = this.base + "/"
+            if (!path.startsWith(prefix))
+            {
+                return false
+            }
+            const relative: String = path.substring(prefix.len(), path.len())
+            if (this.anchored)
+            {
+                return Glob::matches(this.pattern, relative)
+            }
+            const slash: Int64 = relative.lastIndexOf("/")
+            var name: String = relative
+            if (slash >= 0)
+            {
+                name = relative.substring(slash + 1, relative.len())
+            }
+            return Glob::matches(this.pattern, name)
+        }
+    }
+}

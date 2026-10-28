@@ -1,0 +1,17 @@
+module tinox.ide.workspace
+
+namespace tinox.ide.workspace
+{
+    /** The flag shared between the logic task and a watching task: set once to ask the task to end. */
+    class WatchControl
+    {
+        /** Set to end the task. */
+        var stopped: Bool
+
+        /** A control that has not been stopped. */
+        fnc create() -> WatchControl
+        {
+            return WatchControl { stopped: false }
+        }
+    }
+}

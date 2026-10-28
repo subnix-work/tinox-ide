@@ -8,12 +8,18 @@
 #include <QDialog>
 #include <QFile>
 #include <QMainWindow>
+#include <QMenu>
 #include <QTemporaryDir>
 #include <QTest>
 
 #include <thread>
 
 using Obj = QJsonObject;
+
+static bool ok(const Obj &r)
+{
+    return r.value(QStringLiteral("ok")).toBool();
+}
 
 static Obj act(const char *id, Obj fields = {})
 {
@@ -289,6 +295,21 @@ static void testMenusToolbarsAndKeys(const QString &dir)
     EXPECT_EQ(cd.value(QStringLiteral("items")).toArray().size(), 3);
     EXPECT_EQ(cd.value(QStringLiteral("policy")).toInt(), int(Qt::ActionsContextMenu));
     tkde_release(ctxId);
+
+    // a popup menu at a position: it is shown, offers the actions, and triggering one raises the event
+    EXPECT(ok(query(cmd("action.popup", Obj{{"items", strings({"build.run", "-", "view.wrap"})}, {"x", 20}, {"y", 30}}))));
+    bool shown = false;
+    onUi([&] {
+        if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+            shown = menu->isVisible() && menu->actions().size() == 3;
+            menu->actions().first()->trigger();
+            menu->close();
+        }
+    });
+    EXPECT(shown);
+    EXPECT_EQ(waitFor("action.triggered", 1000).value(QStringLiteral("id")).toString(), QStringLiteral("build.run"));
+    EXPECT_EQ(errorCode(query(cmd("action.popup", Obj{{"items", strings({"nope"})}, {"x", 1}, {"y", 1}}))), -1);
+    EXPECT_EQ(errorCode(query(cmd("action.popup", Obj{{"items", strings({"build.run"})}}))), -1);
     // keep the window open: closing the last one ends the loop
 }
 

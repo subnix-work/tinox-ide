@@ -1,0 +1,237 @@
+module tinox.ide.workspace
+
+namespace tinox.ide.workspace
+{
+    /**
+     * What the IDE needs to know from a project's `tinox.toml`: its name, entry point, dependencies and
+     * source folders. This is a reader for the subset of TOML the manifest uses (sections, arrays of
+     * tables, strings, booleans, integers and arrays of strings), not a general TOML parser; a line it
+     * does not understand is skipped, never fatal. The compiler remains the authority on the manifest.
+     */
+    class TinoxManifest
+    {
+        /** Whether the folder has a tinox.toml. */
+        var present: Bool
+        /** The path of the manifest, "" when there is none. */
+        var path: String
+        /** `package.name`. */
+        var name: String
+        /** `package.version`. */
+        var version: String
+        /** `package.description`. */
+        var description: String
+        /** `package.entry`, "src/Main.tnx" when not given. */
+        var entry: String
+        /** `package.compiler`. */
+        var compiler: String
+        /** The dependencies as `group:artifactId:version`. */
+        var dependencies: List<String>
+        /** Folders of the project that hold Tinox sources, as paths relative to the project: src, tests, examples when they exist. */
+        var sourceRoots: List<String>
+        /** Native libraries the project links (`[native] libs`). */
+        var nativeLibs: List<String>
+
+        /** Reads `root/tinox.toml`; a folder without one gives a manifest with `present` false. */
+        fnc load(root: String) -> TinoxManifest
+        {
+            const file: String = FileSystem::join(root, "tinox.toml")
+            var text: String = ""
+            const found: Bool = FileSystem::exists(file) && !FileSystem::isDirectory(file)
+            if (found)
+            {
+                try
+                {
+                    text = FileSystem::read(file)
+                }
+                catch (e: String)
+                {
+                    text = ""
+                }
+            }
+            const manifest: TinoxManifest = TinoxManifest::parse(text, found)
+            if (found)
+            {
+                manifest.path = file
+            }
+            for candidate in ["src", "tests", "examples"]
+            {
+                if (FileSystem::isDirectory(FileSystem::join(root, candidate)))
+                {
+                    manifest.sourceRoots.push(candidate)
+                }
+            }
+            return manifest
+        }
+
+        /** Reads manifest text. `present` says whether there was a file at all. */
+        fnc parse(text: String, present: Bool) -> TinoxManifest
+        {
+            const manifest: TinoxManifest = TinoxManifest {
+                present: present,
+                path: "",
+                name: "",
+                version: "",
+                description: "",
+                entry: "src/Main.tnx",
+                compiler: "",
+                dependencies: [],
+                sourceRoots: [],
+                nativeLibs: []
+            }
+            var section: String = ""
+            var group: String = ""
+            var artifact: String = ""
+            var dependencyVersion: String = ""
+            var inDependency: Bool = false
+            // a while loop: `continue` in a `for` loop is broken (subnix-work/tinox#513)
+            const lines: List<String> = text.split("\n")
+            var next: Int64 = 0
+            while (next < lines.len())
+            {
+                const raw: String = lines[next]
+                next = next + 1
+                const line: String = TinoxManifest::withoutComment(raw).trim()
+                if (line == "")
+                {
+                    continue
+                }
+                if (line.startsWith("["))
+                {
+                    if (inDependency && artifact != "")
+                    {
+                        manifest.dependencies.push(group + ":" + artifact + ":" + dependencyVersion)
+                    }
+                    group = ""
+                    artifact = ""
+                    dependencyVersion = ""
+                    inDependency = false
+                    section = line.replace("[", "").replace("]", "").trim()
+                    if (section == "dependencies")
+                    {
+                        inDependency = true
+                    }
+                    continue
+                }
+                const equals: Int64 = line.indexOf("=")
+                if (equals < 0)
+                {
+                    continue
+                }
+                const key: String = line.substring(0, equals).trim()
+                const value: String = line.substring(equals + 1, line.len()).trim()
+                if (section == "package")
+                {
+                    if (key == "name")
+                    {
+                        manifest.name = TinoxManifest::unquote(value)
+                    }
+                    else if (key == "version")
+                    {
+                        manifest.version = TinoxManifest::unquote(value)
+                    }
+                    else if (key == "description")
+                    {
+                        manifest.description = TinoxManifest::unquote(value)
+                    }
+                    else if (key == "entry")
+                    {
+                        manifest.entry = TinoxManifest::unquote(value)
+                    }
+                    else if (key == "compiler")
+                    {
+                        manifest.compiler = TinoxManifest::unquote(value)
+                    }
+                }
+                else if (inDependency)
+                {
+                    if (key == "group")
+                    {
+                        group = TinoxManifest::unquote(value)
+                    }
+                    else if (key == "artifactId")
+                    {
+                        artifact = TinoxManifest::unquote(value)
+                    }
+                    else if (key == "version")
+                    {
+                        dependencyVersion = TinoxManifest::unquote(value)
+                    }
+                }
+                else if (section == "native" && key == "libs")
+                {
+                    manifest.nativeLibs = TinoxManifest::strings(value)
+                }
+            }
+            if (inDependency && artifact != "")
+            {
+                manifest.dependencies.push(group + ":" + artifact + ":" + dependencyVersion)
+            }
+            return manifest
+        }
+
+        /** The line without a trailing `# comment` (a `#` inside a quoted string stays). */
+        fnc withoutComment(line: String) -> String
+        {
+            var quoted: Bool = false
+            var i: Int64 = 0
+            while (i < line.len())
+            {
+                const ch: String = line.substring(i, i + 1)
+                if (ch == "\"")
+                {
+                    quoted = !quoted
+                }
+                else if (ch == "#" && !quoted)
+                {
+                    return line.substring(0, i)
+                }
+                i = i + 1
+            }
+            return line
+        }
+
+        /** A TOML string value without its quotes. */
+        fnc unquote(value: String) -> String
+        {
+            if (value.len() >= 2 && value.startsWith("\"") && value.endsWith("\""))
+            {
+                return value.substring(1, value.len() - 1)
+            }
+            return value
+        }
+
+        /** The strings of a one-line array like `["a", "b"]`. */
+        fnc strings(value: String) -> List<String>
+        {
+            var out: List<String> = []
+            var inner: String = value.trim()
+            if (inner.startsWith("["))
+            {
+                inner = inner.substring(1, inner.len())
+            }
+            if (inner.endsWith("]"))
+            {
+                inner = inner.substring(0, inner.len() - 1)
+            }
+            for part in inner.split(",")
+            {
+                const item: String = TinoxManifest::unquote(part.trim())
+                if (item != "")
+                {
+                    out.push(item)
+                }
+            }
+            return out
+        }
+
+        /** The name to show for the project: the package name, else the folder's name. */
+        fn title(root: String) -> String
+        {
+            if (this.name != "")
+            {
+                return this.name
+            }
+            return FileSystem::baseName(root)
+        }
+    }
+}
