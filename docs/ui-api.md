@@ -111,6 +111,11 @@ doc.setDiagnostics("lsp", [Diagnostic::error(Range::create(3, 4, 3, 9), "unknown
   List<CompletionItem>`. A provider that throws answers with no items and the failure is reported, so the popup
   never waits for an answer that will not come.
 
+## Application structure
+
+How these classes are used in the application (bus, store, command registry, main window) is in
+[ide-core.md](ide-core.md).
+
 ## Not wrapped here
 
 Dialogs, config and notifications (`dialog.*`, `config.*`, `notify.*`) are used through `Command` and

@@ -1,0 +1,157 @@
+module tinox.ide.app
+
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.ui.Js
+
+namespace tinox.ide.app
+{
+    /**
+     * Logging for the IDE. Lines at or above the minimum level go to stderr, are kept in a
+     * ring of recent lines (for a bug report) and, once attach() was called, are published as
+     * "log.line" on the bus, which is how the Output panel shows them. Warnings and errors can
+     * also be forwarded to the bridge's Qt log category (forwardToBridge), so they appear
+     * beside Qt's and KDE's own messages.
+     *
+     * The minimum level of the application comes from the environment variable TINOXIDE_LOG
+     * ("debug", "info", "warn" or "error"; default "info").
+     */
+    class Logger
+    {
+        /** Lines below this level are dropped (0 debug, 1 info, 2 warn, 3 error). */
+        var minLevel: Int64
+        /** The most recent lines, oldest first. */
+        var recent: List<String>
+        /** How many lines `recent` keeps. */
+        var capacity: Int64
+        /** Whether lines are printed on stderr. */
+        var toStderr: Bool
+        /** Whether warnings and errors also go to the bridge's log. */
+        var toBridge: Bool
+        /** The bus lines are published on, once attached. */
+        var bus: EventBus
+        /** Whether attach() was called. */
+        var attached: Bool
+        /** How many lines were logged (not dropped). */
+        var count: Int64
+
+        /** A logger that drops lines below `minLevel`. */
+        fnc create(minLevel: Int64) -> Logger
+        {
+            return Logger { minLevel: minLevel, recent: [], capacity: 500, toStderr: true, toBridge: false, bus: EventBus::create(), attached: false, count: 0 }
+        }
+
+        /** The logger of the application: level from TINOXIDE_LOG. */
+        fnc fromEnvironment() -> Logger
+        {
+            return Logger::create(Logger::levelOf(Bridge::env("TINOXIDE_LOG")))
+        }
+
+        /** The number of a level name; unknown names mean "info". */
+        fnc levelOf(name: String) -> Int64
+        {
+            if (name == "debug")
+            {
+                return 0
+            }
+            if (name == "warn" || name == "warning")
+            {
+                return 2
+            }
+            if (name == "error")
+            {
+                return 3
+            }
+            return 1
+        }
+
+        /** Publishes every kept line as "log.line" on this bus. */
+        fn attach(bus: EventBus) -> Nothing
+        {
+            this.bus = bus
+            this.attached = true
+        }
+
+        /** Sends warnings and errors to the bridge's log category as well. */
+        fn forwardToBridge(value: Bool) -> Nothing
+        {
+            this.toBridge = value
+        }
+
+        /** Logs a line at a level (0 debug, 1 info, 2 warn, 3 error). */
+        fn log(level: Int64, message: String) -> Nothing
+        {
+            if (level < this.minLevel)
+            {
+                return
+            }
+            var tag: String = "INFO "
+            var bridgeLevel: String = "info"
+            if (level <= 0)
+            {
+                tag = "DEBUG"
+                bridgeLevel = "debug"
+            }
+            else if (level == 2)
+            {
+                tag = "WARN "
+                bridgeLevel = "warning"
+            }
+            else if (level >= 3)
+            {
+                tag = "ERROR"
+                bridgeLevel = "error"
+            }
+            const line: String = tag + " " + message
+            this.count = this.count + 1
+            this.recent.push(line)
+            if (this.recent.len() > this.capacity)
+            {
+                var kept: List<String> = []
+                var i: Int64 = this.recent.len() - this.capacity
+                while (i < this.recent.len())
+                {
+                    kept.push(this.recent[i])
+                    i = i + 1
+                }
+                this.recent = kept
+            }
+            if (this.toStderr)
+            {
+                printStderr("tinox-ide: " + line)
+            }
+            if (this.toBridge && level >= 2)
+            {
+                Bridge::post(Command::named("core.log").str("level", bridgeLevel).str("message", message).build())
+            }
+            if (this.attached)
+            {
+                this.bus.publish("log.line", Js::object([Js::intField("level", level), Js::strField("line", line)]))
+            }
+        }
+
+        /** Logs at debug level. */
+        fn debug(message: String) -> Nothing
+        {
+            this.log(0, message)
+        }
+
+        /** Logs at info level. */
+        fn info(message: String) -> Nothing
+        {
+            this.log(1, message)
+        }
+
+        /** Logs at warn level. */
+        fn warn(message: String) -> Nothing
+        {
+            this.log(2, message)
+        }
+
+        /** Logs at error level. */
+        fn error(message: String) -> Nothing
+        {
+            this.log(3, message)
+        }
+    }
+}

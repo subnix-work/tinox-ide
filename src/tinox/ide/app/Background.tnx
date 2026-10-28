@@ -1,0 +1,41 @@
+module tinox.ide.app
+
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.ui.Js
+
+namespace tinox.ide.app
+{
+    /**
+     * What a background task (a `spawn`ed function: indexing, a build, a language server's
+     * reader) uses to talk to the rest of the IDE. Tinox objects are not shared between
+     * threads; messages go through the bridge's thread-safe queue and arrive on the logic
+     * task as bus messages (EventBus.attach):
+     *
+     *     fnc index(root: String) -> Int64
+     *     {
+     *         Background::report("index.progress", "{\"done\":10}")
+     *         ...
+     *         Background::report("index.finished", "{\"files\":42}")
+     *     }
+     */
+    class Background
+    {
+        /** Sends a message with a JSON payload ("" for none) to the bus. Safe to call from any task. */
+        fnc report(topic: String, payloadJson: String) -> Nothing
+        {
+            var command: Command = Command::named("core.message").str("topic", topic)
+            if (payloadJson != "")
+            {
+                command = command.raw("payload", payloadJson)
+            }
+            Bridge::post(command.build())
+        }
+
+        /** Sends a message whose payload is a single string, `{"text": ...}`. */
+        fnc reportText(topic: String, text: String) -> Nothing
+        {
+            Background::report(topic, Js::object([Js::strField("text", text)]))
+        }
+    }
+}

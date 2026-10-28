@@ -1,0 +1,51 @@
+import MockBridge
+import tinox.ide.kde.Bridge
+import tinox.ide.settings.Settings
+
+class SettingsTest
+{
+    @Test("typed reads pass group, key, type and the fallback, and return the stored value")
+    fn testReads() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("config.read", "{\"exists\":true,\"value\":8}", "")
+        const settings: Settings = Settings::create("")
+        const width: Int64 = settings.getInt("Editor", "tabWidth", 4)
+        MockBridge::onCommand("config.read", "{\"exists\":true,\"value\":\"Hack\"}", "")
+        const font: String = settings.getString("Editor/Fonts", "family", "Noto")
+        MockBridge::onCommand("config.read", "{\"exists\":true,\"value\":false}", "")
+        const wrap: Bool = settings.getBool("Editor", "wrap", true)
+        return width == 8 && font == "Hack" && !wrap &&
+            MockBridge::nextCommand() == "{\"cmd\":\"config.read\",\"file\":\"\",\"group\":\"Editor\",\"key\":\"tabWidth\",\"type\":\"int\",\"default\":4}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"config.read\",\"file\":\"\",\"group\":\"Editor/Fonts\",\"key\":\"family\",\"type\":\"string\",\"default\":\"Noto\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"config.read\",\"file\":\"\",\"group\":\"Editor\",\"key\":\"wrap\",\"type\":\"bool\",\"default\":true}"
+    }
+
+    @Test("writes, removal and the file name")
+    fn testWrites() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("config.write", "", "")
+        MockBridge::onCommand("config.delete", "", "")
+        const settings: Settings = Settings::create("custom.rc")
+        settings.setString("A", "s", "say \"hi\"")
+        settings.setBool("A", "b", true)
+        settings.setInt("A", "i", 12)
+        settings.remove("A", "i")
+        return MockBridge::nextCommand() == "{\"cmd\":\"config.write\",\"file\":\"custom.rc\",\"group\":\"A\",\"key\":\"s\",\"value\":\"say \\\"hi\\\"\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"config.write\",\"file\":\"custom.rc\",\"group\":\"A\",\"key\":\"b\",\"value\":true}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"config.write\",\"file\":\"custom.rc\",\"group\":\"A\",\"key\":\"i\",\"value\":12}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"config.delete\",\"file\":\"custom.rc\",\"group\":\"A\",\"key\":\"i\"}"
+    }
+
+    @Test("has asks whether the key exists")
+    fn testHas() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("config.read", "{\"exists\":true,\"value\":\"x\"}", "")
+        const settings: Settings = Settings::create("")
+        const yes: Bool = settings.has("G", "k")
+        MockBridge::onCommand("config.read", "{\"exists\":false,\"value\":\"\"}", "")
+        return yes && !settings.has("G", "k")
+    }
+}

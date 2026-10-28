@@ -1,0 +1,91 @@
+module tinox.ide.settings
+
+import tinox.core.json
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.ui.Js
+
+namespace tinox.ide.settings
+{
+    /**
+     * The user's settings: typed reads and writes of KConfig by group and key. The default file is
+     * the application's own, `~/.config/tinoxiderc`. Writes go to disk at once. Groups nest with `/`
+     * ("Editor/Fonts").
+     *
+     *     const settings = Settings::create("")
+     *     const wrap = settings.getBool("Editor", "wrap", true)
+     *     settings.setInt("Editor", "tabWidth", 4)
+     */
+    class Settings
+    {
+        /** The config file ("" = the application's own, a bare name in the config directory, or an absolute path). */
+        var file: String
+
+        /** Settings kept in this file. */
+        fnc create(file: String) -> Settings
+        {
+            return Settings { file: file }
+        }
+
+        /** A string setting, or `fallback` when it was never set. */
+        fn getString(group: String, key: String, fallback: String) -> String
+        {
+            return this.read(group, key, "string", Js::str(fallback)).getString()
+        }
+
+        /** A boolean setting. */
+        fn getBool(group: String, key: String, fallback: Bool) -> Bool
+        {
+            return this.read(group, key, "bool", fallback.toString()).getBool()
+        }
+
+        /** An integer setting. */
+        fn getInt(group: String, key: String, fallback: Int64) -> Int64
+        {
+            return this.read(group, key, "int", fallback.toString()).getInt()
+        }
+
+        /** Whether the key has been written. */
+        fn has(group: String, key: String) -> Bool
+        {
+            return Bridge::query(Command::named("config.read").str("file", this.file).str("group", group).str("key", key).str("type", "string").build()).getField("exists").getBool()
+        }
+
+        /** Writes a string. */
+        fn setString(group: String, key: String, value: String) -> Nothing
+        {
+            this.write(group, key, Js::str(value))
+        }
+
+        /** Writes a boolean. */
+        fn setBool(group: String, key: String, value: Bool) -> Nothing
+        {
+            this.write(group, key, value.toString())
+        }
+
+        /** Writes an integer. */
+        fn setInt(group: String, key: String, value: Int64) -> Nothing
+        {
+            this.write(group, key, value.toString())
+        }
+
+        /** Removes a key; the next read gives the fallback. */
+        fn remove(group: String, key: String) -> Nothing
+        {
+            Bridge::query(Command::named("config.delete").str("file", this.file).str("group", group).str("key", key).build())
+        }
+
+        /** The reply's value of one read. */
+        fn read(group: String, key: String, type: String, fallbackJson: String) -> JsonValue
+        {
+            const reply: JsonValue = Bridge::query(Command::named("config.read").str("file", this.file).str("group", group).str("key", key).str("type", type).raw("default", fallbackJson).build())
+            return reply.getField("value")
+        }
+
+        /** Writes one value (JSON text). */
+        fn write(group: String, key: String, valueJson: String) -> Nothing
+        {
+            Bridge::query(Command::named("config.write").str("file", this.file).str("group", group).str("key", key).raw("value", valueJson).build())
+        }
+    }
+}

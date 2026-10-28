@@ -1,0 +1,122 @@
+module tinox.ide.app
+
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Actions
+import tinox.ide.ui.Menu
+import tinox.ide.ui.Mount
+import tinox.ide.ui.Node
+import tinox.ide.ui.Ui
+
+namespace tinox.ide.app
+{
+    /**
+     * The main window of the IDE: menu bar, tool bar, the project dock on the left, the
+     * problems/output dock at the bottom, the editor tabs in the middle and the status bar.
+     *
+     * The window is a function of the store: render() describes the whole window from the
+     * current state and the bridge changes only what differs. Interaction flows the other way
+     * only through the store: a user closing a dock writes "ui.projectVisible", which renders
+     * again. Other modules fill the panels by key (the "projectTree" tree view, the "problems"
+     * list, the "editors" tab widget, the "output" log) once those exist.
+     *
+     * Store keys read here: ui.projectVisible, ui.bottomVisible, status.message.
+     */
+    class MainWindow
+    {
+        /** The loop events arrive on. */
+        var events: EventLoop
+        /** The application state the window is drawn from. */
+        var store: Store
+        /** The bus the output panel listens to. */
+        var bus: EventBus
+        /** The commands the menus and the tool bar are made of. */
+        var registry: CommandRegistry
+        /** The action layer menus are installed through. */
+        var actions: Actions
+        /** The widgets. */
+        var mount: Mount
+        /** The group window geometry and dock layout are saved under. */
+        var stateGroup: String
+
+        /** A window drawn from `store`, with menus made of the commands in `registry`. */
+        fnc create(events: EventLoop, store: Store, bus: EventBus, registry: CommandRegistry, actions: Actions) -> MainWindow
+        {
+            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow" }
+        }
+
+        /** The window as a tree, from the current state. */
+        fn describe() -> Node
+        {
+            return Ui::window("main", "Tinox IDE")
+                .size(1200, 760)
+                .add(Ui::toolBar("tools", "Main"))
+                .add(Ui::dock("project", "Project", "left")
+                        .visible(this.store.getBool("ui.projectVisible"))
+                        .add(Ui::column("projectPanel")
+                                .add(Ui::label("projectHint", "No folder open"))
+                                .add(Ui::treeView("projectTree"))))
+                .add(Ui::dock("bottom", "Problems and Output", "bottom")
+                        .visible(this.store.getBool("ui.bottomVisible"))
+                        .add(Ui::tabs("bottomTabs")
+                                .add(Ui::listView("problems").inTab("Problems", "dialog-warning"))
+                                .add(Ui::log("output").inTab("Output", "utilities-terminal"))))
+                .add(Ui::tabs("editors")
+                        .bool("tabsClosable", true)
+                        .bool("movable", true)
+                        .add(Ui::label("welcome", "Open a folder or a file to start").inTab("Welcome", "go-home")))
+                .add(Ui::statusBar("status").str("message", this.store.get("status.message")))
+        }
+
+        /** Draws the window from the current state. */
+        fn render() -> Nothing
+        {
+            this.mount.render(this.describe())
+        }
+
+        /** The menu bar: File and View, from commands of the registry. */
+        fn menus() -> List<Menu>
+        {
+            return [Menu::create("&File").id("file").action("file_quit"), Menu::create("&View").id("view").action("view.project").action("view.bottom")]
+        }
+
+        /** Builds and shows the window: first render, menus, state changes, saved layout. Call after the registry is attached. */
+        fn start() -> Nothing
+        {
+            this.render()
+            this.actions.menuBar(this.mount.rootWidget(), this.menus())
+            this.actions.toolBar(this.mount.idOf("tools"), ["view.project", "view.bottom"])
+            this.mount.onCloseRequested("main", (ev: Event) => this.registry.execute("file_quit"))
+            this.mount.onDockVisible("project", (visible: Bool) => this.store.setBool("ui.projectVisible", visible))
+            this.mount.onDockVisible("bottom", (visible: Bool) => this.store.setBool("ui.bottomVisible", visible))
+            // the window follows the state, never the other way round
+            this.store.watch("ui.projectVisible", (value: String) => this.changed())
+            this.store.watch("ui.bottomVisible", (value: String) => this.changed())
+            this.store.watch("status.message", (value: String) => this.changed())
+            this.bus.subscribe("log.line", (m: BusMessage) => this.mount.append("output", m.str("line")))
+            this.mount.restoreState(this.stateGroup)
+            this.mount.show()
+        }
+
+        /** The state changed: draw again. */
+        fn changed() -> Nothing
+        {
+            if (this.mount.isMounted())
+            {
+                this.render()
+            }
+        }
+
+        /** Remembers window geometry, dock layout and splitter sizes for the next start. */
+        fn saveState() -> Nothing
+        {
+            this.mount.saveState(this.stateGroup)
+        }
+
+        /** Closes the window without asking again (the application is quitting). */
+        fn close() -> Nothing
+        {
+            this.mount.close(true)
+        }
+    }
+}

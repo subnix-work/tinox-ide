@@ -1,0 +1,152 @@
+module tinox.ide.app
+
+import tinox.ide.kde.App
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.settings.Settings
+import tinox.ide.ui.Actions
+
+namespace tinox.ide.app
+{
+    /**
+     * The application: creates the parts, connects them and starts the window. The parts, from
+     * the bottom up:
+     *
+     *   - EventBus: in-process messages between modules; background tasks join it through Background
+     *   - Store: the one application state; written by commands and handlers, read by the UI
+     *   - Logger, ErrorReporter: what is written down and what the user sees when something fails
+     *   - Actions + CommandRegistry: every command of the IDE, shared by menus, shortcuts and the palette
+     *   - MainWindow: the widgets, a function of the store
+     *
+     * Feature modules (workspace, editor, lsp, build, settings) add commands to the registry,
+     * read and write the store, and talk to each other over the bus; none of them calls another
+     * directly. See docs/ide-core.md.
+     */
+    class IdeApp
+    {
+        /** The loop events arrive on. */
+        var events: EventLoop
+        /** Messages between modules. */
+        var bus: EventBus
+        /** The application state. */
+        var store: Store
+        /** The log. */
+        var logger: Logger
+        /** Shows failures. */
+        var errors: ErrorReporter
+        /** The bridge's actions. */
+        var actions: Actions
+        /** Every command. */
+        var registry: CommandRegistry
+        /** The window. */
+        var window: MainWindow
+        /** The user's persistent settings. */
+        var settings: Settings
+        /** False once the application is quitting. */
+        var running: Bool
+
+        /** Builds the application and shows its window; call it from the core.ready handler. */
+        fnc start(events: EventLoop) -> IdeApp
+        {
+            const logger: Logger = Logger::fromEnvironment()
+            logger.forwardToBridge(true)
+            const bus: EventBus = EventBus::create()
+            bus.attach(events)
+            logger.attach(bus)
+            const store: Store = Store::create(bus)
+            const settings: Settings = Settings::create("")
+            const errors: ErrorReporter = ErrorReporter::create(logger, store)
+            errors.install(events, bus)
+            const actions: Actions = Actions::create(events)
+            const registry: CommandRegistry = CommandRegistry::create(store, bus, actions)
+            const window: MainWindow = MainWindow::create(events, store, bus, registry, actions)
+            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, settings: settings, running: true }
+            app.loadSettings()
+            app.registerCommands()
+            registry.attach()
+            app.mirrorChecks()
+            window.start()
+            logger.info("Tinox IDE started")
+            return app
+        }
+
+        /** Initial state: the layout flags come from the settings (visible by default). */
+        fn loadSettings() -> Nothing
+        {
+            this.store.setBool("ui.projectVisible", this.settings.getBool("MainWindow", "projectVisible", true))
+            this.store.setBool("ui.bottomVisible", this.settings.getBool("MainWindow", "bottomVisible", true))
+            this.store.set("status.message", "Ready")
+        }
+
+        /** The commands of the application core; feature modules register their own. */
+        fn registerCommands() -> Nothing
+        {
+            this.registry.registerAll([
+                IdeCommand::standard("file_quit").run((c: CommandContext) => this.quit()),
+                IdeCommand::create("view.project", "Show &Project").icon("view-list-tree").shortcut("Alt+1").category("View").checkable(true).run((c: CommandContext) => this.store.setBool("ui.projectVisible", c.checked)),
+                IdeCommand::create("view.bottom", "Show &Problems and Output").icon("view-list-details").shortcut("Alt+2").category("View").checkable(true).run((c: CommandContext) => this.store.setBool("ui.bottomVisible", c.checked))
+            ])
+        }
+
+        /** Keeps the check marks of the view commands in step with the state and saves the layout flags. */
+        fn mirrorChecks() -> Nothing
+        {
+            this.actions.setChecked("view.project", this.store.getBool("ui.projectVisible"))
+            this.actions.setChecked("view.bottom", this.store.getBool("ui.bottomVisible"))
+            this.store.watch("ui.projectVisible", (value: String) => this.layoutChanged("view.project", "projectVisible", value))
+            this.store.watch("ui.bottomVisible", (value: String) => this.layoutChanged("view.bottom", "bottomVisible", value))
+        }
+
+        /** A layout flag changed: check mark and settings follow. */
+        fn layoutChanged(command: String, key: String, value: String) -> Nothing
+        {
+            this.actions.setChecked(command, value == "true")
+            this.settings.setBool("MainWindow", key, value == "true")
+        }
+
+        /** Saves the layout and ends the program. */
+        fn quit() -> Nothing
+        {
+            if (!this.running)
+            {
+                return
+            }
+            this.running = false
+            this.logger.info("Tinox IDE is quitting")
+            try
+            {
+                this.window.saveState()
+            }
+            catch (e: String)
+            {
+                this.logger.warn("could not save the window layout: " + e)
+            }
+            Bridge::quit()
+        }
+
+        /** The logic task: build the application when the UI is up and serve events until shutdown. */
+        fnc logic(events: EventLoop) -> Int32
+        {
+            events.onType("core.ready", (ev: Event) => IdeApp::ready(events))
+            events.run()
+            return 0
+        }
+
+        /** The UI is up. With TINOXIDE_SMOKE=1 (the headless smoke test) the program uses its own Quit command at once. */
+        fnc ready(events: EventLoop) -> Nothing
+        {
+            const app: IdeApp = IdeApp::start(events)
+            if (Bridge::env("TINOXIDE_SMOKE") == "1")
+            {
+                app.actions.trigger("file_quit")
+            }
+        }
+
+        /** The program. */
+        fnc main() -> Int32
+        {
+            return App::run("tinoxide", "Tinox IDE", (events: EventLoop) => IdeApp::logic(events))
+        }
+    }
+}

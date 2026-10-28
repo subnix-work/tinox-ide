@@ -1,0 +1,72 @@
+module tinox.ide.app
+
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Js
+
+namespace tinox.ide.app
+{
+    /**
+     * What happens when something goes wrong that nobody handled: a command handler that threw,
+     * an event handler that threw, a bus subscriber that threw, the logic task itself failing.
+     * The error is logged (with where it happened), the status bar says so, and a desktop
+     * notification ("internalError" of tinoxide.notifyrc) shows a toast, so a failure is never
+     * silent and never takes the IDE with it.
+     *
+     * install() hooks it up to the EventLoop and the bus; any module can also call report().
+     * The toast is shown once per distinct message in a row, so an error that repeats in a loop
+     * does not flood the desktop; every occurrence is still counted and logged.
+     *
+     * A crash of the process itself (a segmentation fault in a library) is handled below
+     * Tinox: the bridge installs KDE's crash handler (KCrash, DrKonqi).
+     */
+    class ErrorReporter
+    {
+        /** Where errors are logged. */
+        var logger: Logger
+        /** Where the status line lives. */
+        var store: Store
+        /** How many errors were reported. */
+        var count: Int64
+        /** The last toast text, to not repeat it. */
+        var lastToast: String
+        /** Whether toasts are sent to the desktop. */
+        var toasts: Bool
+
+        /** A reporter that logs to `logger` and writes the status line in `store`. */
+        fnc create(logger: Logger, store: Store) -> ErrorReporter
+        {
+            return ErrorReporter { logger: logger, store: store, count: 0, lastToast: "", toasts: true }
+        }
+
+        /** Hooks into the event loop's failures and the bus's "error.report" messages (and its subscriber failures). */
+        fn install(events: EventLoop, bus: EventBus) -> Nothing
+        {
+            events.onFailure((message: String) => this.report("event loop", message))
+            bus.onFailure((message: String) => this.report("bus", message))
+            bus.subscribe("error.report", (m: BusMessage) => this.report(m.str("where"), m.str("message")))
+        }
+
+        /** Handles one error: log, status line, toast. Never throws. */
+        fn report(origin: String, message: String) -> Nothing
+        {
+            this.count = this.count + 1
+            this.logger.error(origin + ": " + message)
+            try
+            {
+                this.store.set("status.message", "Error in " + origin + ": " + message)
+                this.store.setInt("errors.count", this.count)
+                if (this.toasts && this.lastToast != origin + message)
+                {
+                    this.lastToast = origin + message
+                    Bridge::post(Command::named("notify.send").str("event", "internalError").str("title", "Tinox IDE: something went wrong").str("text", origin + ": " + message).str("urgency", "high").build())
+                }
+            }
+            catch (e: String)
+            {
+                this.logger.error("the error report itself failed: " + e)
+            }
+        }
+    }
+}

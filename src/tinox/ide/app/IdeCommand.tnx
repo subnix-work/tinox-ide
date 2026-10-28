@@ -1,0 +1,130 @@
+module tinox.ide.app
+
+namespace tinox.ide.app
+{
+    /**
+     * Something the user can ask the IDE to do. Menus, tool bars, shortcuts and the command
+     * palette all run commands from the same CommandRegistry, so each has one title, one
+     * shortcut and one rule for when it is available.
+     *
+     *     IdeCommand::create("view.projectDock", "Show &Project").shortcut("F9").category("View")
+     *         .checkable(true).enabledWhen((s: Store) => s.getBool("workspace.open"))
+     *         .run((c: CommandContext) => store.setBool("ui.projectVisible", c.checked))
+     *
+     * KDE standard commands (`IdeCommand::standard("file_quit")`) get the platform's text, icon
+     * and shortcut.
+     */
+    class IdeCommand
+    {
+        /** Unique id, e.g. "view.projectDock" or a KDE standard action name. */
+        var id: String
+        /** The title with a mnemonic `&`; the palette shows it without. */
+        var title: String
+        /** Breeze icon name, "" for none. */
+        var iconName: String
+        /** Default shortcut, "" for none. */
+        var shortcutText: String
+        /** Palette group, e.g. "File". */
+        var categoryName: String
+        /** Whether this is a KDE standard action. */
+        var isStandard: Bool
+        /** Whether it has an on/off state. */
+        var isCheckable: Bool
+        /** What it does. */
+        var handler: fnc(CommandContext) -> Nothing
+        /** Whether runnable() consults a predicate. */
+        var hasPredicate: Bool
+        /** When it is available. */
+        var predicate: fnc(Store) -> Bool
+
+        /** A command with this id and title; give it a body with run(). */
+        fnc create(id: String, title: String) -> IdeCommand
+        {
+            return IdeCommand {
+                id: id,
+                title: title,
+                iconName: "",
+                shortcutText: "",
+                categoryName: "",
+                isStandard: false,
+                isCheckable: false,
+                handler: (c: CommandContext) => IdeCommand::nothing(),
+                hasPredicate: false,
+                predicate: (s: Store) => true
+            }
+        }
+
+        /** A KDE standard command by its KDE name ("file_quit", "file_open", "edit_find", ...). */
+        fnc standard(name: String) -> IdeCommand
+        {
+            const command: IdeCommand = IdeCommand::create(name, name)
+            command.isStandard = true
+            return command
+        }
+
+        /** Does nothing: the body of a command that has none yet. */
+        fnc nothing() -> Nothing
+        {
+        }
+
+        /** The Breeze icon. */
+        fn icon(name: String) -> IdeCommand
+        {
+            this.iconName = name
+            return this
+        }
+
+        /** The default shortcut, portable text ("Ctrl+Shift+P"). */
+        fn shortcut(sequence: String) -> IdeCommand
+        {
+            this.shortcutText = sequence
+            return this
+        }
+
+        /** The group the palette lists it under. */
+        fn category(name: String) -> IdeCommand
+        {
+            this.categoryName = name
+            return this
+        }
+
+        /** Makes it an on/off command; the handler gets the new state in the context. */
+        fn checkable(value: Bool) -> IdeCommand
+        {
+            this.isCheckable = value
+            return this
+        }
+
+        /** What the command does. */
+        fn run(body: fnc(CommandContext) -> Nothing) -> IdeCommand
+        {
+            this.handler = body
+            return this
+        }
+
+        /** The command is available only while `rule` holds for the store; it is re-evaluated on every state change. */
+        fn enabledWhen(rule: fnc(Store) -> Bool) -> IdeCommand
+        {
+            this.predicate = rule
+            this.hasPredicate = true
+            return this
+        }
+
+        /** The title without its mnemonic `&`, as the palette shows it. */
+        fn label() -> String
+        {
+            var out: String = ""
+            var i: Int64 = 0
+            while (i < this.title.len())
+            {
+                const ch: String = this.title.substring(i, i + 1)
+                if (ch != "&")
+                {
+                    out = out + ch
+                }
+                i = i + 1
+            }
+            return out
+        }
+    }
+}

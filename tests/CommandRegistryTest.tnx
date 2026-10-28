@@ -1,0 +1,141 @@
+import MockBridge
+import tinox.ide.app.BusMessage
+import tinox.ide.app.CommandContext
+import tinox.ide.app.CommandRegistry
+import tinox.ide.app.EventBus
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.Store
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Actions
+
+class CommandRegistryTest
+{
+    fnc setup(events: EventLoop) -> CommandRegistry
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("action.define", "", "")
+        MockBridge::onCommand("action.set", "", "")
+        const bus: EventBus = EventBus::create()
+        return CommandRegistry::create(Store::create(bus), bus, Actions::create(events))
+    }
+
+    @Test("a command has a title with and without its mnemonic, an icon, shortcut and category")
+    fn testCommandDescription() -> Bool
+    {
+        const command: IdeCommand = IdeCommand::create("view.project", "Show &Project").icon("view-list-tree").shortcut("Alt+1").category("View").checkable(true)
+        return command.label() == "Show Project" && command.title == "Show &Project" && command.iconName == "view-list-tree" && command.shortcutText == "Alt+1" && command.categoryName == "View" && command.isCheckable && !command.isStandard && IdeCommand::standard("file_quit").isStandard
+    }
+
+    @Test("register keeps the order, a second command with the same id is refused")
+    fn testRegister() -> Bool
+    {
+        const registry: CommandRegistry = CommandRegistryTest::setup(EventLoop::create())
+        registry.registerAll([IdeCommand::create("b", "B"), IdeCommand::create("a", "A")])
+        var message: String = ""
+        try
+        {
+            registry.register(IdeCommand::create("a", "again"))
+        }
+        catch (e: String)
+        {
+            message = e
+        }
+        const list: List<IdeCommand> = registry.list()
+        return list.len() == 2 && list[0].id == "b" && list[1].id == "a" && registry.has("a") && !registry.has("zzz") && message.contains("'a' is already registered")
+    }
+
+    @Test("run calls the handler with the source and the checked state; execute is run from code")
+    fn testRun() -> Bool
+    {
+        const registry: CommandRegistry = CommandRegistryTest::setup(EventLoop::create())
+        var seen: List<String> = []
+        registry.register(IdeCommand::create("x", "X").run((c: CommandContext) => seen.push(c.command.id + " " + c.source + " " + c.checked.toString())))
+        const ran: Bool = registry.run("x", "palette", true)
+        registry.execute("x")
+        return ran && seen.len() == 2 && seen[0] == "x palette true" && seen[1] == "x code false"
+    }
+
+    @Test("a command is available only while its predicate holds")
+    fn testEnabledPredicate() -> Bool
+    {
+        const registry: CommandRegistry = CommandRegistryTest::setup(EventLoop::create())
+        var seen: List<String> = []
+        registry.register(IdeCommand::create("close", "Close").enabledWhen((s: Store) => s.getBool("workspace.open")).run((c: CommandContext) => seen.push("closed")))
+        const before: Bool = registry.run("close", "code", false)
+        registry.store.setBool("workspace.open", true)
+        const enabledNow: Bool = registry.isEnabled("close")
+        const after: Bool = registry.run("close", "code", false)
+        return !before && enabledNow && after && seen.len() == 1
+    }
+
+    @Test("an unknown command is an error, a failing handler is reported on the bus and does not throw")
+    fn testFailures() -> Bool
+    {
+        const registry: CommandRegistry = CommandRegistryTest::setup(EventLoop::create())
+        var reports: List<String> = []
+        registry.bus.subscribe("error.report", (m: BusMessage) => reports.push(m.str("where") + ": " + m.str("message")))
+        registry.register(IdeCommand::create("bad", "Bad").run((c: CommandContext) => { throw "it broke" }))
+        var message: String = ""
+        try
+        {
+            registry.run("nope", "code", false)
+        }
+        catch (e: String)
+        {
+            message = e
+        }
+        const ran: Bool = registry.run("bad", "code", false)
+        return message.contains("no command 'nope'") && ran && reports.len() == 1 && reports[0] == "command bad: it broke"
+    }
+
+    @Test("attach defines the commands as actions: standard ones by name, others with text, icon, shortcut")
+    fn testAttachDefines() -> Bool
+    {
+        const registry: CommandRegistry = CommandRegistryTest::setup(EventLoop::create())
+        registry.registerAll([IdeCommand::standard("file_quit"), IdeCommand::create("view.project", "Show &Project").icon("view-list-tree").shortcut("Alt+1").checkable(true)])
+        registry.attach()
+        registry.attach()
+        const sent: String = MockBridge::nextCommand()
+        return sent == "{\"cmd\":\"action.define\",\"actions\":[{\"id\":\"file_quit\",\"standard\":true},{\"id\":\"view.project\",\"text\":\"Show &Project\",\"icon\":\"view-list-tree\",\"shortcut\":\"Alt+1\",\"checkable\":true}]}" && MockBridge::pending() == 0
+    }
+
+    @Test("a command registered after attach is defined at once")
+    fn testLateRegister() -> Bool
+    {
+        const registry: CommandRegistry = CommandRegistryTest::setup(EventLoop::create())
+        registry.attach()
+        registry.register(IdeCommand::create("late", "Late"))
+        return MockBridge::nextCommand() == "{\"cmd\":\"action.define\",\"actions\":[]}" && MockBridge::nextCommand() == "{\"cmd\":\"action.define\",\"actions\":[{\"id\":\"late\",\"text\":\"Late\"}]}"
+    }
+
+    @Test("a trigger event from the bridge runs the command")
+    fn testTriggerEvent() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const registry: CommandRegistry = CommandRegistryTest::setup(events)
+        var seen: List<String> = []
+        registry.register(IdeCommand::create("x", "X").checkable(true).run((c: CommandContext) => seen.push(c.source + " " + c.checked.toString())))
+        registry.attach()
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"x\",\"checked\":true}")
+        events.pump(1000)
+        return seen.len() == 1 && seen[0] == "action true" && events.failureCount() == 0
+    }
+
+    @Test("availability is pushed to the actions when the state changes, and only when it changed")
+    fn testRefresh() -> Bool
+    {
+        const registry: CommandRegistry = CommandRegistryTest::setup(EventLoop::create())
+        registry.register(IdeCommand::create("close", "Close").enabledWhen((s: Store) => s.getBool("workspace.open")))
+        registry.register(IdeCommand::create("always", "Always"))
+        registry.attach()
+        MockBridge::nextCommand()
+        const disabled: String = MockBridge::nextCommand()
+        registry.store.setBool("workspace.open", true)
+        const enabled: String = MockBridge::nextCommand()
+        registry.store.set("unrelated", "x")
+        registry.store.setBool("workspace.open", false)
+        const disabledAgain: String = MockBridge::nextCommand()
+        return disabled == "{\"cmd\":\"action.set\",\"id\":\"close\",\"enabled\":false}" && enabled == "{\"cmd\":\"action.set\",\"id\":\"close\",\"enabled\":true}" && disabledAgain == "{\"cmd\":\"action.set\",\"id\":\"close\",\"enabled\":false}" && MockBridge::pending() == 0
+    }
+}

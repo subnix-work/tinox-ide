@@ -483,6 +483,21 @@ void Bridge::registerCoreCommands()
         return Reply::success();
     });
 
+    // Lets any thread put a message into the event stream, e.g. a background task reporting to the
+    // logic task (tkde_post is thread safe and wakes tkde_next_event). Answers as `core.message`.
+    registerCommand(QStringLiteral("core.message"), [this](const QJsonObject &cmd) {
+        const QJsonValue topic = cmd.value(QStringLiteral("topic"));
+        if (!topic.isString() || topic.toString().isEmpty()) {
+            return Reply::failure(TKDE_E_INVALID_ARG, QStringLiteral("core.message needs a non-empty string \"topic\""));
+        }
+        QJsonObject f;
+        f.insert(QStringLiteral("topic"), topic);
+        f.insert(QStringLiteral("payload"),
+                 cmd.contains(QStringLiteral("payload")) ? cmd.value(QStringLiteral("payload")) : QJsonValue(QJsonValue::Null));
+        emitEvent(QStringLiteral("core.message"), f);
+        return Reply::success();
+    });
+
     // One running IDE per user: a second start hands its arguments to the first.
     registerCommand(QStringLiteral("core.singleInstance"), [this](const QJsonObject &cmd) {
         if (m_running) {

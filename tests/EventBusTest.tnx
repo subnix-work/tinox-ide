@@ -1,0 +1,111 @@
+import MockBridge
+import tinox.ide.app.Background
+import tinox.ide.app.BusMessage
+import tinox.ide.app.EventBus
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.EventLoop
+
+class EventBusTest
+{
+    @Test("subscribers of a topic are called in subscription order, others are not")
+    fn testOrderAndTopics() -> Bool
+    {
+        const bus: EventBus = EventBus::create()
+        var seen: List<String> = []
+        bus.subscribe("a", (m: BusMessage) => seen.push("first " + m.topic))
+        bus.subscribe("b", (m: BusMessage) => seen.push("other"))
+        bus.subscribe("a", (m: BusMessage) => seen.push("second " + m.str("name") + " " + m.int("n").toString() + " " + m.bool("ok").toString()))
+        bus.publish("a", "{\"name\":\"x\",\"n\":7,\"ok\":true}")
+        bus.signal("a")
+        return seen.len() == 4 && seen[0] == "first a" && seen[1] == "second x 7 true" && seen[2] == "first a" && seen[3] == "second  0 false" && bus.published == 2
+    }
+
+    @Test("the topic * receives every message after the topic's own subscribers")
+    fn testWildcard() -> Bool
+    {
+        const bus: EventBus = EventBus::create()
+        var seen: List<String> = []
+        bus.subscribe("*", (m: BusMessage) => seen.push("all " + m.topic))
+        bus.subscribe("x", (m: BusMessage) => seen.push("x"))
+        bus.signal("x")
+        bus.signal("y")
+        return seen.len() == 3 && seen[0] == "x" && seen[1] == "all x" && seen[2] == "all y"
+    }
+
+    @Test("unsubscribe ends a subscription, twice or with an unknown token is harmless")
+    fn testUnsubscribe() -> Bool
+    {
+        const bus: EventBus = EventBus::create()
+        var seen: List<String> = []
+        const first: Int64 = bus.subscribe("t", (m: BusMessage) => seen.push("first"))
+        bus.subscribe("t", (m: BusMessage) => seen.push("second"))
+        bus.signal("t")
+        bus.unsubscribe(first)
+        bus.unsubscribe(first)
+        bus.unsubscribe(999)
+        bus.signal("t")
+        return seen.len() == 3 && seen[2] == "second" && bus.subscriberCount("t") == 1 && bus.subscriberCount("none") == 0
+    }
+
+    @Test("a subscriber that throws is reported and the others still run")
+    fn testFailure() -> Bool
+    {
+        const bus: EventBus = EventBus::create()
+        var seen: List<String> = []
+        var failures: List<String> = []
+        bus.onFailure((message: String) => failures.push(message))
+        bus.subscribe("t", (m: BusMessage) => { throw "boom" })
+        bus.subscribe("t", (m: BusMessage) => seen.push("after"))
+        bus.signal("t")
+        return seen.len() == 1 && failures.len() == 1 && failures[0].contains("'t'") && failures[0].contains("boom")
+    }
+
+    @Test("messages from the bridge (background tasks) become bus messages")
+    fn testAttach() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const bus: EventBus = EventBus::create()
+        bus.attach(events)
+        var seen: List<String> = []
+        bus.subscribe("index.progress", (m: BusMessage) => seen.push("progress " + m.int("done").toString() + " " + m.text()))
+        bus.subscribe("index.finished", (m: BusMessage) => seen.push("finished " + m.payload.isNull().toString()))
+        Background::report("index.progress", "{\"done\":10}")
+        Background::report("index.finished", "")
+        events.pump(1000)
+        return seen.len() == 2 && seen[0] == "progress 10 {\"done\":10}" && seen[1] == "finished true" && events.failureCount() == 0
+    }
+
+    @Test("Background posts one core.message command, with the payload only when given")
+    fn testBackgroundCommands() -> Bool
+    {
+        Bridge::init("test", "Test")
+        Background::report("a.b", "{\"n\":1}")
+        Background::report("c.d", "")
+        Background::reportText("e.f", "hi \"there\"")
+        return MockBridge::nextCommand() == "{\"cmd\":\"core.message\",\"topic\":\"a.b\",\"payload\":{\"n\":1}}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"core.message\",\"topic\":\"c.d\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"core.message\",\"topic\":\"e.f\",\"payload\":{\"text\":\"hi \\\"there\\\"\"}}"
+    }
+
+    @Test("a task spawned on another thread reports and the logic task receives it")
+    fn testSpawnedTask() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const bus: EventBus = EventBus::create()
+        bus.attach(events)
+        var seen: List<String> = []
+        bus.subscribe("work.done", (m: BusMessage) => seen.push(m.str("text")))
+        const task = spawn EventBusTest::work()
+        await task
+        events.pump(1000)
+        return seen.len() == 1 && seen[0] == "from the background"
+    }
+
+    fnc work() -> Int64
+    {
+        Background::reportText("work.done", "from the background")
+        return 0
+    }
+}

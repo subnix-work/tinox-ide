@@ -1,0 +1,67 @@
+import MockBridge
+import tinox.ide.app.BusMessage
+import tinox.ide.app.ErrorReporter
+import tinox.ide.app.EventBus
+import tinox.ide.app.Logger
+import tinox.ide.app.Store
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+class ErrorReporterTest
+{
+    fnc make() -> ErrorReporter
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("notify.send", "{\"id\":1}", "")
+        const logger: Logger = Logger::create(0)
+        logger.toStderr = false
+        return ErrorReporter::create(logger, Store::create(EventBus::create()))
+    }
+
+    @Test("a report is logged, counted, shown in the status line and toasted")
+    fn testReport() -> Bool
+    {
+        const reporter: ErrorReporter = ErrorReporterTest::make()
+        reporter.report("command build.run", "no compiler")
+        return reporter.count == 1 && reporter.logger.recent[0] == "ERROR command build.run: no compiler" && reporter.store.get("status.message") == "Error in command build.run: no compiler" && reporter.store.getInt("errors.count") == 1 &&
+            MockBridge::nextCommand() == "{\"cmd\":\"notify.send\",\"event\":\"internalError\",\"title\":\"Tinox IDE: something went wrong\",\"text\":\"command build.run: no compiler\",\"urgency\":\"high\"}"
+    }
+
+    @Test("the same error in a row is toasted once but counted every time")
+    fn testRepeat() -> Bool
+    {
+        const reporter: ErrorReporter = ErrorReporterTest::make()
+        reporter.report("loop", "same")
+        reporter.report("loop", "same")
+        reporter.report("loop", "other")
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        return reporter.count == 3 && MockBridge::pending() == 0
+    }
+
+    @Test("with toasts off nothing goes to the desktop")
+    fn testNoToasts() -> Bool
+    {
+        const reporter: ErrorReporter = ErrorReporterTest::make()
+        reporter.toasts = false
+        reporter.report("x", "y")
+        return reporter.count == 1 && MockBridge::pending() == 0
+    }
+
+    @Test("install: event handler failures, bus subscriber failures and error.report messages all arrive")
+    fn testInstall() -> Bool
+    {
+        const reporter: ErrorReporter = ErrorReporterTest::make()
+        const events: EventLoop = EventLoop::create()
+        const bus: EventBus = EventBus::create()
+        reporter.install(events, bus)
+        events.onType("boom", (ev: Event) => { throw "handler exploded" })
+        bus.subscribe("t", (m: BusMessage) => { throw "subscriber exploded" })
+        MockBridge::push("{\"type\":\"boom\"}")
+        events.pump(1000)
+        bus.signal("t")
+        bus.publish("error.report", "{\"where\":\"command x\",\"message\":\"failed\"}")
+        return reporter.count == 3 && reporter.logger.recent[0].contains("handler exploded") && reporter.logger.recent[1].contains("subscriber exploded") && reporter.logger.recent[2] == "ERROR command x: failed"
+    }
+}
