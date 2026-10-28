@@ -1,0 +1,268 @@
+module tinox.ide.ui
+
+import tinox.core.json
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+namespace tinox.ide.ui
+{
+    /**
+     * A KTextEditor view of a Document: a widget with a cursor, selection, line numbers,
+     * code folding and completion. Put it into a window with `Ui::embed(key, view.id())`.
+     * Several views can show one document.
+     *
+     *     const view = EditorView::create(events, doc)
+     *     view.enableCompletion(provider, ["."], 2)
+     *     tree.add(Ui::embed("editor", view.id()))
+     */
+    class EditorView
+    {
+        /** The loop the view's events arrive on. */
+        var events: EventLoop
+        /** The bridge's object id. */
+        var viewId: Int64
+        /** Answers completion requests. */
+        var provider: CompletionProvider
+        /** Whether enableCompletion() was called. */
+        var hasProvider: Bool
+        /** Called when the cursor moves. */
+        var cursorHandler: fnc(Position) -> Nothing
+        /** Called when the selection changes. */
+        var selectionHandler: fnc(Event) -> Nothing
+        /** Called when the view gains or loses focus. */
+        var focusHandler: fnc(Bool) -> Nothing
+        /** Supplies tooltip text for the position under the mouse. */
+        var hoverHandler: fnc(Position) -> String
+
+        /** A new view of this document. */
+        fnc create(events: EventLoop, doc: Document) -> EditorView
+        {
+            const reply: JsonValue = Bridge::query(Command::named("editor.createView").int("document", doc.id()).build())
+            const view: EditorView = EditorView {
+                events: events,
+                viewId: reply.getField("id").getInt(),
+                provider: NoCompletions {},
+                hasProvider: false,
+                cursorHandler: (position: Position) => Action::ignore(),
+                selectionHandler: (ev: Event) => Action::ignore(),
+                focusHandler: (focused: Bool) => Action::ignore(),
+                hoverHandler: (position: Position) => ""
+            }
+            events.onTarget(view.viewId, (ev: Event) => view.deliver(ev))
+            return view
+        }
+
+        /** The bridge's object id: also the widget id for Ui.embed(). */
+        fn id() -> Int64
+        {
+            return this.viewId
+        }
+
+        /** Dispatches a view event to its handler. */
+        fn deliver(ev: Event) -> Nothing
+        {
+            if (ev.type == "editor.cursorMoved")
+            {
+                this.cursorHandler(Position::parse(ev.field("position")))
+            }
+            else if (ev.type == "editor.selectionChanged")
+            {
+                this.selectionHandler(ev)
+            }
+            else if (ev.type == "editor.focusChanged")
+            {
+                this.focusHandler(ev.bool("focused"))
+            }
+            else if (ev.type == "editor.completionRequested")
+            {
+                this.answerCompletion(ev)
+            }
+            else if (ev.type == "editor.hoverRequested")
+            {
+                const position: Position = Position::parse(ev.field("position"))
+                const markup: String = this.hoverHandler(position)
+                if (markup != "")
+                {
+                    this.showTooltip(position, markup)
+                }
+            }
+        }
+
+        // ---- handlers
+
+        /** The cursor moved. */
+        fn onCursorMoved(handler: fnc(Position) -> Nothing) -> Nothing
+        {
+            this.cursorHandler = handler
+        }
+
+        /** The selection changed; `ev.field("range")` is null when nothing is selected. */
+        fn onSelectionChanged(handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.selectionHandler = handler
+        }
+
+        /** The view gained (true) or lost (false) the keyboard focus. */
+        fn onFocusChanged(handler: fnc(Bool) -> Nothing) -> Nothing
+        {
+            this.focusHandler = handler
+        }
+
+        /**
+         * Hovering the mouse over text asks `handler` for rich text (HTML subset) to show
+         * as a tooltip; an empty string shows nothing. Diagnostics under the mouse are
+         * shown by the editor itself.
+         */
+        fn onHover(handler: fnc(Position) -> String) -> Nothing
+        {
+            this.hoverHandler = handler
+        }
+
+        // ---- cursor and selection
+
+        /** Where the cursor is. */
+        fn cursor() -> Position
+        {
+            return Position::parse(Bridge::query(Command::named("editor.getCursor").target(this.viewId).build()).getField("position"))
+        }
+
+        /** Moves the cursor; throws for a position outside the text. */
+        fn setCursor(position: Position) -> Nothing
+        {
+            Bridge::query(Command::named("editor.setCursor").target(this.viewId).raw("position", position.toJson()).build())
+        }
+
+        /** Whether some text is selected. */
+        fn hasSelection() -> Bool
+        {
+            return !Bridge::query(Command::named("editor.getSelection").target(this.viewId).build()).getField("range").isNull()
+        }
+
+        /** The selected range; call hasSelection() first (otherwise it is empty at 0:0). */
+        fn selection() -> Range
+        {
+            const reply: JsonValue = Bridge::query(Command::named("editor.getSelection").target(this.viewId).build())
+            if (reply.getField("range").isNull())
+            {
+                return Range::create(0, 0, 0, 0)
+            }
+            return Range::parse(reply.getField("range"))
+        }
+
+        /** The selected text, "" when nothing is selected. */
+        fn selectedText() -> String
+        {
+            const reply: JsonValue = Bridge::query(Command::named("editor.getSelection").target(this.viewId).build())
+            if (reply.getField("text").isString())
+            {
+                return reply.getField("text").getString()
+            }
+            return ""
+        }
+
+        /** Selects a range. */
+        fn setSelection(range: Range) -> Nothing
+        {
+            Bridge::query(Command::named("editor.setSelection").target(this.viewId).raw("range", range.toJson()).build())
+        }
+
+        /** Removes the selection. */
+        fn clearSelection() -> Nothing
+        {
+            Bridge::query(Command::named("editor.setSelection").target(this.viewId).raw("range", "null").build())
+        }
+
+        /** Undoes the last editing step. */
+        fn undo() -> Nothing
+        {
+            Bridge::query(Command::named("editor.undo").target(this.viewId).build())
+        }
+
+        /** Redoes an undone step. */
+        fn redo() -> Nothing
+        {
+            Bridge::query(Command::named("editor.redo").target(this.viewId).build())
+        }
+
+        /** Colour theme of the text ("" follows the application's colour scheme). */
+        fn setTheme(name: String) -> Nothing
+        {
+            Bridge::query(Command::named("editor.setTheme").target(this.viewId).str("theme", name).build())
+        }
+
+        /** The names of the available colour themes. */
+        fn themes() -> List<String>
+        {
+            return Mount::strings(Bridge::query(Command::named("editor.themes").target(this.viewId).build()).getField("themes"))
+        }
+
+        // ---- completion and tooltips
+
+        /**
+         * Turns completion on. The popup appears while the user types (after `minWordLength`
+         * letters or one of the `triggers`) and when asked for; the provider fills it.
+         * Replaces an earlier provider.
+         */
+        fn enableCompletion(provider: CompletionProvider, triggers: List<String>, minWordLength: Int64) -> Nothing
+        {
+            this.provider = provider
+            this.hasProvider = true
+            Bridge::query(Command::named("editor.enableCompletion").target(this.viewId).raw("triggers", Js::strings(triggers)).int("minWordLength", minWordLength).build())
+        }
+
+        /** Turns completion off. */
+        fn disableCompletion() -> Nothing
+        {
+            this.hasProvider = false
+            Bridge::query(Command::named("editor.disableCompletion").target(this.viewId).build())
+        }
+
+        /** Opens the popup as if the user had pressed the completion shortcut. */
+        fn requestCompletion() -> Nothing
+        {
+            Bridge::query(Command::named("editor.requestCompletion").target(this.viewId).build())
+        }
+
+        /** Asks the provider and sends its items back. */
+        fn answerCompletion(ev: Event) -> Nothing
+        {
+            const request: CompletionRequest = CompletionRequest::parse(ev)
+            var items: List<CompletionItem> = []
+            if (this.hasProvider)
+            {
+                try
+                {
+                    items = this.provider.complete(request)
+                }
+                catch (e: String)
+                {
+                    // the popup must not wait for an answer that will not come
+                    this.answer(request.number, [])
+                    throw "completion failed: " + e
+                }
+            }
+            this.answer(request.number, items)
+        }
+
+        /** Sends items as the answer to request `number`. */
+        fn answer(number: Int64, items: List<CompletionItem>) -> Nothing
+        {
+            Bridge::query(Command::named("editor.setCompletions").target(this.viewId).int("req", number).raw("items", CompletionItem::array(items)).build())
+        }
+
+        /** Shows rich text as a tooltip at a visible position. */
+        fn showTooltip(position: Position, markup: String) -> Nothing
+        {
+            Bridge::query(Command::named("editor.showTooltip").target(this.viewId).raw("position", position.toJson()).str("markup", markup).build())
+        }
+
+        /** Destroys the view. */
+        fn release() -> Nothing
+        {
+            this.events.offTarget(this.viewId)
+            Bridge::release(this.viewId)
+        }
+    }
+}

@@ -1,0 +1,62 @@
+module tinox.ide.ui
+
+import tinox.core.json
+
+namespace tinox.ide.ui
+{
+    /**
+     * Replace the text in `range` by `newText`. A list of edits is applied together
+     * (Document.edit): every range refers to the text *before* any edit, they may not
+     * overlap, and the whole list is one undo step.
+     */
+    class TextEdit
+    {
+        /** The text that is replaced. */
+        var range: Range
+        /** What replaces it. */
+        var newText: String
+
+        /** Replaces the text in `range`. */
+        fnc replace(range: Range, newText: String) -> TextEdit
+        {
+            return TextEdit { range: range, newText: newText }
+        }
+
+        /** Inserts text at a position. */
+        fnc insert(at: Position, text: String) -> TextEdit
+        {
+            return TextEdit { range: Range::of(at, at), newText: text }
+        }
+
+        /** Deletes the text in a range. */
+        fnc remove(range: Range) -> TextEdit
+        {
+            return TextEdit { range: range, newText: "" }
+        }
+
+        /** An edit as the editor reports a change: `{range, text}`. */
+        fnc parseChange(json: JsonValue) -> TextEdit
+        {
+            return TextEdit { range: Range::parse(json.getField("range")), newText: json.getField("text").getString() }
+        }
+
+        /** The edit as the bridge's editor.edit takes it. */
+        fn toJson() -> String
+        {
+            return Js::object([Js::field("range", this.range.toJson()), Js::strField("newText", this.newText)])
+        }
+
+        /** A JSON array of edits. */
+        fnc array(edits: List<TextEdit>) -> String
+        {
+            var parts: List<String> = []
+            var i: Int64 = 0
+            while (i < edits.len())
+            {
+                parts.push(edits[i].toJson())
+                i = i + 1
+            }
+            return Js::array(parts)
+        }
+    }
+}

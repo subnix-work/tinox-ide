@@ -1,0 +1,36 @@
+module tinox.ide.ui
+
+import tinox.ide.kde.Event
+
+namespace tinox.ide.ui
+{
+    /** What the editor asks a CompletionProvider: where the cursor is and which word is being typed. */
+    class CompletionRequest
+    {
+        /** Number of the request; an answer to an older one is ignored. */
+        var number: Int64
+        /** Id of the view that asked. */
+        var view: Int64
+        /** Where the cursor is. */
+        var position: Position
+        /** The word before the cursor, and where it starts and ends. */
+        var word: String
+        /** Where the word being typed starts and ends. */
+        var wordRange: Range
+        /** Why completion was asked for: "automatic", "manual", "trigger" or "again". */
+        var trigger: String
+
+        /** Reads an editor.completionRequested event. */
+        fnc parse(ev: Event) -> CompletionRequest
+        {
+            return CompletionRequest {
+                number: ev.int("req"),
+                view: ev.target,
+                position: Position::parse(ev.field("position")),
+                word: ev.str("wordText"),
+                wordRange: Range::parse(ev.field("word")),
+                trigger: ev.str("trigger")
+            }
+        }
+    }
+}

@@ -1,0 +1,156 @@
+module tinox.ide.ui
+
+import tinox.ide.kde.Event
+
+namespace tinox.ide.ui
+{
+    /**
+     * Describes one action: a command the user can start from a menu, a tool bar or a
+     * shortcut. Register it with Actions.define().
+     *
+     *     Action::create("build.run").text("&Run").icon("media-playback-start")
+     *         .shortcut("F5").onTrigger((ev: Event) => Main::run())
+     *
+     * Names follow the KDE Human Interface Guidelines: a mnemonic `&` in the text, Breeze
+     * icon names, portable shortcut text such as "Ctrl+Shift+F". Shortcuts given here are
+     * the *defaults*; the user's own choice (Actions.setShortcut or the shortcut dialog)
+     * is kept in the config and wins after a restart.
+     */
+    class Action
+    {
+        /** The action id, e.g. "build.run". */
+        var id: String
+        /** Descriptor fields set so far, as `"name":value` JSON fragments. */
+        var fields: List<String>
+        /** Runs when the action is triggered. */
+        var handler: fnc(Event) -> Nothing
+        /** Whether onTrigger() was called. */
+        var hasHandler: Bool
+
+        /** A new action with this id (unique, e.g. "build.run"). */
+        fnc create(id: String) -> Action
+        {
+            return Action { id: id, fields: [], handler: (ev: Event) => Action::ignore(), hasHandler: false }
+        }
+
+        /**
+         * A KDE standard action by its KDE name ("file_open", "file_save", "file_quit",
+         * "options_configure", "edit_find", ...): the platform's text, icon and shortcut.
+         */
+        fnc standard(name: String) -> Action
+        {
+            const action: Action = Action::create(name)
+            action.fields.push(Js::boolField("standard", true))
+            return action
+        }
+
+        /** Does nothing: the default handler of things that have none. */
+        fnc ignore() -> Nothing
+        {
+        }
+
+        /** The action id. */
+        fn getId() -> String
+        {
+            return this.id
+        }
+
+        /** The text with an `&` before the mnemonic letter. */
+        fn text(value: String) -> Action
+        {
+            this.fields.push(Js::strField("text", value))
+            return this
+        }
+
+        /** A Breeze icon name. */
+        fn icon(name: String) -> Action
+        {
+            this.fields.push(Js::strField("icon", name))
+            return this
+        }
+
+        /** The default shortcut, portable text ("Ctrl+O", "F5"). */
+        fn shortcut(sequence: String) -> Action
+        {
+            this.fields.push(Js::strField("shortcut", sequence))
+            return this
+        }
+
+        /** Several default shortcuts. */
+        fn shortcuts(sequences: List<String>) -> Action
+        {
+            this.fields.push(Js::field("shortcuts", Js::strings(sequences)))
+            return this
+        }
+
+        /** Text shown when the pointer rests on the action's button. */
+        fn toolTip(value: String) -> Action
+        {
+            this.fields.push(Js::strField("toolTip", value))
+            return this
+        }
+
+        /** Text shown in the status bar while the action is highlighted in a menu. */
+        fn statusTip(value: String) -> Action
+        {
+            this.fields.push(Js::strField("statusTip", value))
+            return this
+        }
+
+        /** The action can be switched on and off (a check mark in menus). */
+        fn checkable(value: Bool) -> Action
+        {
+            this.fields.push(Js::boolField("checkable", value))
+            return this
+        }
+
+        /** Whether a checkable action starts checked. */
+        fn checked(value: Bool) -> Action
+        {
+            this.fields.push(Js::boolField("checked", value))
+            return this
+        }
+
+        /** Whether the action can be triggered; a disabled one is greyed out. */
+        fn enabled(value: Bool) -> Action
+        {
+            this.fields.push(Js::boolField("enabled", value))
+            return this
+        }
+
+        /** Whether the action appears in menus and tool bars. */
+        fn visible(value: Bool) -> Action
+        {
+            this.fields.push(Js::boolField("visible", value))
+            return this
+        }
+
+        /** Actions of one group exclude each other (radio buttons in a menu). */
+        fn group(name: String) -> Action
+        {
+            this.fields.push(Js::strField("group", name))
+            return this
+        }
+
+        /** Runs when the action is triggered by menu, tool bar, shortcut or Actions.trigger(); `ev.bool("checked")` tells the new state of a checkable one. */
+        fn onTrigger(handler: fnc(Event) -> Nothing) -> Action
+        {
+            this.handler = handler
+            this.hasHandler = true
+            return this
+        }
+
+        /** The descriptor action.define takes. */
+        fn toJson() -> String
+        {
+            var all: List<String> = [Js::strField("id", this.id)]
+            var i: Int64 = 0
+            while (i < this.fields.len())
+            {
+                all.push(this.fields[i])
+                i = i + 1
+            }
+            return Js::object(all)
+        }
+    }
+}

@@ -1,0 +1,68 @@
+module tinox.ide.ui
+
+import tinox.core.json
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+
+namespace tinox.ide.ui
+{
+    /**
+     * A sorted and filtered face of a Model. Changes of the model flow through; the view
+     * shows what matches. Selections and events through a proxy still name the model's
+     * row ids.
+     *
+     *     const proxy = model.proxy()
+     *     proxy.filter("main", false)
+     *     proxy.sort(0, false)
+     *     proxy.attach(mount.idOf("tree"))
+     *
+     * Rows that have not been loaded yet (lazy children) cannot match a filter.
+     */
+    class ModelProxy
+    {
+        /** The bridge's object id. */
+        var proxyId: Int64
+
+        /** A proxy of this model. */
+        fnc of(model: Model) -> ModelProxy
+        {
+            const reply: JsonValue = Bridge::query(Command::named("model.createProxy").raw("source", model.modelId.toString()).build())
+            return ModelProxy { proxyId: reply.getField("id").getInt() }
+        }
+
+        /** The bridge's object id. */
+        fn id() -> Int64
+        {
+            return this.proxyId
+        }
+
+        /** Keeps the rows whose first column contains `text` (case-insensitive), and their ancestors. "" shows everything. */
+        fn filter(text: String, regex: Bool) -> Nothing
+        {
+            Bridge::query(Command::named("model.setFilter").target(this.proxyId).raw("filter", Js::object([Js::strField("text", text), Js::boolField("regex", regex)])).build())
+        }
+
+        /** Filters on another column, optionally respecting case. */
+        fn filterColumn(text: String, column: Int64, caseSensitive: Bool) -> Nothing
+        {
+            Bridge::query(Command::named("model.setFilter").target(this.proxyId).raw("filter", Js::object([Js::strField("text", text), Js::intField("column", column), Js::boolField("caseSensitive", caseSensitive)])).build())
+        }
+
+        /** Sorts by a column, locale aware and case-insensitive. */
+        fn sort(column: Int64, descending: Bool) -> Nothing
+        {
+            var order: String = "asc"
+            if (descending)
+            {
+                order = "desc"
+            }
+            Bridge::query(Command::named("model.setFilter").target(this.proxyId).raw("sort", Js::object([Js::intField("column", column), Js::strField("order", order)])).build())
+        }
+
+        /** Shows the proxy in the item view with this node id. */
+        fn attach(viewId: Int64) -> Nothing
+        {
+            Bridge::query(Command::named("model.attach").raw("model", this.proxyId.toString()).int("view", viewId).build())
+        }
+    }
+}

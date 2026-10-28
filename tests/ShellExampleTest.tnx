@@ -1,0 +1,151 @@
+import MockBridge
+import tinox.ide.examples.ShellExample
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.EventLoop
+
+class ShellExampleTest
+{
+    fnc script(modelId: Int64, documentId: Int64, viewId: Int64) -> Nothing
+    {
+        MockBridge::onCommand("model.create", "{\"id\":" + modelId.toString() + "}", "")
+        MockBridge::onCommand("editor.createDocument", "{\"id\":" + documentId.toString() + "}", "")
+        MockBridge::onCommand("editor.createView", "{\"id\":" + viewId.toString() + "}", "")
+        MockBridge::onCommand("widget.mount", "{\"id\":40,\"root\":41,\"nodes\":{\"main\":41,\"tools\":42,\"files\":43,\"tree\":44,\"split\":45,\"editor\":" + viewId.toString() + ",\"log\":46,\"status\":47}}", "")
+        for name in ["action.define", "model.reset", "model.attach", "editor.enableCompletion", "widget.show", "action.setMenuBar", "action.setToolBar", "widget.append", "editor.setText", "model.setChildren", "editor.setDiagnostics", "editor.getText", "editor.disableCompletion", "action.set"]
+        {
+            MockBridge::onCommand(name, "", "")
+        }
+    }
+
+    fnc commandName(json: String) -> String
+    {
+        const start: Int64 = 8
+        const rest: String = json.substring(start, json.len())
+        return rest.substring(0, rest.indexOf("\""))
+    }
+
+    @Test("starting builds actions, model, window and menus in that order")
+    fn testStart() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const model: Int64 = MockBridge::createObject()
+        const document: Int64 = MockBridge::createObject()
+        const view: Int64 = MockBridge::createObject()
+        ShellExampleTest::script(model, document, view)
+        const events: EventLoop = EventLoop::create()
+        const example: ShellExample = ShellExample::start(events)
+        var names: List<String> = []
+        var next: String = MockBridge::nextCommand()
+        while (next != "")
+        {
+            names.push(ShellExampleTest::commandName(next))
+            next = MockBridge::nextCommand()
+        }
+        return example.running && names.len() == 11 && names[0] == "model.create" && names[1] == "editor.createDocument" && names[2] == "editor.createView" && names[3] == "action.define" &&
+            names[4] == "model.reset" && names[5] == "widget.mount" && names[6] == "model.attach" && names[7] == "editor.enableCompletion" && names[8] == "widget.show" &&
+            names[9] == "action.setMenuBar" && names[10] == "action.setToolBar"
+    }
+
+    @Test("the window tree embeds the editor view and holds tree, log and status bar")
+    fn testWindow() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const model: Int64 = MockBridge::createObject()
+        const document: Int64 = MockBridge::createObject()
+        const view: Int64 = MockBridge::createObject()
+        ShellExampleTest::script(model, document, view)
+        const example: ShellExample = ShellExample::start(EventLoop::create())
+        const json: String = example.describe().toJson()
+        return json.contains("\"type\":\"Embed\",\"key\":\"editor\",\"object\":" + view.toString() + "}") && json.contains("\"key\":\"tree\"") && json.contains("\"type\":\"QPlainTextEdit\",\"key\":\"log\"") &&
+            json.contains("\"type\":\"QStatusBar\"") && json.contains("\"type\":\"QToolBar\",\"key\":\"tools\"")
+    }
+
+    @Test("opening a file in the tree puts its text in the editor and says so in the log")
+    fn testOpenFile() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const model: Int64 = MockBridge::createObject()
+        const document: Int64 = MockBridge::createObject()
+        const view: Int64 = MockBridge::createObject()
+        ShellExampleTest::script(model, document, view)
+        const events: EventLoop = EventLoop::create()
+        const example: ShellExample = ShellExample::start(events)
+        while (MockBridge::nextCommand() != "") {}
+        MockBridge::push("{\"type\":\"model.activated\",\"target\":44,\"key\":\"tree\",\"id\":\"src/Main.tnx\"}")
+        MockBridge::push("{\"type\":\"model.activated\",\"target\":44,\"key\":\"tree\",\"id\":\"src\"}")
+        events.pump(1000)
+        const setText: String = MockBridge::nextCommand()
+        const logLine: String = MockBridge::nextCommand()
+        return setText.contains("\"cmd\":\"editor.setText\"") && setText.contains("Hello from the shell example") &&
+            logLine == "{\"cmd\":\"widget.append\",\"target\":46,\"text\":\"Opened src/Main.tnx\"}" &&
+            MockBridge::pending() == 0 && events.failureCount() == 0
+    }
+
+    @Test("a folder opened in the tree is filled from the fetch handler")
+    fn testLazyFolder() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const model: Int64 = MockBridge::createObject()
+        const document: Int64 = MockBridge::createObject()
+        const view: Int64 = MockBridge::createObject()
+        ShellExampleTest::script(model, document, view)
+        const events: EventLoop = EventLoop::create()
+        const example: ShellExample = ShellExample::start(events)
+        while (MockBridge::nextCommand() != "") {}
+        MockBridge::push("{\"type\":\"model.fetchChildren\",\"target\":" + model.toString() + ",\"id\":\"src/util\"}")
+        events.pump(1000)
+        const answer: String = MockBridge::nextCommand()
+        return answer.contains("\"cmd\":\"model.setChildren\"") && answer.contains("\"parent\":\"src/util\"") && answer.contains("\"id\":\"src/util/Strings.tnx\"")
+    }
+
+    @Test("actions: Run counts and logs, the check action reports its state, quit ends the program")
+    fn testActions() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const model: Int64 = MockBridge::createObject()
+        const document: Int64 = MockBridge::createObject()
+        const view: Int64 = MockBridge::createObject()
+        ShellExampleTest::script(model, document, view)
+        const events: EventLoop = EventLoop::create()
+        const example: ShellExample = ShellExample::start(events)
+        while (MockBridge::nextCommand() != "") {}
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"build.run\",\"checked\":false}")
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"build.run\",\"checked\":false}")
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"view.wrap\",\"checked\":false}")
+        events.pump(1000)
+        const first: String = MockBridge::nextCommand()
+        const second: String = MockBridge::nextCommand()
+        const third: String = MockBridge::nextCommand()
+        const stillRunning: Bool = example.running
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"file_quit\",\"checked\":false}")
+        events.pump(1000)
+        return example.runs == 2 && first.contains("Run 1") && second.contains("Run 2") && third.contains("Wrap lines: false") && stillRunning && !example.running
+    }
+
+    @Test("a TODO in the text gets a hint, its removal clears it")
+    fn testDiagnostics() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const model: Int64 = MockBridge::createObject()
+        const document: Int64 = MockBridge::createObject()
+        const view: Int64 = MockBridge::createObject()
+        ShellExampleTest::script(model, document, view)
+        const events: EventLoop = EventLoop::create()
+        const example: ShellExample = ShellExample::start(events)
+        while (MockBridge::nextCommand() != "") {}
+        const t: String = document.toString()
+        const change: String = "{\"type\":\"editor.changed\",\"target\":" + t + ",\"version\":1,\"origin\":\"user\",\"changes\":[]}"
+        MockBridge::onCommand("editor.getText", "{\"text\":\"a\\n// TODO\"}", "")
+        MockBridge::push(change)
+        events.pump(1000)
+        MockBridge::nextCommand()
+        const hint: String = MockBridge::nextCommand()
+        MockBridge::onCommand("editor.getText", "{\"text\":\"clean\"}", "")
+        MockBridge::push(change)
+        events.pump(1000)
+        MockBridge::nextCommand()
+        const cleared: String = MockBridge::nextCommand()
+        return hint.contains("\"cmd\":\"editor.setDiagnostics\"") && hint.contains("\"severity\":4") && hint.contains("\"source\":\"shell-example\"") &&
+            cleared.contains("\"cmd\":\"editor.setDiagnostics\"") && cleared.contains("\"items\":[]")
+    }
+}

@@ -1,0 +1,305 @@
+module tinox.ide.ui
+
+import tinox.core.json
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+namespace tinox.ide.ui
+{
+    /**
+     * The text of a file or a scratch buffer, kept by KTextEditor (docs/editor.md): undo
+     * history, encoding, line endings, syntax highlighting. Show it with an EditorView.
+     *
+     *     const doc = Document::open(events, "/home/me/Main.tnx", "")
+     *     doc.onChange((change: Change) => Main::sendToLanguageServer(change))
+     *     doc.edit([TextEdit::replace(Range::create(0, 0, 0, 5), "hello")])
+     *
+     * All positions count like the Language Server Protocol: zero-based lines, UTF-16
+     * code units for characters.
+     */
+    class Document
+    {
+        /** The loop the document's events arrive on. */
+        var events: EventLoop
+        /** The bridge's object id. */
+        var docId: Int64
+        /** Called on every change. */
+        var changeHandler: fnc(Change) -> Nothing
+        /** Called when the modified flag changes. */
+        var modifiedHandler: fnc(Bool) -> Nothing
+        /** Called after a save. */
+        var savedHandler: fnc(String) -> Nothing
+        /** Called when the URL changes. */
+        var urlHandler: fnc(String) -> Nothing
+        /** Called when the file changes on disk. */
+        var externalHandler: fnc(String) -> Nothing
+        /** Called when the document is being destroyed. */
+        var closingHandler: fnc(Document) -> Nothing
+
+        /** Wraps an existing document object and starts listening to its events. */
+        fnc wrap(events: EventLoop, id: Int64) -> Document
+        {
+            const doc: Document = Document {
+                events: events,
+                docId: id,
+                changeHandler: (change: Change) => Action::ignore(),
+                modifiedHandler: (modified: Bool) => Action::ignore(),
+                savedHandler: (url: String) => Action::ignore(),
+                urlHandler: (url: String) => Action::ignore(),
+                externalHandler: (reason: String) => Action::ignore(),
+                closingHandler: (closing: Document) => Action::ignore()
+            }
+            events.onTarget(id, (ev: Event) => doc.deliver(ev))
+            return doc
+        }
+
+        /** A new document with this text (version 0, not modified). */
+        fnc create(events: EventLoop, text: String) -> Document
+        {
+            const reply: JsonValue = Bridge::query(Command::named("editor.createDocument").str("text", text).build())
+            return Document::wrap(events, reply.getField("id").getInt())
+        }
+
+        /** Opens a file (a path or a URL); `encoding` "" detects it. Throws when it cannot be read. */
+        fnc open(events: EventLoop, url: String, encoding: String) -> Document
+        {
+            var command: Command = Command::named("editor.openDocument").str("url", url)
+            if (encoding != "")
+            {
+                command = command.str("encoding", encoding)
+            }
+            const reply: JsonValue = Bridge::query(command.build())
+            return Document::wrap(events, reply.getField("id").getInt())
+        }
+
+        /** The bridge's object id. */
+        fn id() -> Int64
+        {
+            return this.docId
+        }
+
+        /** Dispatches a document event to its handler. */
+        fn deliver(ev: Event) -> Nothing
+        {
+            if (ev.type == "editor.changed")
+            {
+                this.changeHandler(Change::parse(ev))
+            }
+            else if (ev.type == "editor.modifiedChanged")
+            {
+                this.modifiedHandler(ev.bool("modified"))
+            }
+            else if (ev.type == "editor.saved")
+            {
+                this.savedHandler(ev.str("url"))
+            }
+            else if (ev.type == "editor.urlChanged")
+            {
+                this.urlHandler(ev.str("url"))
+            }
+            else if (ev.type == "editor.externallyModified")
+            {
+                this.externalHandler(ev.str("reason"))
+            }
+            else if (ev.type == "editor.closing")
+            {
+                this.closingHandler(this)
+            }
+        }
+
+        // ---- handlers (one per kind; setting again replaces)
+
+        /** The text changed, by the user or through this API. */
+        fn onChange(handler: fnc(Change) -> Nothing) -> Nothing
+        {
+            this.changeHandler = handler
+        }
+
+        /** The modified flag changed (true after an edit, false after a save). */
+        fn onModified(handler: fnc(Bool) -> Nothing) -> Nothing
+        {
+            this.modifiedHandler = handler
+        }
+
+        /** The document was written to its file (the URL). */
+        fn onSaved(handler: fnc(String) -> Nothing) -> Nothing
+        {
+            this.savedHandler = handler
+        }
+
+        /** The document got another URL (save as). */
+        fn onUrlChanged(handler: fnc(String) -> Nothing) -> Nothing
+        {
+            this.urlHandler = handler
+        }
+
+        /** The file changed on disk behind the editor's back: "modified", "created" or "deleted". */
+        fn onExternalChange(handler: fnc(String) -> Nothing) -> Nothing
+        {
+            this.externalHandler = handler
+        }
+
+        /** The document is being destroyed (released, or closed by the application). */
+        fn onClosing(handler: fnc(Document) -> Nothing) -> Nothing
+        {
+            this.closingHandler = handler
+        }
+
+        // ---- text
+
+        /** The whole text. */
+        fn text() -> String
+        {
+            return Bridge::query(Command::named("editor.getText").target(this.docId).build()).getField("text").getString()
+        }
+
+        /** The text in a range. */
+        fn textIn(range: Range) -> String
+        {
+            return Bridge::query(Command::named("editor.getText").target(this.docId).raw("range", range.toJson()).build()).getField("text").getString()
+        }
+
+        /** Replaces the whole text in one undo step. */
+        fn setText(text: String) -> Nothing
+        {
+            Bridge::query(Command::named("editor.setText").target(this.docId).str("text", text).build())
+        }
+
+        /**
+         * Applies edits together: all ranges refer to the text before the edits, they must
+         * not overlap, and nothing changes if one is invalid. One undo step.
+         */
+        fn edit(edits: List<TextEdit>) -> Nothing
+        {
+            Bridge::query(Command::named("editor.edit").target(this.docId).raw("edits", TextEdit::array(edits)).build())
+        }
+
+        // ---- file
+
+        /** Writes to the document's file; throws when the document has none (use saveAs). */
+        fn save() -> Nothing
+        {
+            Bridge::query(Command::named("editor.saveDocument").target(this.docId).build())
+        }
+
+        /** Writes to another file, which becomes the document's. */
+        fn saveAs(url: String) -> Nothing
+        {
+            Bridge::query(Command::named("editor.saveDocument").target(this.docId).str("url", url).build())
+        }
+
+        /** The editor.info answer: url, modified, encoding, endOfLine, lines, version, highlightingMode, readOnly. */
+        fn info() -> JsonValue
+        {
+            return Bridge::query(Command::named("editor.info").target(this.docId).build())
+        }
+
+        /** The URL, "" for a document without a file. */
+        fn url() -> String
+        {
+            return this.info().getField("url").getString()
+        }
+
+        /** Whether there are unsaved changes. */
+        fn isModified() -> Bool
+        {
+            return this.info().getField("modified").getBool()
+        }
+
+        /** How many changes the document has seen. */
+        fn version() -> Int64
+        {
+            return this.info().getField("version").getInt()
+        }
+
+        /** How many lines the text has. */
+        fn lineCount() -> Int64
+        {
+            return this.info().getField("lines").getInt()
+        }
+
+        /** The encoding of the file, e.g. "UTF-8". */
+        fn encoding() -> String
+        {
+            return this.info().getField("encoding").getString()
+        }
+
+        /** Encoding used by the next save ("UTF-8", "ISO-8859-1", ...). */
+        fn setEncoding(name: String) -> Nothing
+        {
+            Bridge::query(Command::named("editor.setEncoding").target(this.docId).str("encoding", name).build())
+        }
+
+        /** Line endings used by the next save: "lf", "crlf" or "cr". */
+        fn setEndOfLine(kind: String) -> Nothing
+        {
+            Bridge::query(Command::named("editor.setEndOfLine").target(this.docId).str("eol", kind).build())
+        }
+
+        // ---- highlighting and diagnostics
+
+        /** Chooses the syntax definition by name ("Tinox", "C++", ...). */
+        fn setHighlightingMode(mode: String) -> Nothing
+        {
+            Bridge::query(Command::named("editor.setHighlightingMode").target(this.docId).str("mode", mode).build())
+        }
+
+        /** The name of the syntax definition in use. */
+        fn highlightingMode() -> String
+        {
+            return this.info().getField("highlightingMode").getString()
+        }
+
+        /** The names of all syntax definitions. */
+        fn highlightingModes() -> List<String>
+        {
+            return Mount::strings(Bridge::query(Command::named("editor.highlightingModes").target(this.docId).build()).getField("modes"))
+        }
+
+        /**
+         * Shows these problems, replacing the ones this `owner` showed before (several
+         * owners coexist: "lsp", "build"). Nothing changes if one range is invalid.
+         */
+        fn setDiagnostics(owner: String, diagnostics: List<Diagnostic>) -> Nothing
+        {
+            var parts: List<String> = []
+            var i: Int64 = 0
+            while (i < diagnostics.len())
+            {
+                parts.push(diagnostics[i].toJson())
+                i = i + 1
+            }
+            Bridge::query(Command::named("editor.setDiagnostics").target(this.docId).str("owner", owner).raw("items", Js::array(parts)).build())
+        }
+
+        /** Removes the problems this owner showed. */
+        fn clearDiagnostics(owner: String) -> Nothing
+        {
+            this.setDiagnostics(owner, [])
+        }
+
+        /** The problems an owner shows, with their ranges moved along with the text. */
+        fn diagnostics(owner: String) -> List<Diagnostic>
+        {
+            const reply: JsonValue = Bridge::query(Command::named("editor.getDiagnostics").target(this.docId).str("owner", owner).build())
+            const items: List<JsonValue> = reply.getField("items").asList()
+            var out: List<Diagnostic> = []
+            var i: Int64 = 0
+            while (i < items.len())
+            {
+                out.push(Diagnostic::parse(items[i]))
+                i = i + 1
+            }
+            return out
+        }
+
+        /** Closes the document and destroys it, with its views. */
+        fn release() -> Nothing
+        {
+            this.events.offTarget(this.docId)
+            Bridge::release(this.docId)
+        }
+    }
+}

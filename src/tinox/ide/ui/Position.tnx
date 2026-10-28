@@ -1,0 +1,55 @@
+module tinox.ide.ui
+
+import tinox.core.json
+
+namespace tinox.ide.ui
+{
+    /**
+     * A place in a text, as the Language Server Protocol and the editor bridge count it:
+     * a zero-based `line` and a zero-based `character` that counts UTF-16 code units (a
+     * character outside the Basic Multilingual Plane, such as an emoji, counts two).
+     */
+    class Position
+    {
+        /** Zero-based line. */
+        var line: Int64
+        /** Zero-based UTF-16 offset in the line. */
+        var character: Int64
+
+        /** The position at this line and character. */
+        fnc create(line: Int64, character: Int64) -> Position
+        {
+            return Position { line: line, character: character }
+        }
+
+        /** Reads `{line, character}`. */
+        fnc parse(json: JsonValue) -> Position
+        {
+            return Position { line: json.getField("line").getInt(), character: json.getField("character").getInt() }
+        }
+
+        /** As `{"line":..,"character":..}`. */
+        fn toJson() -> String
+        {
+            return Js::object([Js::intField("line", this.line), Js::intField("character", this.character)])
+        }
+
+        /** As `line:character`. */
+        fn toString() -> String
+        {
+            return this.line.toString() + ":" + this.character.toString()
+        }
+
+        /** Whether this position is the same place as `other`. */
+        fn equals(other: Position) -> Bool
+        {
+            return this.line == other.line && this.character == other.character
+        }
+
+        /** Whether this position comes before `other`. */
+        fn before(other: Position) -> Bool
+        {
+            return this.line < other.line || (this.line == other.line && this.character < other.character)
+        }
+    }
+}

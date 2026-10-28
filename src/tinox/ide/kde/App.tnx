@@ -17,6 +17,7 @@ namespace tinox.ide.kde
      */
     class App
     {
+        /** Body of the logic task: runs `logic`, turns an uncaught error into a message on stderr and a non-zero code, and always ends the Qt loop afterwards. */
         fnc logicTask(events: EventLoop, logic: fnc(EventLoop) -> Int32) -> Int32
         {
             var code: Int32 = 1
@@ -33,6 +34,7 @@ namespace tinox.ide.kde
             return code
         }
 
+        /** Initialises the bridge on the calling (main) thread, starts the logic task, runs Qt's event loop until quit and returns the logic's exit code. */
         fnc run(appName: String, displayName: String, logic: fnc(EventLoop) -> Int32) -> Int32
         {
             try

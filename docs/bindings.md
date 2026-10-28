@@ -3,7 +3,8 @@
 The Tinox side of the [C ABI](abi.md): typed wrappers, a command builder, an
 event type and an event loop. Everything above it (the IDE core, LSP client,
 views) uses these classes and never calls `tkde_*` directly.
-Sources: `src/tinox/ide/kde/`.
+Sources: `src/tinox/ide/kde/`. The typed widget, action, model and editor API built on it is
+described in [ui-api.md](ui-api.md).
 
 | Class | Role |
 |---|---|

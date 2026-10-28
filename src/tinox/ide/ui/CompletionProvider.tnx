@@ -1,0 +1,15 @@
+module tinox.ide.ui
+
+namespace tinox.ide.ui
+{
+    /**
+     * Supplies completions to an EditorView (EditorView.enableCompletion). The editor
+     * asks while the user types and when completion is invoked; the answer fills the
+     * popup. Typically this asks the language server.
+     */
+    interface CompletionProvider
+    {
+        /** The items for this request, best first. An empty list shows no popup. */
+        fn complete(request: CompletionRequest) -> List<CompletionItem>
+    }
+}

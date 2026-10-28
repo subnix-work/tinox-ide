@@ -1,0 +1,304 @@
+import FakeProvider
+import MockBridge
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Change
+import tinox.ide.ui.CompletionItem
+import tinox.ide.ui.Diagnostic
+import tinox.ide.ui.Document
+import tinox.ide.ui.EditorView
+import tinox.ide.ui.Position
+import tinox.ide.ui.Range
+import tinox.ide.ui.TextEdit
+import tinox.ide.ui.Ui
+
+class EditorTest
+{
+    fnc newDocument(events: EventLoop) -> Document
+    {
+        const object: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.createDocument", "{\"id\":" + object.toString() + "}", "")
+        return Document::create(events, "héllo")
+    }
+
+    @Test("positions, ranges and edits describe themselves as LSP-shaped JSON")
+    fn testValueJson() -> Bool
+    {
+        const range: Range = Range::create(1, 2, 3, 4)
+        const edit: TextEdit = TextEdit::replace(range, "a\"b")
+        const insert: TextEdit = TextEdit::insert(Position::create(0, 5), "x")
+        const remove: TextEdit = TextEdit::remove(range)
+        return range.toJson() == "{\"start\":{\"line\":1,\"character\":2},\"end\":{\"line\":3,\"character\":4}}" &&
+            edit.toJson() == "{\"range\":" + range.toJson() + ",\"newText\":\"a\\\"b\"}" &&
+            insert.range.isEmpty() && !range.isEmpty() && remove.newText == "" &&
+            range.toString() == "1:2-3:4" && Position::create(1, 2).before(Position::create(1, 3)) && !Position::create(2, 0).before(Position::create(1, 9)) &&
+            TextEdit::array([insert, remove]) == "[" + insert.toJson() + "," + remove.toJson() + "]"
+    }
+
+    @Test("diagnostics and completion items describe themselves")
+    fn testDiagnosticJson() -> Bool
+    {
+        const range: Range = Range::create(0, 0, 0, 3)
+        const error: Diagnostic = Diagnostic::error(range, "unknown <name>").withCode("E1").withSource("tinox")
+        const hint: Diagnostic = Diagnostic::hint(range, "h")
+        const item: CompletionItem = CompletionItem::create("Fs").kind("class").detail("tinox.core.fs").insertText("Fs::x").alsoEdit(TextEdit::insert(Position::create(0, 0), "import x\n"))
+        return error.severity == 1 && Diagnostic::warning(range, "w").severity == 2 && Diagnostic::info(range, "i").severity == 3 && hint.severity == 4 &&
+            error.toJson() == "{\"range\":" + range.toJson() + ",\"severity\":1,\"message\":\"unknown <name>\",\"code\":\"E1\",\"source\":\"tinox\"}" &&
+            hint.toJson() == "{\"range\":" + range.toJson() + ",\"severity\":4,\"message\":\"h\"}" &&
+            item.toJson() == "{\"label\":\"Fs\",\"kind\":\"class\",\"detail\":\"tinox.core.fs\",\"insertText\":\"Fs::x\",\"additionalTextEdits\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"newText\":\"import x\\n\"}]}" &&
+            CompletionItem::create("x").toJson() == "{\"label\":\"x\"}"
+    }
+
+    @Test("document commands: text, edit, save, file info")
+    fn testDocumentCommands() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const doc: Document = EditorTest::newDocument(events)
+        MockBridge::onCommand("editor.getText", "{\"text\":\"héllo\\nworld\"}", "")
+        MockBridge::onCommand("editor.setText", "", "")
+        MockBridge::onCommand("editor.edit", "", "")
+        MockBridge::onCommand("editor.saveDocument", "", "")
+        MockBridge::onCommand("editor.info", "{\"url\":\"file:///a.tnx\",\"modified\":true,\"version\":3,\"lines\":2,\"encoding\":\"UTF-8\",\"highlightingMode\":\"Tinox\"}", "")
+        MockBridge::onCommand("editor.setEncoding", "", "")
+        MockBridge::onCommand("editor.setEndOfLine", "", "")
+        MockBridge::onCommand("editor.setHighlightingMode", "", "")
+        const text: String = doc.text()
+        doc.setText("new")
+        doc.edit([TextEdit::replace(Range::create(0, 0, 0, 1), "H"), TextEdit::insert(Position::create(1, 5), "!")])
+        doc.save()
+        doc.saveAs("/tmp/b.tnx")
+        doc.setEncoding("ISO-8859-1")
+        doc.setEndOfLine("crlf")
+        doc.setHighlightingMode("Tinox")
+        const o: String = doc.id().toString()
+        return text == "héllo\nworld" && doc.url() == "file:///a.tnx" && doc.isModified() && doc.version() == 3 && doc.lineCount() == 2 && doc.encoding() == "UTF-8" && doc.highlightingMode() == "Tinox" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.createDocument\",\"text\":\"héllo\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.getText\",\"target\":" + o + "}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.setText\",\"target\":" + o + ",\"text\":\"new\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.edit\",\"target\":" + o + ",\"edits\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}},\"newText\":\"H\"},{\"range\":{\"start\":{\"line\":1,\"character\":5},\"end\":{\"line\":1,\"character\":5}},\"newText\":\"!\"}]}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.saveDocument\",\"target\":" + o + "}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.saveDocument\",\"target\":" + o + ",\"url\":\"/tmp/b.tnx\"}"
+    }
+
+    @Test("open passes the encoding only when given; a failure throws")
+    fn testOpen() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const object: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.openDocument", "{\"id\":" + object.toString() + "}", "")
+        const events: EventLoop = EventLoop::create()
+        const doc: Document = Document::open(events, "/a/b.tnx", "")
+        const latin: Document = Document::open(events, "/a/c.txt", "ISO-8859-1")
+        MockBridge::onCommand("editor.openDocument", "{\"ok\":false,\"error\":{\"code\":-5,\"message\":\"cannot open\"}}", "")
+        var message: String = ""
+        try
+        {
+            Document::open(events, "/missing", "")
+        }
+        catch (e: String)
+        {
+            message = e
+        }
+        return MockBridge::nextCommand() == "{\"cmd\":\"editor.openDocument\",\"url\":\"/a/b.tnx\"}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.openDocument\",\"url\":\"/a/c.txt\",\"encoding\":\"ISO-8859-1\"}" &&
+            message.contains("cannot open") && doc.id() == object && latin.id() == object
+    }
+
+    @Test("change events carry version, origin and edits in LSP order")
+    fn testChangeEvents() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const doc: Document = EditorTest::newDocument(events)
+        var seen: List<String> = []
+        doc.onChange((change: Change) => seen.push(change.version.toString() + " " + change.origin + " " + change.edits.len().toString() + " " + change.edits[0].newText + " " + change.edits[1].range.toString() + " " + change.byUser().toString()))
+        doc.onModified((modified: Bool) => seen.push("modified " + modified.toString()))
+        doc.onSaved((url: String) => seen.push("saved " + url))
+        doc.onUrlChanged((url: String) => seen.push("url " + url))
+        doc.onExternalChange((reason: String) => seen.push("external " + reason))
+        doc.onClosing((closing: Document) => seen.push("closing " + closing.id().toString()))
+        const t: String = doc.id().toString()
+        MockBridge::push("{\"type\":\"editor.changed\",\"target\":" + t + ",\"version\":4,\"origin\":\"user\",\"changes\":[{\"range\":{\"start\":{\"line\":0,\"character\":2},\"end\":{\"line\":0,\"character\":2}},\"text\":\"h\"},{\"range\":{\"start\":{\"line\":0,\"character\":3},\"end\":{\"line\":0,\"character\":4}},\"text\":\"\"}]}")
+        MockBridge::push("{\"type\":\"editor.modifiedChanged\",\"target\":" + t + ",\"modified\":true}")
+        MockBridge::push("{\"type\":\"editor.saved\",\"target\":" + t + ",\"url\":\"file:///a\",\"saveAs\":false}")
+        MockBridge::push("{\"type\":\"editor.urlChanged\",\"target\":" + t + ",\"url\":\"file:///b\"}")
+        MockBridge::push("{\"type\":\"editor.externallyModified\",\"target\":" + t + ",\"modified\":false,\"reason\":\"deleted\"}")
+        MockBridge::push("{\"type\":\"editor.closing\",\"target\":" + t + "}")
+        events.pump(1000)
+        return seen.len() == 6 && seen[0] == "4 user 2 h 0:3-0:4 true" && seen[1] == "modified true" && seen[2] == "saved file:///a" && seen[3] == "url file:///b" && seen[4] == "external deleted" &&
+            seen[5] == "closing " + t && events.failureCount() == 0
+    }
+
+    @Test("diagnostics: set, clear, read back")
+    fn testDiagnostics() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const doc: Document = EditorTest::newDocument(events)
+        MockBridge::onCommand("editor.setDiagnostics", "{\"count\":1}", "")
+        MockBridge::onCommand("editor.getDiagnostics", "{\"items\":[{\"range\":{\"start\":{\"line\":3,\"character\":0},\"end\":{\"line\":3,\"character\":4}},\"severity\":2,\"message\":\"unused\",\"code\":\"W2\",\"source\":\"tinox\"}]}", "")
+        doc.setDiagnostics("lsp", [Diagnostic::warning(Range::create(1, 0, 1, 4), "unused").withCode("W2")])
+        doc.clearDiagnostics("lsp")
+        const back: List<Diagnostic> = doc.diagnostics("lsp")
+        const o: String = doc.id().toString()
+        MockBridge::nextCommand()
+        return MockBridge::nextCommand() == "{\"cmd\":\"editor.setDiagnostics\",\"target\":" + o + ",\"owner\":\"lsp\",\"items\":[{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":4}},\"severity\":2,\"message\":\"unused\",\"code\":\"W2\"}]}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.setDiagnostics\",\"target\":" + o + ",\"owner\":\"lsp\",\"items\":[]}" &&
+            back.len() == 1 && back[0].severity == 2 && back[0].range.start.line == 3 && back[0].code == "W2" && back[0].source == "tinox"
+    }
+
+    @Test("a view: cursor, selection, undo, and an embed node for it")
+    fn testView() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const doc: Document = EditorTest::newDocument(events)
+        const viewObject: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.createView", "{\"id\":" + viewObject.toString() + "}", "")
+        MockBridge::onCommand("editor.getCursor", "{\"position\":{\"line\":2,\"character\":7}}", "")
+        MockBridge::onCommand("editor.setCursor", "", "")
+        MockBridge::onCommand("editor.getSelection", "{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":2}},\"text\":\"hé\"}", "")
+        MockBridge::onCommand("editor.setSelection", "", "")
+        MockBridge::onCommand("editor.undo", "", "")
+        MockBridge::onCommand("editor.redo", "", "")
+        const view: EditorView = EditorView::create(events, doc)
+        const cursor: Position = view.cursor()
+        view.setCursor(Position::create(0, 1))
+        const selected: String = view.selectedText()
+        const range: Range = view.selection()
+        const has: Bool = view.hasSelection()
+        view.setSelection(Range::create(0, 0, 0, 3))
+        view.clearSelection()
+        view.undo()
+        view.redo()
+        const v: String = view.id().toString()
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        return view.id() == viewObject && cursor.toString() == "2:7" && selected == "hé" && range.toString() == "0:0-0:2" && has &&
+            Ui::embed("editor", view.id()).toJson() == "{\"type\":\"Embed\",\"key\":\"editor\",\"object\":" + v + "}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.setSelection\",\"target\":" + v + ",\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":3}}}" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.setSelection\",\"target\":" + v + ",\"range\":null}"
+    }
+
+    @Test("view events: cursor, selection, focus")
+    fn testViewEvents() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const doc: Document = EditorTest::newDocument(events)
+        const viewObject: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.createView", "{\"id\":" + viewObject.toString() + "}", "")
+        const view: EditorView = EditorView::create(events, doc)
+        var seen: List<String> = []
+        view.onCursorMoved((position: Position) => seen.push("cursor " + position.toString()))
+        view.onSelectionChanged((ev: Event) => seen.push("selection " + ev.field("range").isNull().toString()))
+        view.onFocusChanged((focused: Bool) => seen.push("focus " + focused.toString()))
+        const v: String = viewObject.toString()
+        MockBridge::push("{\"type\":\"editor.cursorMoved\",\"target\":" + v + ",\"position\":{\"line\":1,\"character\":2}}")
+        MockBridge::push("{\"type\":\"editor.selectionChanged\",\"target\":" + v + ",\"range\":null}")
+        MockBridge::push("{\"type\":\"editor.focusChanged\",\"target\":" + v + ",\"focused\":true}")
+        events.pump(1000)
+        return seen.len() == 3 && seen[0] == "cursor 1:2" && seen[1] == "selection true" && seen[2] == "focus true"
+    }
+
+    @Test("completion: the provider is asked and its items go back with the request number")
+    fn testCompletion() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const doc: Document = EditorTest::newDocument(events)
+        const viewObject: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.createView", "{\"id\":" + viewObject.toString() + "}", "")
+        MockBridge::onCommand("editor.enableCompletion", "", "")
+        MockBridge::onCommand("editor.setCompletions", "{\"ok\":true,\"stale\":false}", "")
+        const view: EditorView = EditorView::create(events, doc)
+        const provider: FakeProvider = FakeProvider::create(false)
+        view.enableCompletion(provider, [".", "::"], 2)
+        const v: String = viewObject.toString()
+        MockBridge::push("{\"type\":\"editor.completionRequested\",\"target\":" + v + ",\"req\":5,\"position\":{\"line\":0,\"character\":14},\"word\":{\"start\":{\"line\":0,\"character\":12},\"end\":{\"line\":0,\"character\":14}},\"wordText\":\"Fs\",\"trigger\":\"manual\"}")
+        events.pump(1000)
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        return provider.asked.len() == 1 && provider.asked[0] == "Fs@0:14#5/manual" &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.setCompletions\",\"target\":" + v + ",\"req\":5,\"items\":[{\"label\":\"FsA\",\"kind\":\"function\",\"detail\":\"d\"},{\"label\":\"FsB\"}]}" &&
+            events.failureCount() == 0
+    }
+
+    @Test("a failing provider answers with no items and the failure is reported")
+    fn testCompletionFailure() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const doc: Document = EditorTest::newDocument(events)
+        const viewObject: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.createView", "{\"id\":" + viewObject.toString() + "}", "")
+        MockBridge::onCommand("editor.enableCompletion", "", "")
+        MockBridge::onCommand("editor.disableCompletion", "", "")
+        MockBridge::onCommand("editor.setCompletions", "", "")
+        const view: EditorView = EditorView::create(events, doc)
+        view.enableCompletion(FakeProvider::create(true), [], 1)
+        const v: String = viewObject.toString()
+        MockBridge::push("{\"type\":\"editor.completionRequested\",\"target\":" + v + ",\"req\":8,\"position\":{\"line\":0,\"character\":1},\"word\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}},\"wordText\":\"x\",\"trigger\":\"automatic\"}")
+        events.pump(1000)
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        const answer: String = MockBridge::nextCommand()
+        view.disableCompletion()
+        MockBridge::push("{\"type\":\"editor.completionRequested\",\"target\":" + v + ",\"req\":9,\"position\":{\"line\":0,\"character\":1},\"word\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}},\"wordText\":\"x\",\"trigger\":\"automatic\"}")
+        events.pump(1000)
+        MockBridge::nextCommand()
+        return answer == "{\"cmd\":\"editor.setCompletions\",\"target\":" + v + ",\"req\":8,\"items\":[]}" &&
+            events.failureCount() == 1 && events.failures[0].contains("language server is gone") &&
+            MockBridge::nextCommand() == "{\"cmd\":\"editor.setCompletions\",\"target\":" + v + ",\"req\":9,\"items\":[]}"
+    }
+
+    @Test("hover: a provider's markup becomes a tooltip, empty markup shows nothing")
+    fn testHover() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const doc: Document = EditorTest::newDocument(events)
+        const viewObject: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.createView", "{\"id\":" + viewObject.toString() + "}", "")
+        MockBridge::onCommand("editor.showTooltip", "", "")
+        const view: EditorView = EditorView::create(events, doc)
+        view.onHover((position: Position) => {
+            if (position.line == 2)
+            {
+                return "<b>int</b>"
+            }
+            return ""
+        })
+        const v: String = viewObject.toString()
+        MockBridge::push("{\"type\":\"editor.hoverRequested\",\"target\":" + v + ",\"req\":1,\"position\":{\"line\":2,\"character\":3}}")
+        MockBridge::push("{\"type\":\"editor.hoverRequested\",\"target\":" + v + ",\"req\":2,\"position\":{\"line\":0,\"character\":3}}")
+        events.pump(1000)
+        MockBridge::nextCommand()
+        MockBridge::nextCommand()
+        return MockBridge::nextCommand() == "{\"cmd\":\"editor.showTooltip\",\"target\":" + v + ",\"position\":{\"line\":2,\"character\":3},\"markup\":\"<b>int</b>\"}" && MockBridge::pending() == 0
+    }
+
+    @Test("release forgets the document's events")
+    fn testRelease() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const doc: Document = EditorTest::newDocument(events)
+        var seen: List<String> = []
+        doc.onModified((modified: Bool) => seen.push("modified"))
+        const t: String = doc.id().toString()
+        doc.release()
+        MockBridge::push("{\"type\":\"editor.modifiedChanged\",\"target\":" + t + ",\"modified\":true}")
+        events.pump(1000)
+        return seen.len() == 0
+    }
+}

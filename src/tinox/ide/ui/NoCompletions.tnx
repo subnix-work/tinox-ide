@@ -1,0 +1,14 @@
+module tinox.ide.ui
+
+namespace tinox.ide.ui
+{
+    /** The provider of a view that has none: always empty. */
+    class NoCompletions implements CompletionProvider
+    {
+        /** Always no items. */
+        fn complete(request: CompletionRequest) -> List<CompletionItem>
+        {
+            return []
+        }
+    }
+}

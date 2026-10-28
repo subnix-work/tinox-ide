@@ -1,0 +1,272 @@
+module tinox.ide.ui
+
+import tinox.core.json
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+namespace tinox.ide.ui
+{
+    /**
+     * The data of a tree, list or table (docs/model.md). The rows live in the bridge, so
+     * a view scrolls without asking Tinox; Tinox changes them with insert/remove/move/
+     * update and hears about the user's actions through the on... handlers.
+     *
+     *     const model = Model::create(events, ["Name", "Size"], false)
+     *     model.onFetch((parent: String) => Main::listDirectory(parent))   // lazy children
+     *     model.reset([Row::create("src", "src").lazy()])
+     *     model.attach(mount.idOf("tree"))
+     *
+     * Parents are row ids; "" means the top level.
+     */
+    class Model
+    {
+        /** The loop the model's events arrive on. */
+        var events: EventLoop
+        /** The bridge's object id. */
+        var modelId: Int64
+        /** Supplies children on demand. */
+        var fetcher: fnc(String) -> List<Row>
+        /** Whether onFetch() was called. */
+        var hasFetcher: Bool
+        /** Called when the user toggles a check box. */
+        var onCheckHandler: fnc(String, Bool) -> Nothing
+        /** Called when the user edits a cell. */
+        var onEditHandler: fnc(String, Int64, String) -> Nothing
+        /** Called when something is dropped. */
+        var onDropHandler: fnc(Event) -> Nothing
+
+        /** Creates a model with these column headers (one column if empty); `lazy` makes the top level load on demand too. */
+        fnc create(events: EventLoop, columns: List<String>, lazy: Bool) -> Model
+        {
+            const reply: JsonValue = Bridge::query(Command::named("model.create").raw("columns", Js::strings(columns)).bool("lazy", lazy).build())
+            const model: Model = Model {
+                events: events,
+                modelId: reply.getField("id").getInt(),
+                fetcher: (parent: String) => Model::noRows(),
+                hasFetcher: false,
+                onCheckHandler: (id: String, checked: Bool) => Action::ignore(),
+                onEditHandler: (id: String, column: Int64, text: String) => Action::ignore(),
+                onDropHandler: (ev: Event) => Action::ignore()
+            }
+            events.onTarget(model.modelId, (ev: Event) => model.deliver(ev))
+            return model
+        }
+
+        /** An empty list of rows. */
+        fnc noRows() -> List<Row>
+        {
+            return []
+        }
+
+        /** The bridge's object id: what a view's attach() and a proxy refer to. */
+        fn id() -> Int64
+        {
+            return this.modelId
+        }
+
+        /** Dispatches a model event to its handler. */
+        fn deliver(ev: Event) -> Nothing
+        {
+            if (ev.type == "model.fetchChildren")
+            {
+                this.answerFetch(ev)
+            }
+            else if (ev.type == "model.checkChanged")
+            {
+                this.onCheckHandler(ev.str("id"), ev.bool("checked"))
+            }
+            else if (ev.type == "model.editRequested")
+            {
+                this.onEditHandler(ev.str("id"), ev.int("column"), ev.str("text"))
+            }
+            else if (ev.type == "model.dropRequested")
+            {
+                this.onDropHandler(ev)
+            }
+        }
+
+        /** Answers a fetchChildren request with the fetcher's rows. */
+        fn answerFetch(ev: Event) -> Nothing
+        {
+            var parent: String = ""
+            if (ev.has("id"))
+            {
+                parent = ev.str("id")
+            }
+            if (!this.hasFetcher)
+            {
+                this.setChildren(parent, [])
+                return
+            }
+            var rows: List<Row> = []
+            try
+            {
+                rows = this.fetcher(parent)
+            }
+            catch (e: String)
+            {
+                // the view must not wait forever for children that will not come
+                this.setChildren(parent, [])
+                throw "loading the children of '" + parent + "' failed: " + e
+            }
+            this.setChildren(parent, rows)
+        }
+
+        // ---- handlers
+
+        /**
+         * Supplies the children of a row when a view opens it (`parent` is "" for the top
+         * level of a lazy model). The rows are inserted as the answer; nothing below a
+         * closed row is ever asked for. If the handler throws, the row ends up empty and
+         * the failure is reported by the EventLoop.
+         */
+        fn onFetch(handler: fnc(String) -> List<Row>) -> Nothing
+        {
+            this.fetcher = handler
+            this.hasFetcher = true
+        }
+
+        /** The user ticked or cleared a row's check box (row id, new state); the model already shows it. */
+        fn onCheck(handler: fnc(String, Bool) -> Nothing) -> Nothing
+        {
+            this.onCheckHandler = handler
+        }
+
+        /** The user finished editing a cell (row id, column, new text). The row keeps its text until update() says otherwise. */
+        fn onEdit(handler: fnc(String, Int64, String) -> Nothing) -> Nothing
+        {
+            this.onEditHandler = handler
+        }
+
+        /**
+         * Rows or files were dropped. Fields: `ids` (rows dragged from this model), `urls`
+         * (files from outside), `parent` (row id or null), `index`, `action` ("move" or
+         * "copy"). Nothing moved yet: move the files, then call move().
+         */
+        fn onDrop(handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.onDropHandler = handler
+        }
+
+        // ---- data
+
+        /** Replaces all rows. */
+        fn reset(rows: List<Row>) -> Nothing
+        {
+            Bridge::query(Command::named("model.reset").target(this.modelId).raw("rows", Row::array(rows)).build())
+        }
+
+        /** Inserts rows below `parent` ("" = top level) before position `index` (-1 = at the end). */
+        fn insert(parent: String, index: Int64, rows: List<Row>) -> Nothing
+        {
+            var command: Command = Command::named("model.insert").target(this.modelId)
+            if (parent != "")
+            {
+                command = command.str("parent", parent)
+            }
+            if (index >= 0)
+            {
+                command = command.int("index", index)
+            }
+            Bridge::query(command.raw("rows", Row::array(rows)).build())
+        }
+
+        /** Appends rows below `parent`. */
+        fn append(parent: String, rows: List<Row>) -> Nothing
+        {
+            this.insert(parent, -1, rows)
+        }
+
+        /** Removes rows (with their children). */
+        fn remove(ids: List<String>) -> Nothing
+        {
+            Bridge::query(Command::named("model.remove").target(this.modelId).raw("ids", Js::strings(ids)).build())
+        }
+
+        /** Moves a row below `parent` ("" = top level) to position `index` (-1 = at the end). */
+        fn move(id: String, parent: String, index: Int64) -> Nothing
+        {
+            var command: Command = Command::named("model.move").target(this.modelId).str("id", id)
+            if (parent != "")
+            {
+                command = command.str("parent", parent)
+            }
+            if (index >= 0)
+            {
+                command = command.int("index", index)
+            }
+            Bridge::query(command.build())
+        }
+
+        /** Changes the fields given in `row` of the row with this id (the row's own id and children are not used). */
+        fn update(id: String, row: Row) -> Nothing
+        {
+            Bridge::query(Command::named("model.update").target(this.modelId).str("id", id).raw("fields", row.fieldsJson()).build())
+        }
+
+        /** Replaces the children of a row; also what answers a fetch. */
+        fn setChildren(parent: String, rows: List<Row>) -> Nothing
+        {
+            var command: Command = Command::named("model.setChildren").target(this.modelId)
+            if (parent != "")
+            {
+                command = command.str("parent", parent)
+            }
+            Bridge::query(command.raw("rows", Row::array(rows)).build())
+        }
+
+        /** How many rows the model holds, children included. */
+        fn count() -> Int64
+        {
+            return Bridge::query(Command::named("model.info").target(this.modelId).build()).getField("rows").getInt()
+        }
+
+        /** Whether a row with this id exists. */
+        fn contains(id: String) -> Bool
+        {
+            try
+            {
+                Bridge::query(Command::named("model.get").target(this.modelId).str("id", id).build())
+                return true
+            }
+            catch (e: String)
+            {
+                return false
+            }
+        }
+
+        /** The ids of a row's children ("" = top level) in order. */
+        fn childIds(parent: String) -> List<String>
+        {
+            var command: Command = Command::named("model.get").target(this.modelId)
+            if (parent != "")
+            {
+                command = command.str("id", parent)
+            }
+            return Mount::strings(Bridge::query(command.build()).getField("children"))
+        }
+
+        // ---- views, sorting, filtering
+
+        /** Shows this model in the item view (tree, list or table) with this node id. */
+        fn attach(viewId: Int64) -> Nothing
+        {
+            Bridge::query(Command::named("model.attach").raw("model", this.modelId.toString()).int("view", viewId).build())
+        }
+
+        /** A sorted and filtered view of the same rows, to attach to a view instead. */
+        fn proxy() -> ModelProxy
+        {
+            return ModelProxy::of(this)
+        }
+
+        /** Destroys the model; views showing it become empty. */
+        fn release() -> Nothing
+        {
+            this.events.offTarget(this.modelId)
+            Bridge::release(this.modelId)
+        }
+    }
+}

@@ -1,0 +1,262 @@
+module tinox.ide.ui
+
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.core.json
+
+namespace tinox.ide.ui
+{
+    /**
+     * A widget tree on screen. The first render() creates the widgets, every later one
+     * hands the bridge the new description and it changes only what differs (nodes are
+     * matched by key, so a widget keeps its state, such as the cursor in a text field,
+     * as long as its key stays).
+     *
+     * Events of the widgets arrive by node key:
+     *
+     *     mount.onClick("run", (ev: Event) => Main::run())
+     *     mount.onText("search", (text: String) => Main::search(text))
+     *
+     * Registering a handler again for the same key and event replaces it. Handlers
+     * run on the logic task, like every EventLoop handler.
+     */
+    class Mount
+    {
+        /** The loop the widgets' events arrive on. */
+        var events: EventLoop
+        /** The bridge's id of the mounted tree. */
+        var mountId: Int64
+        /** The id of the root widget. */
+        var rootId: Int64
+        /** Whether render() has created the widgets. */
+        var mounted: Bool
+        /** Object id by node key. */
+        var ids: Map<String, Int64>
+        /** Event handlers by `key|type`. */
+        var handlers: Map<String, fnc(Event) -> Nothing>
+
+        /** A mount that reports its events to this loop. */
+        fnc create(events: EventLoop) -> Mount
+        {
+            return Mount { events: events, mountId: 0, rootId: 0, mounted: false, ids: Map::new(), handlers: Map::new() }
+        }
+
+        /**
+         * Creates the widgets (first call) or updates them (later calls). Throws, naming
+         * the node and property, when the description is wrong; the screen is then
+         * unchanged. A tree is not required to have the same shape as the last one, but its
+         * root keeps its key and type.
+         */
+        fn render(tree: Node) -> Nothing
+        {
+            var command: Command = Command::named("widget.mount")
+            if (this.mounted)
+            {
+                command = Command::named("widget.update").target(this.mountId)
+            }
+            const reply: JsonValue = Bridge::query(command.raw("tree", tree.toJson()).build())
+            if (!this.mounted)
+            {
+                this.mountId = reply.getField("id").getInt()
+                this.mounted = true
+            }
+            this.rootId = reply.getField("root").getInt()
+            this.rebind(reply.getField("nodes").asTable())
+        }
+
+        /** Registers the ids of the nodes that exist and forgets the others. */
+        fn rebind(nodes: Map<String, JsonValue>) -> Nothing
+        {
+            for key in this.ids.keys()
+            {
+                this.events.offTarget(this.ids.get(key))
+            }
+            this.ids = Map::new()
+            for key in nodes.keys()
+            {
+                const id: Int64 = nodes.get(key).getInt()
+                this.ids.set(key, id)
+                this.events.onTarget(id, (ev: Event) => this.deliver(ev))
+            }
+        }
+
+        /** Dispatches a widget event to the handler of its node key and type. */
+        fn deliver(ev: Event) -> Nothing
+        {
+            const name: String = ev.str("key") + "|" + ev.type
+            if (this.handlers.contains(name))
+            {
+                const handler: fnc(Event) -> Nothing = this.handlers.get(name)
+                handler(ev)
+            }
+        }
+
+        /** The bridge's object id of the node with this key, 0 when the tree has no such node. */
+        fn idOf(key: String) -> Int64
+        {
+            if (this.ids.contains(key))
+            {
+                return this.ids.get(key)
+            }
+            return 0
+        }
+
+        /** The id of the root widget (what a dialog's parent or a Model view refers to). */
+        fn rootWidget() -> Int64
+        {
+            return this.rootId
+        }
+
+        /** Whether the widgets exist. */
+        fn isMounted() -> Bool
+        {
+            return this.mounted
+        }
+
+        /** Runs `handler` for events of `type` ("widget.clicked", ...) from the node `key`. */
+        fn on(key: String, type: String, handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.handlers.set(key + "|" + type, handler)
+        }
+
+        /** Removes the handler for an event of a node. */
+        fn off(key: String, type: String) -> Nothing
+        {
+            this.handlers.remove(key + "|" + type)
+        }
+
+        /** A button was clicked, a check box toggled (`ev.bool("checked")`). */
+        fn onClick(key: String, handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.on(key, "widget.clicked", handler)
+        }
+
+        /** The text of a line edit changed because the user typed. */
+        fn onText(key: String, handler: fnc(String) -> Nothing) -> Nothing
+        {
+            this.on(key, "widget.textChanged", (ev: Event) => handler(ev.str("text")))
+        }
+
+        /** Enter was pressed in a line edit. */
+        fn onEnter(key: String, handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.on(key, "widget.returnPressed", handler)
+        }
+
+        /** The user chose another tab, page or combo box item. */
+        fn onIndex(key: String, handler: fnc(Int64) -> Nothing) -> Nothing
+        {
+            this.on(key, "widget.currentChanged", (ev: Event) => handler(ev.int("index")))
+        }
+
+        /** The close button of a window or a tab (`ev.int("index")` for a tab) was used. */
+        fn onCloseRequested(key: String, handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.on(key, "widget.closeRequested", handler)
+        }
+
+        /** A dock widget was shown or hidden (also by its close button). */
+        fn onDockVisible(key: String, handler: fnc(Bool) -> Nothing) -> Nothing
+        {
+            this.on(key, "widget.dockVisibilityChanged", (ev: Event) => handler(ev.bool("visible")))
+        }
+
+        /** The user dragged a splitter handle; `ev.field("sizes")` has the new sizes. */
+        fn onSplitterMoved(key: String, handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.on(key, "widget.splitterMoved", handler)
+        }
+
+        /** An item of a tree, list or table was activated (double click or Enter): the row id. */
+        fn onActivated(key: String, handler: fnc(String) -> Nothing) -> Nothing
+        {
+            this.on(key, "model.activated", (ev: Event) => handler(ev.str("id")))
+        }
+
+        /** The selection of an item view changed: the ids of the selected rows. */
+        fn onSelection(key: String, handler: fnc(List<String>) -> Nothing) -> Nothing
+        {
+            this.on(key, "model.selectionChanged", (ev: Event) => handler(Mount::strings(ev.field("ids"))))
+        }
+
+        /** A context menu was asked for on a row ("" when on empty space) at a global position. */
+        fn onContextMenu(key: String, handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.on(key, "model.contextMenuRequested", handler)
+        }
+
+        /** The strings of a JSON array. */
+        fnc strings(array: JsonValue) -> List<String>
+        {
+            var out: List<String> = []
+            const items: List<JsonValue> = array.asList()
+            var i: Int64 = 0
+            while (i < items.len())
+            {
+                out.push(items[i].getString())
+                i = i + 1
+            }
+            return out
+        }
+
+        // ---- commands on the whole tree or one node
+
+        /** Shows the window and brings it to the front. */
+        fn show() -> Nothing
+        {
+            Bridge::post(Command::named("widget.show").target(this.mountId).build())
+        }
+
+        /** Hides the window. */
+        fn hide() -> Nothing
+        {
+            Bridge::post(Command::named("widget.hide").target(this.mountId).build())
+        }
+
+        /** Closes the window; without `force` a main window raises onCloseRequested instead, so unsaved work can be asked about. */
+        fn close(force: Bool) -> Nothing
+        {
+            Bridge::post(Command::named("widget.close").target(this.mountId).bool("force", force).build())
+        }
+
+        /** Gives a node the keyboard focus. */
+        fn focus(key: String) -> Nothing
+        {
+            Bridge::post(Command::named("widget.focus").target(this.idOf(key)).build())
+        }
+
+        /** Adds a line to a log node (Ui.log). */
+        fn append(key: String, text: String) -> Nothing
+        {
+            Bridge::post(Command::named("widget.append").target(this.idOf(key)).str("text", text).build())
+        }
+
+        /** Saves the window geometry, dock layout and splitter sizes under `group` in the application's config. */
+        fn saveState(group: String) -> Nothing
+        {
+            Bridge::query(Command::named("widget.saveState").target(this.mountId).str("group", group).build())
+        }
+
+        /** Restores what saveState saved; false when nothing was saved yet. */
+        fn restoreState(group: String) -> Bool
+        {
+            const reply: JsonValue = Bridge::query(Command::named("widget.restoreState").target(this.mountId).str("group", group).build())
+            return reply.getField("restored").getBool()
+        }
+
+        /** Destroys the widgets. The Mount can be rendered again afterwards. */
+        fn dispose() -> Nothing
+        {
+            if (this.mounted)
+            {
+                this.rebind(Map::new())
+                Bridge::release(this.mountId)
+                this.mounted = false
+                this.mountId = 0
+                this.rootId = 0
+            }
+        }
+    }
+}

@@ -1,0 +1,42 @@
+module tinox.ide.examples
+
+import tinox.ide.ui.Row
+
+namespace tinox.ide.examples
+{
+    /** A pretend project for the shell example: a few folders and files held in code, so the example needs no disk. */
+    class ExampleFiles
+    {
+        /** The rows below `parent` ("" = the project root). Folders are lazy: their children are asked for when opened. */
+        fnc children(parent: String) -> List<Row>
+        {
+            if (parent == "")
+            {
+                return [Row::create("src", "src").icon("folder").lazy(), Row::create("tests", "tests").icon("folder").lazy(), Row::create("README.md", "README.md").icon("text-markdown").cell("1 KB")]
+            }
+            if (parent == "src")
+            {
+                return [Row::create("src/Main.tnx", "Main.tnx").icon("text-x-generic").cell("2 KB"), Row::create("src/util", "util").icon("folder").lazy()]
+            }
+            if (parent == "src/util")
+            {
+                return [Row::create("src/util/Strings.tnx", "Strings.tnx").icon("text-x-generic").cell("3 KB")]
+            }
+            if (parent == "tests")
+            {
+                return [Row::create("tests/MainTest.tnx", "MainTest.tnx").icon("text-x-generic").cell("1 KB")]
+            }
+            return []
+        }
+
+        /** The text of a file of the pretend project. */
+        fnc content(path: String) -> String
+        {
+            if (path == "src/Main.tnx")
+            {
+                return "class Main\n{\n    fnc main() -> Int32\n    {\n        println(\"Hello from the shell example\")\n        // TODO: do something useful\n        return 0\n    }\n}\n"
+            }
+            return "// " + path + "\n"
+        }
+    }
+}

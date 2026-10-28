@@ -1,0 +1,90 @@
+module tinox.ide.ui
+
+import tinox.core.json
+
+namespace tinox.ide.ui
+{
+    /**
+     * A problem to show in the text: a squiggle under `range`, a mark in the gutter and a
+     * message on hover. The colours follow the colour scheme, so they stay legible on dark
+     * and light themes. Marks follow the text while it is edited.
+     */
+    class Diagnostic
+    {
+        /** The text the problem is about. */
+        var range: Range
+        /** 1 error, 2 warning, 3 information, 4 hint. */
+        var severity: Int64
+        /** What is wrong. */
+        var message: String
+        /** Machine-readable code, "" for none. */
+        var code: String
+        /** The tool that reported it, "" for none. */
+        var source: String
+
+        /** An error: red wavy underline. */
+        fnc error(range: Range, message: String) -> Diagnostic
+        {
+            return Diagnostic { range: range, severity: 1, message: message, code: "", source: "" }
+        }
+
+        /** A warning: yellow wavy underline. */
+        fnc warning(range: Range, message: String) -> Diagnostic
+        {
+            return Diagnostic { range: range, severity: 2, message: message, code: "", source: "" }
+        }
+
+        /** Information: blue wavy underline. */
+        fnc info(range: Range, message: String) -> Diagnostic
+        {
+            return Diagnostic { range: range, severity: 3, message: message, code: "", source: "" }
+        }
+
+        /** A hint: dotted underline. */
+        fnc hint(range: Range, message: String) -> Diagnostic
+        {
+            return Diagnostic { range: range, severity: 4, message: message, code: "", source: "" }
+        }
+
+        /** The diagnostic's code, such as "E0425". */
+        fn withCode(code: String) -> Diagnostic
+        {
+            this.code = code
+            return this
+        }
+
+        /** Who found it, such as "tinox". */
+        fn withSource(source: String) -> Diagnostic
+        {
+            this.source = source
+            return this
+        }
+
+        /** Reads one entry of the editor.getDiagnostics answer. */
+        fnc parse(json: JsonValue) -> Diagnostic
+        {
+            return Diagnostic {
+                range: Range::parse(json.getField("range")),
+                severity: json.getField("severity").getInt(),
+                message: json.getField("message").getString(),
+                code: json.getField("code").getString(),
+                source: json.getField("source").getString()
+            }
+        }
+
+        /** The diagnostic as the bridge's editor.setDiagnostics takes it. */
+        fn toJson() -> String
+        {
+            var fields: List<String> = [Js::field("range", this.range.toJson()), Js::intField("severity", this.severity), Js::strField("message", this.message)]
+            if (this.code != "")
+            {
+                fields.push(Js::strField("code", this.code))
+            }
+            if (this.source != "")
+            {
+                fields.push(Js::strField("source", this.source))
+            }
+            return Js::object(fields)
+        }
+    }
+}
