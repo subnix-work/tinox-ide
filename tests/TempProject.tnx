@@ -1,7 +1,7 @@
 import tinox.core.fs.Fs
 import tinox.core.process.Process
 import tinox.core.process.ProcessResult
-import tinox.ide.workspace.FileSystem
+import tinox.ide.app.FileSystem
 
 // A throw-away directory for tests that need real files.
 class TempProject

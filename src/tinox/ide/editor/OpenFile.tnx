@@ -1,0 +1,78 @@
+module tinox.ide.editor
+
+import tinox.ide.app.FileSystem
+import tinox.ide.ui.Document
+import tinox.ide.ui.EditorView
+
+namespace tinox.ide.editor
+{
+    /** One open file: its document, the one or two views on it and what the tab shows. */
+    class OpenFile
+    {
+        /** The absolute path of the file. */
+        var path: String
+        /** The text. */
+        var doc: Document
+        /** The views on the document: one, or two when the editor is split. */
+        var views: List<EditorView>
+        /** Whether a split puts the views one above the other. */
+        var vertical: Bool
+        /** Whether the document has unsaved changes. */
+        var modified: Bool
+        /** Whether the file is gone from the disk. */
+        var missing: Bool
+        /** Whether a question about an external change is on screen. */
+        var asking: Bool
+        /** The last known cursor line (0-based). */
+        var line: Int64
+        /** The last known cursor column (0-based). */
+        var character: Int64
+
+        /** An open file with one view. */
+        fnc create(path: String, doc: Document, view: EditorView) -> OpenFile
+        {
+            return OpenFile { path: path, doc: doc, views: [view], vertical: false, modified: false, missing: false, asking: false, line: 0, character: 0 }
+        }
+
+        /** Whether the editor of this file is split. */
+        fn isSplit() -> Bool
+        {
+            return this.views.len() > 1
+        }
+
+        /** The name shown on the tab. */
+        fn title() -> String
+        {
+            return FileSystem::baseName(this.path)
+        }
+
+        /** The icon of the tab: a marker while there are unsaved changes, a warning when the file is gone. */
+        fn icon() -> String
+        {
+            if (this.missing)
+            {
+                return "dialog-warning"
+            }
+            if (this.modified)
+            {
+                return "document-save"
+            }
+            return ""
+        }
+
+        /** The session entry of this file: `path`, cursor line, cursor column and the split ("" none, "right" or "down") separated by tabs. */
+        fn sessionEntry() -> String
+        {
+            var split: String = ""
+            if (this.isSplit())
+            {
+                split = "right"
+                if (this.vertical)
+                {
+                    split = "down"
+                }
+            }
+            return this.path + "\t" + this.line.toString() + "\t" + this.character.toString() + "\t" + split
+        }
+    }
+}

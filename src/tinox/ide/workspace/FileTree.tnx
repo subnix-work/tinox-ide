@@ -1,5 +1,6 @@
 module tinox.ide.workspace
 
+import tinox.ide.app.FileSystem
 import tinox.ide.ui.Row
 
 namespace tinox.ide.workspace

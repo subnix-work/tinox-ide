@@ -6,6 +6,7 @@
 #include <KConfigGroup>
 #include <KSharedConfig>
 
+#include <QApplication>
 #include <QBoxLayout>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -20,6 +21,7 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QMainWindow>
+#include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
@@ -28,6 +30,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTableView>
 #include <QToolBar>
@@ -461,6 +464,36 @@ private:
     int64_t m_id;
 };
 
+/// Closing a tab with the middle mouse button, as browsers and editors do: QTabBar only has the close button.
+class MiddleClickClose : public QObject
+{
+public:
+    MiddleClickClose(QTabBar *bar, std::function<void(int)> closeTab) : QObject(bar), m_bar(bar), m_closeTab(std::move(closeTab))
+    {
+        bar->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (watched == m_bar && event->type() == QEvent::MouseButtonRelease) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->button() == Qt::MiddleButton) {
+                const int index = m_bar->tabAt(mouse->position().toPoint());
+                if (index >= 0) {
+                    m_closeTab(index);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+private:
+    QTabBar *m_bar;
+    std::function<void(int)> m_closeTab;
+};
+
 class Mount : public QObject
 {
     Q_OBJECT
@@ -823,6 +856,21 @@ void connectEvents(Bridge &bridge, Node &n)
                          [emitEvent](int index) { emitEvent("widget.currentChanged", one("index", index)); });
         QObject::connect(tabs, &QTabWidget::tabCloseRequested, tabs,
                          [emitEvent](int index) { emitEvent("widget.closeRequested", one("index", index)); });
+        // the user dragged a tab to another place: the tree must follow, or its next render would undo it
+        QObject::connect(tabs->tabBar(), &QTabBar::tabMoved, tabs, [emitEvent](int from, int to) {
+            QJsonObject f;
+            f.insert(QStringLiteral("from"), from);
+            f.insert(QStringLiteral("to"), to);
+            emitEvent("widget.tabMoved", f);
+        });
+        new MiddleClickClose(tabs->tabBar(), [tabs, emitEvent](int index) {
+            if (tabs->tabsClosable()) {
+                QJsonObject f;
+                f.insert(QStringLiteral("index"), index);
+                f.insert(QStringLiteral("via"), QStringLiteral("middle"));
+                emitEvent("widget.closeRequested", f);
+            }
+        });
     } else if (auto *stack = qobject_cast<QStackedWidget *>(w)) {
         QObject::connect(stack, &QStackedWidget::currentChanged, stack,
                          [emitEvent](int index) { emitEvent("widget.currentChanged", one("index", index)); });
@@ -1397,6 +1445,24 @@ Reply debugAct(Bridge &b, const QJsonObject &cmd)
         }
         if (auto *st = qobject_cast<QStackedWidget *>(w)) {
             st->setCurrentIndex(v.toInt());
+            return Reply::success();
+        }
+    } else if (act == QLatin1String("tabMove")) {
+        if (auto *t = qobject_cast<QTabWidget *>(w)) {
+            const int from = v.toArray().at(0).toInt(), to = v.toArray().at(1).toInt();
+            t->tabBar()->moveTab(from, to);
+            Q_EMIT t->tabBar()->tabMoved(from, to); // moveTab() alone is silent; a drag by the user emits it
+            return Reply::success();
+        }
+    } else if (act == QLatin1String("middleClick")) {
+        if (auto *t = qobject_cast<QTabWidget *>(w)) {
+            const QPoint at = t->tabBar()->tabRect(v.toInt()).center();
+            QMouseEvent press(QEvent::MouseButtonPress, at, t->tabBar()->mapToGlobal(at), Qt::MiddleButton, Qt::MiddleButton,
+                              Qt::NoModifier);
+            QMouseEvent release(QEvent::MouseButtonRelease, at, t->tabBar()->mapToGlobal(at), Qt::MiddleButton, Qt::NoButton,
+                                Qt::NoModifier);
+            QApplication::sendEvent(t->tabBar(), &press);
+            QApplication::sendEvent(t->tabBar(), &release);
             return Reply::success();
         }
     } else if (act == QLatin1String("closeTab")) {

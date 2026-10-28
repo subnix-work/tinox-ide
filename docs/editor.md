@@ -13,6 +13,7 @@ view id as noted. Every position is LSP-shaped, `{"line":L,"character":C}`, wher
 |---|---|---|
 | `editor.createDocument` | `text?` | `id` (initial text is not a change: version 0, unmodified) |
 | `editor.openDocument` | `url`, `encoding?` | `id` |
+| `editor.loadDocument` | `target`, `url?` | reads the file again, dropping unsaved edits (raises `editor.reloaded {version, url}`, not `editor.changed`); with `url` the document now belongs to that file (after a rename) |
 | `editor.saveDocument` | `target`, `url?` (save as) | `url`; an untitled document without `url` is refused (it would open a dialog) |
 | `editor.closeDocument` | `target` | |
 | `editor.createView` | `document` | `id` (a `QWidget`, parented later by the widget namespace) |

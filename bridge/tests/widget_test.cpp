@@ -301,6 +301,18 @@ static void testEvents()
     Obj tab = waitFor("widget.currentChanged", 1000);
     EXPECT_EQ(tab.value(QStringLiteral("key")).toString(), QStringLiteral("tabs"));
     EXPECT_EQ(tab.value(QStringLiteral("index")).toInt(), 1);
+    // tab drag and middle click, like the editor tab bar needs
+    act(nodeId(m, "tabs"), "tabMove", QJsonArray{0, 1});
+    Obj moved = waitFor("widget.tabMoved", 1000);
+    EXPECT_EQ(moved.value(QStringLiteral("from")).toInt(), 0);
+    EXPECT_EQ(moved.value(QStringLiteral("to")).toInt(), 1);
+    EXPECT_EQ(moved.value(QStringLiteral("key")).toString(), QStringLiteral("tabs"));
+    query(cmd("widget.show", Obj{{"target", double(id)}}));
+    act(nodeId(m, "tabs"), "middleClick", 1);
+    Obj middle = waitFor("widget.closeRequested", 1000);
+    EXPECT_EQ(middle.value(QStringLiteral("index")).toInt(), 1);
+    EXPECT_EQ(middle.value(QStringLiteral("via")).toString(), QStringLiteral("middle"));
+    query(cmd("widget.hide", Obj{{"target", double(id)}})); // a visible window that goes away would end the loop
     act(nodeId(m, "tabs"), "closeTab", 0);
     Obj closing = waitFor("widget.closeRequested", 1000);
     EXPECT_EQ(closing.value(QStringLiteral("index")).toInt(), 0);

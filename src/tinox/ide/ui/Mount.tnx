@@ -157,6 +157,12 @@ namespace tinox.ide.ui
             this.on(key, "widget.closeRequested", handler)
         }
 
+        /** The user dragged a tab of the tab widget `key` from one place to another (`from`, `to`). */
+        fn onTabMoved(key: String, handler: fnc(Int64, Int64) -> Nothing) -> Nothing
+        {
+            this.on(key, "widget.tabMoved", (ev: Event) => handler(ev.int("from"), ev.int("to")))
+        }
+
         /** A dock widget was shown or hidden (also by its close button). */
         fn onDockVisible(key: String, handler: fnc(Bool) -> Nothing) -> Nothing
         {
