@@ -1,0 +1,192 @@
+module tinox.ide.workspace
+
+import tinox.core.fs.Fs
+import tinox.core.process.Process
+import tinox.core.process.ProcessResult
+
+namespace tinox.ide.workspace
+{
+    /**
+     * Everything the workspace needs from the file system, in one place.
+     *
+     * The standard library cannot yet tell files from directories, rename, or delete a tree
+     * (subnix-work/tinox#508). Until it can, the operations below use what exists, and each
+     * workaround is marked with that issue:
+     *
+     *   - a directory test through `fileExists(path + "/")`, which is true only for directories;
+     *   - rename and move through the program `mv`, copy through `cp -R`, trash through `gio trash`,
+     *     all started with an argument list (never through a shell, so odd file names are safe).
+     *
+     * When #508 lands, only this class changes.
+     */
+    class FileSystem
+    {
+        /** Whether a file or directory exists at the path. */
+        fnc exists(path: String) -> Bool
+        {
+            return fileExists(path)
+        }
+
+        /** Whether the path is a directory (a symbolic link to one counts). Workaround for subnix-work/tinox#508. */
+        fnc isDirectory(path: String) -> Bool
+        {
+            return fileExists(path + "/")
+        }
+
+        /** The names (not paths) in a directory, in no particular order; empty when it is unreadable or missing. */
+        fnc names(path: String) -> List<String>
+        {
+            return Fs::listDirectory(path)
+        }
+
+        /** The text of a file. */
+        fnc read(path: String) -> String
+        {
+            return Fs::readFile(path)
+        }
+
+        /** Creates or replaces a file. */
+        fnc write(path: String, content: String) -> Nothing
+        {
+            Fs::writeFile(path, content)
+        }
+
+        /** Creates a directory and the missing ones above it. */
+        fnc makeDirectories(path: String) -> Nothing
+        {
+            Fs::createDirectories(path)
+        }
+
+        /** Joins a directory and a name with exactly one slash. */
+        fnc join(directory: String, name: String) -> String
+        {
+            if (directory.endsWith("/"))
+            {
+                return directory + name
+            }
+            return directory + "/" + name
+        }
+
+        /** The last part of a path ("/a/b/c.txt" gives "c.txt"). */
+        fnc baseName(path: String) -> String
+        {
+            const trimmed: String = FileSystem::withoutTrailingSlash(path)
+            const slash: Int64 = trimmed.lastIndexOf("/")
+            if (slash < 0)
+            {
+                return trimmed
+            }
+            return trimmed.substring(slash + 1, trimmed.len())
+        }
+
+        /** The directory a path is in ("/a/b/c.txt" gives "/a/b"; "/a" gives "/"). */
+        fnc parent(path: String) -> String
+        {
+            const trimmed: String = FileSystem::withoutTrailingSlash(path)
+            const slash: Int64 = trimmed.lastIndexOf("/")
+            if (slash < 0)
+            {
+                return ""
+            }
+            if (slash == 0)
+            {
+                return "/"
+            }
+            return trimmed.substring(0, slash)
+        }
+
+        /** The path without trailing slashes (the root stays "/"). */
+        fnc withoutTrailingSlash(path: String) -> String
+        {
+            var out: String = path
+            while (out.len() > 1 && out.endsWith("/"))
+            {
+                out = out.substring(0, out.len() - 1)
+            }
+            return out
+        }
+
+        /** The extension without the dot, lower-cased ("Main.TNX" gives "tnx", "Makefile" gives ""). */
+        fnc extension(name: String) -> String
+        {
+            const dot: Int64 = name.lastIndexOf(".")
+            if (dot <= 0)
+            {
+                return ""
+            }
+            return name.substring(dot + 1, name.len()).toLower()
+        }
+
+        /** Whether `path` is `directory` or lies below it. */
+        fnc isInside(path: String, directory: String) -> Bool
+        {
+            const base: String = FileSystem::withoutTrailingSlash(directory)
+            return path == base || path.startsWith(base + "/")
+        }
+
+        /** Whether a name can be used as one path component (no slash, not empty, not . or ..). */
+        fnc isValidName(name: String) -> Bool
+        {
+            return name != "" && name != "." && name != ".." && !name.contains("/")
+        }
+
+        /** Runs a program with an argument list; throws its stderr when it fails. */
+        fnc run(argv: List<String>) -> Nothing
+        {
+            const result: ProcessResult = Process::run(argv, 60000, "")
+            if (result.timedOut)
+            {
+                throw argv[0] + " timed out"
+            }
+            if (result.exitCode != 0)
+            {
+                var reason: String = result.stderr.trim()
+                if (reason == "")
+                {
+                    reason = argv[0] + " failed with code " + result.exitCode.toString()
+                }
+                throw reason
+            }
+        }
+
+        /** Renames or moves a file or directory; refuses to replace something that exists. Workaround for subnix-work/tinox#508. */
+        fnc rename(from: String, to: String) -> Nothing
+        {
+            if (FileSystem::exists(to))
+            {
+                throw "'" + FileSystem::baseName(to) + "' already exists"
+            }
+            FileSystem::run(["mv", "--no-clobber", "--", from, to])
+            if (FileSystem::exists(from) && !FileSystem::exists(to))
+            {
+                throw "could not move " + from
+            }
+        }
+
+        /** Copies a file or a directory tree. Workaround for subnix-work/tinox#508. */
+        fnc copy(from: String, to: String) -> Nothing
+        {
+            if (FileSystem::exists(to))
+            {
+                throw "'" + FileSystem::baseName(to) + "' already exists"
+            }
+            FileSystem::run(["cp", "-R", "--no-clobber", "--", from, to])
+        }
+
+        /** Moves a file or directory to the desktop's trash (recoverable). Throws when there is no trash available. Workaround for subnix-work/tinox#508. */
+        fnc trash(path: String) -> Nothing
+        {
+            FileSystem::run(["gio", "trash", "--", path])
+        }
+
+        /** Deletes a file or a whole directory tree for good. Workaround for subnix-work/tinox#508. */
+        fnc deleteTree(path: String) -> Nothing
+        {
+            if (path == "/" || path == "")
+            {
+                throw "refusing to delete the root"
+            }
+            FileSystem::run(["rm", "-r", "--", path])
+        }
+    }
+}

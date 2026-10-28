@@ -1,13 +1,23 @@
-module tinox.ide.app
+module tinox.ide
 
+import tinox.ide.app.CommandContext
+import tinox.ide.app.CommandRegistry
+import tinox.ide.app.ErrorReporter
+import tinox.ide.app.EventBus
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.Logger
+import tinox.ide.app.MainWindow
+import tinox.ide.app.Store
 import tinox.ide.kde.App
 import tinox.ide.kde.Bridge
 import tinox.ide.kde.Event
 import tinox.ide.kde.EventLoop
 import tinox.ide.settings.Settings
 import tinox.ide.ui.Actions
+import tinox.ide.ui.Dialogs
+import tinox.ide.workspace.Workspace
 
-namespace tinox.ide.app
+namespace tinox.ide
 {
     /**
      * The application: creates the parts, connects them and starts the window. The parts, from
@@ -41,6 +51,10 @@ namespace tinox.ide.app
         var registry: CommandRegistry
         /** The window. */
         var window: MainWindow
+        /** Dialogs. */
+        var dialogs: Dialogs
+        /** The open project and its tree. */
+        var workspace: Workspace
         /** The user's persistent settings. */
         var settings: Settings
         /** False once the application is quitting. */
@@ -61,12 +75,17 @@ namespace tinox.ide.app
             const actions: Actions = Actions::create(events)
             const registry: CommandRegistry = CommandRegistry::create(store, bus, actions)
             const window: MainWindow = MainWindow::create(events, store, bus, registry, actions)
-            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, settings: settings, running: true }
+            const dialogs: Dialogs = Dialogs::create(events)
+            const workspace: Workspace = Workspace::create(events, bus, store, registry, actions, dialogs, settings, logger, window.mount)
+            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, settings: settings, running: true }
             app.loadSettings()
             app.registerCommands()
+            workspace.registerCommands()
+            window.addFileMenu(workspace.menuItems())
             registry.attach()
             app.mirrorChecks()
             window.start()
+            workspace.bind()
             logger.info("Tinox IDE started")
             return app
         }
@@ -114,6 +133,7 @@ namespace tinox.ide.app
             }
             this.running = false
             this.logger.info("Tinox IDE is quitting")
+            this.workspace.shutdown()
             try
             {
                 this.window.saveState()
@@ -133,10 +153,11 @@ namespace tinox.ide.app
             return 0
         }
 
-        /** The UI is up. With TINOXIDE_SMOKE=1 (the headless smoke test) the program uses its own Quit command at once. */
+        /** The UI is up: build the application, reopen the project (command line, TINOXIDE_OPEN or the last one). With TINOXIDE_SMOKE=1 (the headless smoke test) the program uses its own Quit command at once. */
         fnc ready(events: EventLoop) -> Nothing
         {
             const app: IdeApp = IdeApp::start(events)
+            app.workspace.restore()
             if (Bridge::env("TINOXIDE_SMOKE") == "1")
             {
                 app.actions.trigger("file_quit")

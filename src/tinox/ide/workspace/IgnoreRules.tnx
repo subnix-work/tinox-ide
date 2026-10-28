@@ -1,0 +1,93 @@
+module tinox.ide.workspace
+
+namespace tinox.ide.workspace
+{
+    /**
+     * Which files the project tree leaves out: version-control directories, build output, and what the
+     * project's .gitignore files say (the one in the root and the ones in directories as they are
+     * opened). As in git, the last matching rule wins and a `!` rule brings a file back.
+     *
+     * Not supported: character classes in patterns, `core.excludesFile`, `.git/info/exclude`.
+     */
+    class IgnoreRules
+    {
+        /** All rules, in the order they were added (later ones win). */
+        var rules: List<IgnoreRule>
+        /** The directories whose .gitignore was read. */
+        var loaded: Map<String, Bool>
+        /** The workspace root; default rules apply below it. */
+        var root: String
+
+        /** Rules for the project at `root`: the defaults, plus the root's .gitignore. */
+        fnc create(root: String) -> IgnoreRules
+        {
+            const rules: IgnoreRules = IgnoreRules { rules: [], loaded: Map::new(), root: FileSystem::withoutTrailingSlash(root) }
+            rules.addDefaults()
+            rules.loadDirectory(root)
+            return rules
+        }
+
+        /** The version-control directories and the build output of Tinox projects, ignored everywhere. */
+        fn addDefaults() -> Nothing
+        {
+            for line in [".git/", ".hg/", ".svn/", ".tinox/", ".tinox-build/", "target/"]
+            {
+                this.rules.push(IgnoreRule::parse(line, this.root))
+            }
+        }
+
+        /** Adds the rules of the .gitignore in a directory (once). They apply below that directory. */
+        fn loadDirectory(directory: String) -> Nothing
+        {
+            const dir: String = FileSystem::withoutTrailingSlash(directory)
+            if (this.loaded.contains(dir))
+            {
+                return
+            }
+            this.loaded.set(dir, true)
+            const file: String = FileSystem::join(dir, ".gitignore")
+            if (!FileSystem::exists(file))
+            {
+                return
+            }
+            try
+            {
+                this.addText(FileSystem::read(file), dir)
+            }
+            catch (e: String)
+            {
+                // an unreadable .gitignore must not hide the whole directory
+            }
+        }
+
+        /** Adds the lines of a .gitignore text that lives in `directory`. */
+        fn addText(text: String, directory: String) -> Nothing
+        {
+            for line in text.split("\n")
+            {
+                const rule: IgnoreRule = IgnoreRule::parse(line, directory)
+                if (!rule.isEmpty())
+                {
+                    this.rules.push(rule)
+                }
+            }
+        }
+
+        /** Whether the tree leaves this path out. */
+        fn isIgnored(path: String, isDirectory: Bool) -> Bool
+        {
+            var ignored: Bool = false
+            var i: Int64 = 0
+            while (i < this.rules.len())
+            {
+                const rule: IgnoreRule = this.rules[i]
+                if (rule.matches(path, isDirectory))
+                {
+                    ignored = !rule.negated
+                }
+                i = i + 1
+            }
+            return ignored
+        }
+    }
+}

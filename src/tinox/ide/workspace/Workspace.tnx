@@ -1,0 +1,783 @@
+module tinox.ide.workspace
+
+import tinox.core.json
+import tinox.core.process.Process
+import tinox.ide.app.Background
+import tinox.ide.app.BusMessage
+import tinox.ide.app.CommandContext
+import tinox.ide.app.CommandRegistry
+import tinox.ide.app.EventBus
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.Logger
+import tinox.ide.app.Store
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.settings.Settings
+import tinox.ide.ui.Actions
+import tinox.ide.ui.Dialogs
+import tinox.ide.ui.ItemView
+import tinox.ide.ui.Js
+import tinox.ide.ui.Model
+import tinox.ide.ui.Mount
+import tinox.ide.ui.Row
+
+namespace tinox.ide.workspace
+{
+    /**
+     * The open project folder and its tree. Opening a folder reads its `tinox.toml`, lists the top
+     * level into the project tree (the rest is listed when the user opens a folder: lazy loading) and
+     * starts watching what has been listed, so changes made outside the IDE show up without a restart.
+     *
+     * The state other modules need is in the store: `workspace.open`, `workspace.path`,
+     * `workspace.name`, `workspace.entry`, `workspace.hasManifest`, `workspace.selection`
+     * (newline-separated paths), `workspace.selectionCount`, `workspace.canUndo`. It announces on the
+     * bus: "workspace.opened" `{path, name, hasManifest, entry}`, "workspace.closed",
+     * "workspace.fileOperation" (see FileOps) and, when the user activates a file in the tree,
+     * "file.openRequested" `{path}`, which the document module answers.
+     *
+     * Commands (File menu and the tree's context menu): workspace.openFolder, workspace.closeFolder,
+     * workspace.refresh, workspace.newFile, workspace.newFolder, workspace.rename, workspace.delete,
+     * workspace.undo, and the standard "file_open_recent" for recent projects.
+     */
+    class Workspace
+    {
+        /** The bus. */
+        var bus: EventBus
+        /** The application state. */
+        var store: Store
+        /** The commands. */
+        var registry: CommandRegistry
+        /** The bridge's actions. */
+        var actions: Actions
+        /** Dialogs. */
+        var dialogs: Dialogs
+        /** The user's settings. */
+        var settings: Settings
+        /** The log. */
+        var logger: Logger
+        /** The window's widgets, where the project tree is. */
+        var mount: Mount
+        /** The rows of the tree. */
+        var model: Model
+        /** Create, rename, move, delete. */
+        var ops: FileOps
+        /** Lists directories into rows. */
+        var tree: FileTree
+        /** The project's tinox.toml. */
+        var manifest: TinoxManifest
+        /** Notices changes on disk. */
+        var watcher: WorkspaceWatcher
+        /** The project folder, "" when none is open. */
+        var root: String
+        /** Whether a project is open. */
+        var opened: Bool
+        /** Whether a git status is being fetched. */
+        var gitBusy: Bool
+        /** Whether another git status was asked for while one was running. */
+        var gitAgain: Bool
+        /** The colour each row has now, by path. */
+        var colors: Map<String, String>
+        /** Whether opening a project starts the file watcher (off in tests that must not hear the real disk). */
+        var watchFiles: Bool
+
+        /** The workspace module for this window; call registerCommands(), then bind() once the window exists. */
+        fnc create(events: EventLoop, bus: EventBus, store: Store, registry: CommandRegistry, actions: Actions, dialogs: Dialogs, settings: Settings, logger: Logger, mount: Mount) -> Workspace
+        {
+            return Workspace {
+                bus: bus,
+                store: store,
+                registry: registry,
+                actions: actions,
+                dialogs: dialogs,
+                settings: settings,
+                logger: logger,
+                mount: mount,
+                model: Model::create(events, [], false),
+                ops: FileOps::create(bus),
+                tree: FileTree::create(""),
+                manifest: TinoxManifest::parse("", false),
+                watcher: WorkspaceWatcher::idle(),
+                root: "",
+                opened: false,
+                gitBusy: false,
+                gitAgain: false,
+                colors: Map::new(),
+                watchFiles: true
+            }
+        }
+
+        // ---------------------------------------------------------------- setup
+
+        /** The commands of the workspace, in the order of the File menu. */
+        fn menuItems() -> List<String>
+        {
+            return ["workspace.openFolder", "file_open_recent", "workspace.closeFolder", "-", "workspace.newFile", "workspace.newFolder", "workspace.rename", "workspace.delete", "workspace.undo", "-", "workspace.refresh"]
+        }
+
+        /** Registers the commands. Call before the registry is attached. */
+        fn registerCommands() -> Nothing
+        {
+            const open: fnc(Store) -> Bool = (s: Store) => s.getBool("workspace.open")
+            this.registry.registerAll([
+                IdeCommand::create("workspace.openFolder", "Open &Folder…").icon("folder-open").shortcut("Ctrl+Shift+O").category("File").run((c: CommandContext) => this.chooseFolder()),
+                IdeCommand::standard("file_open_recent"),
+                IdeCommand::create("workspace.closeFolder", "Close Fol&der").icon("document-close").category("File").enabledWhen(open).run((c: CommandContext) => this.close()),
+                IdeCommand::create("workspace.newFile", "New &File…").icon("document-new").category("File").enabledWhen(open).run((c: CommandContext) => this.newFile()),
+                IdeCommand::create("workspace.newFolder", "New Fo&lder…").icon("folder-new").category("File").enabledWhen(open).run((c: CommandContext) => this.newFolder()),
+                IdeCommand::create("workspace.rename", "&Rename…").icon("edit-rename").shortcut("F2").category("File").enabledWhen((s: Store) => s.getInt("workspace.selectionCount") == 1).run((c: CommandContext) => this.renameSelected()),
+                IdeCommand::create("workspace.delete", "&Delete…").icon("edit-delete").category("File").enabledWhen((s: Store) => s.getInt("workspace.selectionCount") > 0).run((c: CommandContext) => this.deleteSelected()),
+                IdeCommand::create("workspace.undo", "&Undo File Operation").icon("edit-undo").category("File").enabledWhen((s: Store) => s.getBool("workspace.canUndo")).run((c: CommandContext) => this.undo()),
+                IdeCommand::create("workspace.refresh", "Re&fresh Project").icon("view-refresh").category("File").enabledWhen(open).run((c: CommandContext) => this.refreshAll())
+            ])
+        }
+
+        /** Connects the tree widget: the model is attached, the user's actions on rows and the changes on disk are handled. Call after the window is built. */
+        fn bind() -> Nothing
+        {
+            this.model.onFetch((parent: String) => this.fetch(parent))
+            this.model.onEdit((id: String, column: Int64, text: String) => this.renameTo(id, text))
+            this.model.onDrop((ev: Event) => this.dropped(ev))
+            this.model.attach(this.mount.idOf("projectTree"))
+            this.mount.onActivated("projectTree", (id: String) => this.activated(id))
+            this.mount.onSelection("projectTree", (ids: List<String>) => this.selected(ids))
+            this.mount.onContextMenu("projectTree", (ev: Event) => this.contextMenu(ev))
+            this.actions.onRecentSelected((id: String, url: String) => this.openChosen(url))
+            this.bus.subscribe("workspace.fsChanged", (m: BusMessage) => this.changedOnDisk(m))
+            this.bus.subscribe("workspace.gitStatus", (m: BusMessage) => this.gitStatusArrived(m.str("output")))
+        }
+
+        /** Opens the project given on the command line (TINOXIDE_OPEN or the first argument) or else the one that was open last time. Never throws. */
+        fn restore() -> Nothing
+        {
+            var path: String = Bridge::env("TINOXIDE_OPEN")
+            if (path == "")
+            {
+                const args: List<String> = Process::args()
+                if (args.len() > 1)
+                {
+                    path = args[1]
+                }
+            }
+            if (path == "")
+            {
+                const last: String = this.settings.getString("Workspace", "last", "")
+                if (last != "" && FileSystem::isDirectory(last))
+                {
+                    path = last
+                }
+            }
+            if (path != "")
+            {
+                this.openChosen(path)
+            }
+        }
+
+        // ---------------------------------------------------------------- opening and closing
+
+        /** Opens a folder; a failure is shown to the user, not thrown. */
+        fn openChosen(path: String) -> Nothing
+        {
+            try
+            {
+                this.open(path)
+            }
+            catch (e: String)
+            {
+                this.logger.warn("could not open " + path + ": " + e)
+                this.dialogs.error("Open Folder", e)
+            }
+        }
+
+        /** Asks for a folder and opens it. */
+        fn chooseFolder() -> Nothing
+        {
+            var start: String = this.root
+            if (start == "")
+            {
+                start = Bridge::env("HOME")
+            }
+            this.dialogs.chooseFolder("Open Folder", start, (path: String) => this.chosen(path))
+        }
+
+        /** The user chose (or cancelled with "") in the folder dialog. */
+        fn chosen(path: String) -> Nothing
+        {
+            if (path != "")
+            {
+                this.openChosen(path)
+            }
+        }
+
+        /** Opens the folder as the project: closes the current one, reads the manifest, lists the top level, starts watching. Throws a message when the path is not a folder. */
+        fn open(path: String) -> Nothing
+        {
+            const started: Int64 = Bridge::nowNs()
+            const clean: String = FileSystem::withoutTrailingSlash(path)
+            if (!FileSystem::isDirectory(clean))
+            {
+                throw "'" + path + "' is not a folder."
+            }
+            if (this.opened)
+            {
+                this.close()
+            }
+            this.root = clean
+            this.manifest = TinoxManifest::load(clean)
+            this.tree = FileTree::create(clean)
+            this.colors = Map::new()
+            if (this.watchFiles)
+            {
+                this.watcher = WorkspaceWatcher::start()
+            }
+            if (this.watchFiles && !this.watcher.watching)
+            {
+                this.logger.warn("not watching for file changes, polling instead: " + this.watcher.fallbackReason)
+            }
+            this.opened = true
+            this.model.reset(this.fetch(""))
+            this.store.set("workspace.path", clean)
+            this.store.set("workspace.name", this.manifest.title(clean))
+            this.store.set("workspace.entry", this.manifest.entry)
+            this.store.setBool("workspace.hasManifest", this.manifest.present)
+            this.store.set("workspace.selection", "")
+            this.store.setInt("workspace.selectionCount", 0)
+            this.store.setBool("workspace.open", true)
+            this.store.set("status.message", "Opened " + this.manifest.title(clean))
+            this.bus.publish("workspace.opened", Js::object([Js::strField("path", clean), Js::strField("name", this.manifest.title(clean)), Js::boolField("hasManifest", this.manifest.present), Js::strField("entry", this.manifest.entry)]))
+            this.actions.recentAdd("file_open_recent", clean)
+            this.settings.setString("Workspace", "last", clean)
+            var note: String = ""
+            if (!this.manifest.present)
+            {
+                note = " (no tinox.toml)"
+            }
+            this.logger.info("opened project " + clean + note + " in " + ((Bridge::nowNs() - started) / 1000000).toString() + " ms")
+            this.refreshGit()
+        }
+
+        /** The program is ending: stop watching and ignore whatever is still on its way. No call to the bridge. */
+        fn shutdown() -> Nothing
+        {
+            this.watcher.stop()
+            this.opened = false
+        }
+
+        /** Closes the project: the tree is emptied and watching stops. */
+        fn close() -> Nothing
+        {
+            if (!this.opened)
+            {
+                return
+            }
+            this.watcher.stop()
+            this.watcher = WorkspaceWatcher::idle()
+            this.model.reset([])
+            this.opened = false
+            this.root = ""
+            this.tree = FileTree::create("")
+            this.store.setBool("workspace.open", false)
+            this.store.set("workspace.path", "")
+            this.store.set("workspace.name", "")
+            this.store.set("workspace.selection", "")
+            this.store.setInt("workspace.selectionCount", 0)
+            this.settings.remove("Workspace", "last")
+            this.store.set("status.message", "Closed the project")
+            this.bus.signal("workspace.closed")
+        }
+
+        /** The rows below a row of the tree ("" is the top level); what the model asks for when the user opens a folder. */
+        fn fetch(parent: String) -> List<Row>
+        {
+            var directory: String = parent
+            if (parent == "")
+            {
+                directory = this.root
+            }
+            if (!this.opened)
+            {
+                return []
+            }
+            const rows: List<Row> = this.tree.rows(directory)
+            this.watcher.add(directory)
+            return rows
+        }
+
+        // ---------------------------------------------------------------- user actions on the tree
+
+        /** A row was activated: files are opened (the document module answers "file.openRequested"). */
+        fn activated(path: String) -> Nothing
+        {
+            if (!FileSystem::isDirectory(path))
+            {
+                this.bus.publish("file.openRequested", Js::object([Js::strField("path", path)]))
+            }
+        }
+
+        /** The selection changed. */
+        fn selected(ids: List<String>) -> Nothing
+        {
+            this.store.set("workspace.selection", Js::join(ids, "\n"))
+            this.store.setInt("workspace.selectionCount", ids.len())
+        }
+
+        /** The paths selected in the tree. */
+        fn selection() -> List<String>
+        {
+            const text: String = this.store.get("workspace.selection")
+            var out: List<String> = []
+            if (text == "")
+            {
+                return out
+            }
+            for line in text.split("\n")
+            {
+                out.push(line)
+            }
+            return out
+        }
+
+        /** Where "New File" puts things: the selected folder, the folder of the selected file, or the project folder. */
+        fn targetDirectory() -> String
+        {
+            const picked: List<String> = this.selection()
+            if (picked.len() == 0)
+            {
+                return this.root
+            }
+            if (FileSystem::isDirectory(picked[0]))
+            {
+                return picked[0]
+            }
+            return FileSystem::parent(picked[0])
+        }
+
+        /** Shows the tree's context menu where the user asked for it. */
+        fn contextMenu(ev: Event) -> Nothing
+        {
+            if (!this.opened)
+            {
+                return
+            }
+            this.actions.popup(["workspace.newFile", "workspace.newFolder", "-", "workspace.rename", "workspace.delete", "-", "workspace.undo", "workspace.refresh"], ev.int("x"), ev.int("y"))
+        }
+
+        /** Asks for a name and creates a file. */
+        fn newFile() -> Nothing
+        {
+            const directory: String = this.targetDirectory()
+            this.dialogs.askText("New File", "Name of the new file in " + FileSystem::baseName(directory) + ":", "", (ok: Bool, name: String) => this.createdFile(ok, directory, name))
+        }
+
+        /** The answer of the New File dialog. */
+        fn createdFile(ok: Bool, directory: String, name: String) -> Nothing
+        {
+            if (!ok)
+            {
+                return
+            }
+            try
+            {
+                const path: String = this.ops.createFile(directory, name)
+                this.afterChange([directory], path, "Created " + name)
+                this.bus.publish("file.openRequested", Js::object([Js::strField("path", path)]))
+            }
+            catch (e: String)
+            {
+                this.dialogs.error("New File", e)
+            }
+        }
+
+        /** Asks for a name and creates a folder. */
+        fn newFolder() -> Nothing
+        {
+            const directory: String = this.targetDirectory()
+            this.dialogs.askText("New Folder", "Name of the new folder in " + FileSystem::baseName(directory) + ":", "", (ok: Bool, name: String) => this.createdFolder(ok, directory, name))
+        }
+
+        /** The answer of the New Folder dialog. */
+        fn createdFolder(ok: Bool, directory: String, name: String) -> Nothing
+        {
+            if (!ok)
+            {
+                return
+            }
+            try
+            {
+                const path: String = this.ops.createFolder(directory, name)
+                this.afterChange([directory], path, "Created folder " + name)
+            }
+            catch (e: String)
+            {
+                this.dialogs.error("New Folder", e)
+            }
+        }
+
+        /** Asks for the new name of the selected item. */
+        fn renameSelected() -> Nothing
+        {
+            const picked: List<String> = this.selection()
+            if (picked.len() != 1)
+            {
+                return
+            }
+            const path: String = picked[0]
+            this.dialogs.askText("Rename", "New name for " + FileSystem::baseName(path) + ":", FileSystem::baseName(path), (ok: Bool, name: String) => this.renamedByDialog(ok, path, name))
+        }
+
+        /** The answer of the Rename dialog. */
+        fn renamedByDialog(ok: Bool, path: String, name: String) -> Nothing
+        {
+            if (ok)
+            {
+                this.renameTo(path, name)
+            }
+        }
+
+        /** Renames an item (from the dialog or by editing its name in the tree); a failure is shown. */
+        fn renameTo(path: String, name: String) -> Nothing
+        {
+            try
+            {
+                const target: String = this.ops.rename(path, name)
+                if (target != path)
+                {
+                    this.afterChange([FileSystem::parent(path)], target, "Renamed " + FileSystem::baseName(path) + " to " + name)
+                }
+            }
+            catch (e: String)
+            {
+                this.dialogs.error("Rename", e)
+            }
+        }
+
+        /** Asks before deleting the selected items. */
+        fn deleteSelected() -> Nothing
+        {
+            const picked: List<String> = this.selection()
+            if (picked.len() == 0)
+            {
+                return
+            }
+            var names: String = FileSystem::baseName(picked[0])
+            if (picked.len() > 1)
+            {
+                names = picked.len().toString() + " items (" + FileSystem::baseName(picked[0]) + ", ...)"
+            }
+            this.dialogs.ask("Delete", "Move " + names + " to the trash?", ["trash", "delete", "cancel"], ["Move to &Trash", "Delete &Permanently", "Cancel"], (answer: String) => this.deleteConfirmed(answer, picked))
+        }
+
+        /** The answer of the Delete dialog. */
+        fn deleteConfirmed(answer: String, paths: List<String>) -> Nothing
+        {
+            if (answer == "cancel")
+            {
+                return
+            }
+            var parents: List<String> = []
+            try
+            {
+                for path in paths
+                {
+                    if (answer == "trash")
+                    {
+                        this.ops.delete(path)
+                    }
+                    else
+                    {
+                        this.ops.deleteForGood(path)
+                    }
+                    parents.push(FileSystem::parent(path))
+                }
+            }
+            catch (e: String)
+            {
+                this.dialogs.error("Delete", e)
+            }
+            var message: String = "Moved to the trash (restore it with the file manager)"
+            if (answer == "delete")
+            {
+                message = "Deleted"
+            }
+            this.afterChange(parents, "", message)
+        }
+
+        /** Takes back the last create, rename or move. */
+        fn undo() -> Nothing
+        {
+            try
+            {
+                const description: String = this.ops.undo()
+                this.afterChange([], "", "Undone: " + description)
+                this.refreshAll()
+            }
+            catch (e: String)
+            {
+                this.dialogs.error("Undo", e)
+            }
+        }
+
+        /** Something was dropped on the tree: rows from the tree move, files from the file manager are copied in. */
+        fn dropped(ev: Event) -> Nothing
+        {
+            var directory: String = this.root
+            if (ev.has("parent"))
+            {
+                directory = ev.str("parent")
+                if (!FileSystem::isDirectory(directory))
+                {
+                    directory = FileSystem::parent(directory)
+                }
+            }
+            var parents: List<String> = [directory]
+            var last: String = ""
+            try
+            {
+                for path in Mount::strings(ev.field("ids"))
+                {
+                    parents.push(FileSystem::parent(path))
+                    last = this.ops.move(path, directory)
+                }
+                if (ev.str("action") == "copy" || Mount::strings(ev.field("ids")).len() == 0)
+                {
+                    for path in Mount::strings(ev.field("files"))
+                    {
+                        last = this.ops.copyInto(path, directory)
+                    }
+                }
+            }
+            catch (e: String)
+            {
+                this.dialogs.error("Move", e)
+            }
+            this.afterChange(parents, last, "")
+        }
+
+        /** After an operation: the affected directories are re-read at once (the watcher would catch up later), `selectPath` (if any) is selected, the status line says what happened. */
+        fn afterChange(directories: List<String>, selectPath: String, message: String) -> Nothing
+        {
+            var seen: Map<String, Bool> = Map::new()
+            for directory in directories
+            {
+                if (!seen.contains(directory))
+                {
+                    seen.set(directory, true)
+                    this.refreshDirectory(directory)
+                }
+            }
+            if (selectPath != "")
+            {
+                const parent: String = FileSystem::parent(selectPath)
+                if (!seen.contains(parent))
+                {
+                    this.refreshDirectory(parent)
+                }
+                try
+                {
+                    const view: ItemView = ItemView::of(this.mount, "projectTree")
+                    if (parent != this.root)
+                    {
+                        view.expand(parent, true)
+                    }
+                    view.choose([selectPath], selectPath)
+                }
+                catch (e: String)
+                {
+                    // the row is not shown (filtered out): fine
+                }
+            }
+            this.store.setBool("workspace.canUndo", this.ops.canUndo())
+            if (message != "")
+            {
+                var text: String = message
+                if (this.ops.canUndo())
+                {
+                    text = message + " — Undo File Operation: " + this.ops.undoDescription()
+                }
+                this.store.set("status.message", text)
+            }
+        }
+
+        // ---------------------------------------------------------------- changes on disk
+
+        /** The watcher reported changed directories (an empty list means "everything may have changed"). */
+        fn changedOnDisk(m: BusMessage) -> Nothing
+        {
+            if (!this.opened)
+            {
+                return
+            }
+            const paths: List<String> = Mount::strings(m.payload.getField("paths"))
+            if (paths.len() == 0)
+            {
+                this.refreshAll()
+                return
+            }
+            var seen: Map<String, Bool> = Map::new()
+            for path in paths
+            {
+                if (!seen.contains(path))
+                {
+                    seen.set(path, true)
+                    this.refreshDirectory(path)
+                }
+            }
+            this.refreshGit()
+        }
+
+        /** Re-reads every directory that is loaded in the tree. */
+        fn refreshAll() -> Nothing
+        {
+            if (!this.opened)
+            {
+                return
+            }
+            var dirs: List<String> = []
+            for dir in this.tree.loaded.keys()
+            {
+                dirs.push(dir)
+            }
+            for dir in dirs
+            {
+                this.refreshDirectory(dir)
+            }
+            this.refreshGit()
+        }
+
+        /**
+         * Brings the rows of one loaded directory in line with the disk: rows of vanished files go,
+         * new files appear at their sorted place, and rows whose git colour changed are recoloured.
+         * Rows that stay are left alone, so expansion and selection survive.
+         */
+        fn refreshDirectory(directory: String) -> Nothing
+        {
+            if (!this.opened || !this.tree.isLoaded(directory))
+            {
+                return
+            }
+            if (!FileSystem::isDirectory(directory))
+            {
+                // the directory itself is gone: its parent's refresh removes the row
+                this.tree.forget(directory)
+                this.watcher.remove(directory)
+                this.refreshDirectory(FileSystem::parent(directory))
+                return
+            }
+            var parentId: String = directory
+            if (directory == this.root)
+            {
+                parentId = ""
+            }
+            var current: List<String> = []
+            try
+            {
+                current = this.model.childIds(parentId)
+            }
+            catch (e: String)
+            {
+                return
+            }
+            const entries: List<TreeEntry> = this.tree.entries(directory)
+            var wanted: Map<String, Bool> = Map::new()
+            for entry in entries
+            {
+                wanted.set(entry.path, true)
+            }
+            var present: Map<String, Bool> = Map::new()
+            var gone: List<String> = []
+            for id in current
+            {
+                present.set(id, true)
+                if (!wanted.contains(id))
+                {
+                    gone.push(id)
+                }
+            }
+            if (gone.len() > 0)
+            {
+                this.model.remove(gone)
+                for id in gone
+                {
+                    this.tree.forget(id)
+                    this.watcher.remove(id)
+                    this.colors.remove(id)
+                }
+            }
+            var index: Int64 = 0
+            for entry in entries
+            {
+                if (!present.contains(entry.path))
+                {
+                    this.model.insert(parentId, index, [this.tree.rowFor(entry)])
+                    this.colors.set(entry.path, GitStatus::colorFor(this.tree.git.codeOf(entry.path)))
+                }
+                else
+                {
+                    const color: String = GitStatus::colorFor(this.tree.git.codeOf(entry.path))
+                    var before: String = ""
+                    if (this.colors.contains(entry.path))
+                    {
+                        before = this.colors.get(entry.path)
+                    }
+                    if (before != color)
+                    {
+                        this.model.update(entry.path, Row::patch(entry.path).color(color))
+                        this.colors.set(entry.path, color)
+                    }
+                }
+                index = index + 1
+            }
+        }
+
+        // ---------------------------------------------------------------- git
+
+        /** Starts a git status in the background; the result arrives as "workspace.gitStatus". Asked again while one runs, it runs once more afterwards. */
+        fn refreshGit() -> Nothing
+        {
+            if (!this.opened)
+            {
+                return
+            }
+            if (this.gitBusy)
+            {
+                this.gitAgain = true
+                return
+            }
+            this.gitBusy = true
+            spawn Workspace::gitTask(this.root)
+        }
+
+        /** The background task: runs git and reports its output. */
+        fnc gitTask(root: String) -> Int64
+        {
+            const output: String = GitStatus::fetch(root)
+            Background::report("workspace.gitStatus", Js::object([Js::strField("output", output)]))
+            return 0
+        }
+
+        /** The git status is here: colour the rows. */
+        fn gitStatusArrived(output: String) -> Nothing
+        {
+            this.gitBusy = false
+            if (!this.opened)
+            {
+                return
+            }
+            this.tree.git = GitStatus::parse(output, this.root)
+            var dirs: List<String> = []
+            for dir in this.tree.loaded.keys()
+            {
+                dirs.push(dir)
+            }
+            for dir in dirs
+            {
+                this.refreshDirectory(dir)
+            }
+            if (this.gitAgain)
+            {
+                this.gitAgain = false
+                this.refreshGit()
+            }
+        }
+    }
+}

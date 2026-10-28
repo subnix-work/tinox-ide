@@ -22,6 +22,7 @@ user actions as events. Models, proxies and views are addressed by object id; ro
 * `checked`: `true`/`false` shows a checkbox, `null` (or absent) none.
 * `cells`: the text of columns 1..n (a string or `{text, icon, toolTip}`); column 0 is the row.
 * `children` given: loaded. `hasChildren:true` without `children`: loaded on demand (below).
+* `color` is a colour name or `#rrggbb`; an empty string clears it.
 * Icons are Breeze icon names. A row with an unknown field, a bad colour or a duplicate id rejects
   the whole command, nothing is applied.
 
@@ -73,7 +74,7 @@ none/single/extended/multi, `dragDrop`, `editable`, `alternatingRowColors`; tree
 * model: `model.fetchChildren {id}`, `model.checkChanged {id, checked}` (a user toggled a
   checkbox; applied at once), `model.editRequested {id, column, text}` (an edit is a request: the
   row stays as it is until Tinox updates it, because a rename can fail), `model.dropRequested
-  {ids, urls, parent, index, action}`.
+  {ids, urls, files, parent, index, action}`.
 * view: `model.selectionChanged {ids}`, `model.currentChanged {id}`, `model.activated {id}`
   (double click or Enter), `model.contextMenuRequested {id, x, y, ids}` (global position; `id` is
   `null` on empty space), `model.expanded {id}`, `model.collapsed {id}`.
@@ -82,7 +83,7 @@ none/single/extended/multi, `dragDrop`, `editable`, `alternatingRowColors`; tree
 
 Rows with `flags.drag` can be dragged (mime `application/x-tinox-rows`, a JSON list of ids); rows
 with `flags.drop` (and the top level with `acceptDrops`) accept drops of those rows and of
-`text/uri-list` (files from the file manager). The model never moves anything itself: a drop
+`text/uri-list` (files from the file manager; `files` has the local ones as plain, decoded paths). The model never moves anything itself: a drop
 raises `model.dropRequested` and Tinox moves the files, then calls `model.move`. That keeps the
 view from deleting the source rows.
 

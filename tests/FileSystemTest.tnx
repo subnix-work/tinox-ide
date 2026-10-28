@@ -1,0 +1,122 @@
+import TempProject
+import tinox.ide.workspace.FileSystem
+import tinox.ide.workspace.Glob
+import tinox.ide.workspace.IgnoreRule
+import tinox.ide.workspace.IgnoreRules
+
+class FileSystemTest
+{
+    @Test("path helpers")
+    fn testPaths() -> Bool
+    {
+        return FileSystem::join("/a/b", "c") == "/a/b/c" && FileSystem::join("/a/b/", "c") == "/a/b/c" && FileSystem::baseName("/a/b/c.txt") == "c.txt" && FileSystem::baseName("/a/b/") == "b" &&
+            FileSystem::parent("/a/b/c.txt") == "/a/b" && FileSystem::parent("/a") == "/" && FileSystem::parent("name") == "" &&
+            FileSystem::extension("Main.TNX") == "tnx" && FileSystem::extension("Makefile") == "" && FileSystem::extension(".gitignore") == "" && FileSystem::extension("a.tar.gz") == "gz" &&
+            FileSystem::isInside("/a/b/c", "/a/b") && FileSystem::isInside("/a/b", "/a/b") && !FileSystem::isInside("/a/bc", "/a/b") && FileSystem::isInside("/a/b/c", "/a/b/") &&
+            FileSystem::isValidName("ok.txt") && !FileSystem::isValidName("") && !FileSystem::isValidName("..") && !FileSystem::isValidName("a/b") &&
+            FileSystem::withoutTrailingSlash("/a/b//") == "/a/b" && FileSystem::withoutTrailingSlash("/") == "/"
+    }
+
+    @Test("files, directories, rename, copy and delete on a real directory")
+    fn testOperations() -> Bool
+    {
+        const root: String = TempProject::create()
+        TempProject::file(root, "a/one.txt", "1")
+        TempProject::dir(root, "empty")
+        const isDir: Bool = FileSystem::isDirectory(root + "/a") && !FileSystem::isDirectory(root + "/a/one.txt") && !FileSystem::isDirectory(root + "/nothing")
+        FileSystem::rename(root + "/a", root + "/b")
+        const renamed: Bool = FileSystem::exists(root + "/b/one.txt") && !FileSystem::exists(root + "/a")
+        FileSystem::copy(root + "/b", root + "/c")
+        const copied: Bool = FileSystem::read(root + "/c/one.txt") == "1" && FileSystem::exists(root + "/b/one.txt")
+        var clash: String = ""
+        try
+        {
+            FileSystem::rename(root + "/b", root + "/c")
+        }
+        catch (e: String)
+        {
+            clash = e
+        }
+        FileSystem::deleteTree(root + "/c")
+        const deleted: Bool = !FileSystem::exists(root + "/c")
+        var refused: String = ""
+        try
+        {
+            FileSystem::deleteTree("/")
+        }
+        catch (e: String)
+        {
+            refused = e
+        }
+        TempProject::remove(root)
+        return isDir && renamed && copied && clash.contains("already exists") && deleted && refused.contains("root") && !FileSystem::exists(root)
+    }
+
+    @Test("names with spaces, quotes and leading dashes survive (no shell is involved)")
+    fn testOddNames() -> Bool
+    {
+        const root: String = TempProject::create()
+        TempProject::file(root, "a b.txt", "x")
+        TempProject::file(root, "-dash.txt", "y")
+        TempProject::file(root, "q'uote\".txt", "z")
+        FileSystem::rename(root + "/a b.txt", root + "/c d.txt")
+        FileSystem::rename(root + "/-dash.txt", root + "/dash2.txt")
+        FileSystem::rename(root + "/q'uote\".txt", root + "/plain.txt")
+        const ok: Bool = FileSystem::exists(root + "/c d.txt") && FileSystem::exists(root + "/dash2.txt") && FileSystem::exists(root + "/plain.txt")
+        TempProject::remove(root)
+        return ok
+    }
+
+    @Test("glob: star, double star, question mark, escapes")
+    fn testGlob() -> Bool
+    {
+        return Glob::matches("*.o", "main.o") && !Glob::matches("*.o", "main.c") && Glob::matches("*", "") && !Glob::matches("*.o", "dir/main.o") && Glob::matches("**/*.o", "dir/sub/main.o") && Glob::matches("a?c", "abc") && !Glob::matches("a?c", "a/c") &&
+            Glob::matches("docs/*.html", "docs/index.html") && !Glob::matches("docs/*.html", "docs/x/index.html") && Glob::matches("a\\*b", "a*b") && !Glob::matches("a\\*b", "axb") && Glob::matches("build", "build") && !Glob::matches("build", "builds")
+    }
+
+    @Test("ignore rules: names anywhere, directories only, anchored paths, negation, last rule wins")
+    fn testIgnoreRules() -> Bool
+    {
+        const rules: IgnoreRules = IgnoreRules::create("/p")
+        rules.addText("# comment\n\n*.o\nbuild/\n/top.txt\ndocs/out\n!keep.o\n*.log\n", "/p")
+        return rules.isIgnored("/p/main.o", false) && rules.isIgnored("/p/sub/deep/main.o", false) && !rules.isIgnored("/p/main.c", false) &&
+            rules.isIgnored("/p/build", true) && !rules.isIgnored("/p/build", false) && rules.isIgnored("/p/x/build", true) &&
+            rules.isIgnored("/p/top.txt", false) && !rules.isIgnored("/p/sub/top.txt", false) &&
+            rules.isIgnored("/p/docs/out", true) && !rules.isIgnored("/p/other/docs/out", true) &&
+            !rules.isIgnored("/p/keep.o", false) && rules.isIgnored("/p/a/keep2.o", false) && rules.isIgnored("/p/x.log", false) &&
+            rules.isIgnored("/p/.git", true) && rules.isIgnored("/p/target", true) && rules.isIgnored("/p/.tinox-build", true) && !rules.isIgnored("/p/src", true)
+    }
+
+    @Test("a rule from a .gitignore in a subdirectory only applies below it")
+    fn testNestedIgnore() -> Bool
+    {
+        const rules: IgnoreRules = IgnoreRules::create("/p")
+        rules.addText("generated.txt\n", "/p/sub")
+        return rules.isIgnored("/p/sub/generated.txt", false) && rules.isIgnored("/p/sub/deeper/generated.txt", false) && !rules.isIgnored("/p/generated.txt", false) && !rules.isIgnored("/p/other/generated.txt", false)
+    }
+
+    @Test("reading .gitignore files from disk, the root's at once, others when their directory is opened")
+    fn testIgnoreFromDisk() -> Bool
+    {
+        const root: String = TempProject::create()
+        TempProject::file(root, ".gitignore", "*.tmp\r\nsecret/\r\n")
+        TempProject::file(root, "sub/.gitignore", "local.txt\n")
+        const rules: IgnoreRules = IgnoreRules::create(root)
+        const rootRules: Bool = rules.isIgnored(root + "/a.tmp", false) && rules.isIgnored(root + "/secret", true)
+        const before: Bool = rules.isIgnored(root + "/sub/local.txt", false)
+        rules.loadDirectory(root + "/sub")
+        rules.loadDirectory(root + "/sub")
+        const after: Bool = rules.isIgnored(root + "/sub/local.txt", false)
+        TempProject::remove(root)
+        return rootRules && !before && after
+    }
+
+    @Test("one rule line: flags and the pattern")
+    fn testRuleLine() -> Bool
+    {
+        const negated: IgnoreRule = IgnoreRule::parse("!important/", "/p")
+        const anchored: IgnoreRule = IgnoreRule::parse("/root.txt", "/p")
+        const slash: IgnoreRule = IgnoreRule::parse("a/b", "/p")
+        return negated.negated && negated.directoryOnly && negated.pattern == "important" && anchored.anchored && anchored.pattern == "root.txt" && slash.anchored && IgnoreRule::parse("   ", "/p").isEmpty() && IgnoreRule::parse("# x", "/p").isEmpty()
+    }
+}

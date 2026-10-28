@@ -9,9 +9,10 @@ How the application is put together, and the rules every feature module follows.
 src/Main.tnx                  the entry point: IdeApp::main()
 src/tinox/ide/kde/            the bindings to the bridge (Bridge, Command, Event, EventLoop, App)   [bindings.md]
 src/tinox/ide/ui/             typed widgets, actions, models, editor wrappers                      [ui-api.md]
-src/tinox/ide/app/            this document: bus, store, commands, logging, errors, main window, IdeApp
+src/tinox/ide/app/            this document: bus, store, commands, logging, errors, main window
+src/tinox/ide/IdeApp.tnx      the composition root: creates the parts above and the feature modules, connects them
 src/tinox/ide/settings/       typed access to the user's KConfig (Settings); the preferences dialog (#22) joins it
-src/tinox/ide/workspace/      (#20) project folder, tinox.toml model, file tree, file operations
+src/tinox/ide/workspace/      project folder, tinox.toml model, file tree, file operations, watching, git status   [workspace.md]
 src/tinox/ide/editor/         (#21) open documents, tabs, dirty tracking, session restore
 src/tinox/ide/lsp/            (#24-#29) language server client and its features
 src/tinox/ide/build/          (#30) build, run, check, test, output
@@ -19,7 +20,8 @@ src/tinox/ide/examples/       runnable examples of the UI API
 ```
 
 Dependencies point downwards: `app` uses `ui` and `kde`; feature modules use `app` (registry, store,
-bus), `ui` and `kde`; **feature modules do not call each other**: they publish on the bus and
+bus), `ui` and `kde`; only `IdeApp` knows the feature modules (importing one class of `app` therefore does
+not pull the whole program into a build, which keeps compile times of tests down); **feature modules do not call each other**: they publish on the bus and
 read the store.
 
 ## The parts
@@ -33,7 +35,7 @@ read the store.
 | `Logger` | Levels (`TINOXIDE_LOG`), a ring of recent lines, `log.line` on the bus (the Output panel), warnings/errors forwarded to the Qt log. |
 | `ErrorReporter` | Unhandled errors (command handler, event handler, bus subscriber, the logic task): logged, shown in the status line and as a desktop toast (`internalError` in `tinoxide.notifyrc`). |
 | `MainWindow` | The window as a function of the store: menu bar, tool bar, project dock, problems/output dock, editor tabs, status bar. |
-| `IdeApp` | Wires all of it, registers the core commands (Quit, the two view toggles), persists the layout flags in the settings and the window layout through `Mount.saveState`. |
+| `IdeApp` (`tinox.ide`) | Wires all of it, registers the core commands (Quit, the two view toggles), persists the layout flags in the settings and the window layout through `Mount.saveState`. |
 
 ## Unidirectional flow
 

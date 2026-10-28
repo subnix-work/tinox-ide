@@ -1,0 +1,37 @@
+module tinox.ide.workspace
+
+namespace tinox.ide.workspace
+{
+    /** One entry of a directory listing, before it becomes a row. */
+    class TreeEntry
+    {
+        /** The file name. */
+        var name: String
+        /** The absolute path. */
+        var path: String
+        /** Whether it is a directory. */
+        var isDirectory: Bool
+
+        /** An entry of a directory. */
+        fnc create(name: String, path: String, isDirectory: Bool) -> TreeEntry
+        {
+            return TreeEntry { name: name, path: path, isDirectory: isDirectory }
+        }
+
+        /** Whether this entry sorts before `other`: directories first, then names without regard to case, then case. */
+        fn before(other: TreeEntry) -> Bool
+        {
+            if (this.isDirectory != other.isDirectory)
+            {
+                return this.isDirectory
+            }
+            const mine: String = this.name.toLower()
+            const theirs: String = other.name.toLower()
+            if (mine != theirs)
+            {
+                return mine < theirs
+            }
+            return this.name < other.name
+        }
+    }
+}

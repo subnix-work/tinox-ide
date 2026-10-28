@@ -48,6 +48,9 @@ window.
 * `action.setToolBar {target: toolbar node id, items}`: replaces the actions this command put
   into the bar earlier; widgets the widget tree placed there stay.
 * `action.setContextMenu {target: widget, items}`: the widget's `ActionsContextMenu`.
+* `action.popup {items, x, y}`: shows a context menu of these items (action ids, `"-"`, sections,
+  submenus as in `setMenuBar`) at a global screen position; it does not block, and choosing an entry
+  raises `action.triggered` like any other.
 * `action.loadUi {target: window, file | xml}`: builds menus and toolbars from a KXmlGui
   description (`tinoxideui.rc`) with this application's actions; once per window.
 

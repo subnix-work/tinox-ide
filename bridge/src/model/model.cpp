@@ -118,7 +118,9 @@ bool checkRow(const QJsonObject &o, std::set<QString> &ids, const Exists &exists
         error = QStringLiteral("row '%1': \"checked\" must be true, false or null (no checkbox)").arg(id);
         return false;
     }
-    if (o.contains(QStringLiteral("color")) && !QColor::isValidColorName(o.value(QStringLiteral("color")).toString())) {
+    // an empty colour clears it (back to the view's own text colour)
+    if (o.contains(QStringLiteral("color")) && !o.value(QStringLiteral("color")).toString().isEmpty() &&
+        !QColor::isValidColorName(o.value(QStringLiteral("color")).toString())) {
         error = QStringLiteral("row '%1': '%2' is not a colour").arg(id, o.value(QStringLiteral("color")).toString());
         return false;
     }
@@ -558,17 +560,22 @@ public:
         QJsonObject f;
         QJsonArray ids;
         QJsonArray urls;
+        QJsonArray files;
         if (mime->hasFormat(kMime)) {
             ids = QJsonDocument::fromJson(mime->data(kMime)).array();
         }
         for (const QUrl &u : mime->urls()) {
             urls.append(u.toString());
+            if (u.isLocalFile()) {
+                files.append(u.toLocalFile()); // decoded, ready to use as a path
+            }
         }
         if (ids.isEmpty() && urls.isEmpty()) {
             return false;
         }
         f.insert(QStringLiteral("ids"), ids);
         f.insert(QStringLiteral("urls"), urls);
+        f.insert(QStringLiteral("files"), files);
         f.insert(QStringLiteral("parent"), parent.isValid() ? QJsonValue(data(parent, UidRole).toString()) : QJsonValue(QJsonValue::Null));
         f.insert(QStringLiteral("index"), row);
         f.insert(QStringLiteral("action"), action == Qt::CopyAction ? QStringLiteral("copy") : QStringLiteral("move"));

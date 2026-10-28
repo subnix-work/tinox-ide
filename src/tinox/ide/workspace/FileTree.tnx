@@ -1,0 +1,200 @@
+module tinox.ide.workspace
+
+import tinox.ide.ui.Row
+
+namespace tinox.ide.workspace
+{
+    /**
+     * Turns the folders of a project into rows of the project tree, one directory at a time: the
+     * tree is lazy, so opening a repository lists only its top level. Entries are sorted (folders first,
+     * then by name without regard to case), anything the ignore rules name is left out, and rows are
+     * coloured by their git status. A row's id is the absolute path.
+     */
+    class FileTree
+    {
+        /** The project folder. */
+        var root: String
+        /** What to leave out. */
+        var ignore: IgnoreRules
+        /** Show ignored files too (dimmed would be nicer, but plain is honest). */
+        var showIgnored: Bool
+        /** The git status used for colours. */
+        var git: GitStatus
+        /** The directories listed so far (they are loaded in the model and watched). */
+        var loaded: Map<String, Bool>
+
+        /** The tree of the project at `root`. */
+        fnc create(root: String) -> FileTree
+        {
+            const clean: String = FileSystem::withoutTrailingSlash(root)
+            return FileTree { root: clean, ignore: IgnoreRules::create(clean), showIgnored: false, git: GitStatus::empty(clean), loaded: Map::new() }
+        }
+
+        /** The entries of a directory, filtered and sorted. */
+        fn entries(directory: String) -> List<TreeEntry>
+        {
+            this.ignore.loadDirectory(directory)
+            var found: List<TreeEntry> = []
+            for name in FileSystem::names(directory)
+            {
+                const path: String = FileSystem::join(directory, name)
+                const isDirectory: Bool = FileSystem::isDirectory(path)
+                // (no `continue` in for loops: subnix-work/tinox#513)
+                if (this.showIgnored || !this.ignore.isIgnored(path, isDirectory))
+                {
+                    found.push(TreeEntry::create(name, path, isDirectory))
+                }
+            }
+            return FileTree::sort(found)
+        }
+
+        /** Merge sort: entries in tree order. */
+        fnc sort(list: List<TreeEntry>) -> List<TreeEntry>
+        {
+            if (list.len() <= 1)
+            {
+                return list
+            }
+            const middle: Int64 = list.len() / 2
+            var left: List<TreeEntry> = []
+            var right: List<TreeEntry> = []
+            var i: Int64 = 0
+            while (i < list.len())
+            {
+                if (i < middle)
+                {
+                    left.push(list[i])
+                }
+                else
+                {
+                    right.push(list[i])
+                }
+                i = i + 1
+            }
+            const a: List<TreeEntry> = FileTree::sort(left)
+            const b: List<TreeEntry> = FileTree::sort(right)
+            var merged: List<TreeEntry> = []
+            var x: Int64 = 0
+            var y: Int64 = 0
+            while (x < a.len() && y < b.len())
+            {
+                if (b[y].before(a[x]))
+                {
+                    merged.push(b[y])
+                    y = y + 1
+                }
+                else
+                {
+                    merged.push(a[x])
+                    x = x + 1
+                }
+            }
+            while (x < a.len())
+            {
+                merged.push(a[x])
+                x = x + 1
+            }
+            while (y < b.len())
+            {
+                merged.push(b[y])
+                y = y + 1
+            }
+            return merged
+        }
+
+        /** The icon of a file by its extension (Breeze/mime icon names). */
+        fnc iconFor(name: String) -> String
+        {
+            const extension: String = FileSystem::extension(name)
+            if (extension == "tnx")
+            {
+                return "text-x-script"
+            }
+            if (extension == "md" || extension == "markdown")
+            {
+                return "text-markdown"
+            }
+            if (extension == "json")
+            {
+                return "application-json"
+            }
+            if (extension == "toml" || extension == "yaml" || extension == "yml" || extension == "ini")
+            {
+                return "text-x-generic"
+            }
+            if (extension == "c" || extension == "h")
+            {
+                return "text-x-csrc"
+            }
+            if (extension == "cpp" || extension == "cc" || extension == "hpp")
+            {
+                return "text-x-c++src"
+            }
+            if (extension == "sh")
+            {
+                return "text-x-script"
+            }
+            if (extension == "png" || extension == "jpg" || extension == "svg")
+            {
+                return "image-x-generic"
+            }
+            if (name == "Makefile")
+            {
+                return "text-x-makefile"
+            }
+            return "text-x-generic"
+        }
+
+        /** The row of one entry: folders are lazy and accept drops, everything can be renamed and dragged. */
+        fn rowFor(entry: TreeEntry) -> Row
+        {
+            var row: Row = Row::create(entry.path, entry.name).editable(true).draggable(true)
+            if (entry.isDirectory)
+            {
+                row = row.icon("folder").lazy().droppable(true)
+            }
+            else
+            {
+                row = row.icon(FileTree::iconFor(entry.name))
+            }
+            const color: String = GitStatus::colorFor(this.git.codeOf(entry.path))
+            if (color != "")
+            {
+                row = row.color(color)
+            }
+            return row
+        }
+
+        /** The rows of a directory; marks it as loaded. */
+        fn rows(directory: String) -> List<Row>
+        {
+            this.loaded.set(directory, true)
+            var out: List<Row> = []
+            for entry in this.entries(directory)
+            {
+                out.push(this.rowFor(entry))
+            }
+            return out
+        }
+
+        /** Whether a directory has been listed (and so is live in the model). */
+        fn isLoaded(directory: String) -> Bool
+        {
+            return this.loaded.contains(directory)
+        }
+
+        /** Forgets a directory and everything below it (it was deleted or the tree closed). */
+        fn forget(directory: String) -> Nothing
+        {
+            var keep: Map<String, Bool> = Map::new()
+            for path in this.loaded.keys()
+            {
+                if (!FileSystem::isInside(path, directory))
+                {
+                    keep.set(path, true)
+                }
+            }
+            this.loaded = keep
+        }
+    }
+}

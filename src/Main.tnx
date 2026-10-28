@@ -1,4 +1,4 @@
-import tinox.ide.app.IdeApp
+import tinox.ide.IdeApp
 
 class Main
 {

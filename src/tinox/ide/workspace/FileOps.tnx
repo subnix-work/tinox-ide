@@ -1,0 +1,201 @@
+module tinox.ide.workspace
+
+import tinox.ide.app.EventBus
+import tinox.ide.ui.Js
+
+namespace tinox.ide.workspace
+{
+    /**
+     * Create, rename, move, copy and delete files and folders, with an undo stack for what can be
+     * undone. Every operation checks its arguments first (a valid name, the target does not exist, a
+     * folder is not moved into itself) and throws a readable message otherwise, leaving the disk
+     * as it was. Each success is announced on the bus as "workspace.fileOperation" with
+     * `{"kind": "create"|"rename"|"move"|"copy"|"delete", "path": ..., "oldPath": ...}`, so open
+     * documents and the tree can follow.
+     *
+     * Deleting moves to the desktop's trash (recoverable with the file manager) and is not on the
+     * undo stack; `deleteForGood` is for when there is no trash.
+     */
+    class FileOps
+    {
+        /** Where operations are announced. */
+        var bus: EventBus
+        /** The operations that can be taken back, most recent last. */
+        var undoStack: List<UndoStep>
+
+        /** File operations that announce themselves on this bus. */
+        fnc create(bus: EventBus) -> FileOps
+        {
+            return FileOps { bus: bus, undoStack: [] }
+        }
+
+        /** Announces an operation. */
+        fn announce(kind: String, path: String, oldPath: String) -> Nothing
+        {
+            this.bus.publish("workspace.fileOperation", Js::object([Js::strField("kind", kind), Js::strField("path", path), Js::strField("oldPath", oldPath)]))
+        }
+
+        /** Checks a name typed by the user; throws a message for the dialog. */
+        fnc checkName(name: String) -> Nothing
+        {
+            if (name == "")
+            {
+                throw "The name is empty."
+            }
+            if (!FileSystem::isValidName(name))
+            {
+                throw "'" + name + "' is not a valid file name (no slashes, not . or ..)."
+            }
+        }
+
+        /** Creates an empty file in a directory and returns its path. */
+        fn createFile(directory: String, name: String) -> String
+        {
+            FileOps::checkName(name)
+            const path: String = FileSystem::join(directory, name)
+            if (FileSystem::exists(path))
+            {
+                throw "'" + name + "' already exists."
+            }
+            FileSystem::write(path, "")
+            this.undoStack.push(UndoStep::create("create", "", path))
+            this.announce("create", path, "")
+            return path
+        }
+
+        /** Creates a folder in a directory and returns its path. */
+        fn createFolder(directory: String, name: String) -> String
+        {
+            FileOps::checkName(name)
+            const path: String = FileSystem::join(directory, name)
+            if (FileSystem::exists(path))
+            {
+                throw "'" + name + "' already exists."
+            }
+            FileSystem::makeDirectories(path)
+            this.undoStack.push(UndoStep::create("create", "", path))
+            this.announce("create", path, "")
+            return path
+        }
+
+        /** Gives a file or folder another name in the same directory; returns the new path. */
+        fn rename(path: String, newName: String) -> String
+        {
+            FileOps::checkName(newName)
+            const target: String = FileSystem::join(FileSystem::parent(path), newName)
+            if (target == path)
+            {
+                return path
+            }
+            FileSystem::rename(path, target)
+            this.undoStack.push(UndoStep::create("rename", path, target))
+            this.announce("rename", target, path)
+            return target
+        }
+
+        /** Moves a file or folder into another directory; returns the new path. */
+        fn move(path: String, directory: String) -> String
+        {
+            if (FileSystem::isInside(directory, path))
+            {
+                throw "A folder cannot be moved into itself."
+            }
+            const target: String = FileSystem::join(directory, FileSystem::baseName(path))
+            if (target == path)
+            {
+                return path
+            }
+            FileSystem::rename(path, target)
+            this.undoStack.push(UndoStep::create("move", path, target))
+            this.announce("move", target, path)
+            return target
+        }
+
+        /** Copies a file or folder into a directory (under a free name: "name copy" when taken); returns the new path. */
+        fn copyInto(path: String, directory: String) -> String
+        {
+            if (FileSystem::isInside(directory, path))
+            {
+                throw "A folder cannot be copied into itself."
+            }
+            const base: String = FileSystem::baseName(path)
+            var target: String = FileSystem::join(directory, base)
+            var attempt: Int64 = 1
+            while (FileSystem::exists(target))
+            {
+                var label: String = base + " copy"
+                if (attempt > 1)
+                {
+                    label = base + " copy " + attempt.toString()
+                }
+                target = FileSystem::join(directory, label)
+                attempt = attempt + 1
+            }
+            FileSystem::copy(path, target)
+            this.undoStack.push(UndoStep::create("create", "", target))
+            this.announce("copy", target, path)
+            return target
+        }
+
+        /** Moves to the trash. Throws when the desktop has no trash for this location. */
+        fn delete(path: String) -> Nothing
+        {
+            FileSystem::trash(path)
+            this.announce("delete", path, "")
+        }
+
+        /** Deletes for good, with no way back. */
+        fn deleteForGood(path: String) -> Nothing
+        {
+            FileSystem::deleteTree(path)
+            this.announce("delete", path, "")
+        }
+
+        /** Whether there is something to undo. */
+        fn canUndo() -> Bool
+        {
+            return this.undoStack.len() > 0
+        }
+
+        /** A sentence about what undo() would do, "" when nothing. */
+        fn undoDescription() -> String
+        {
+            if (this.undoStack.len() == 0)
+            {
+                return ""
+            }
+            return this.undoStack[this.undoStack.len() - 1].describe()
+        }
+
+        /** Takes back the most recent create (to the trash), rename or move. Returns the sentence describing what it did. */
+        fn undo() -> String
+        {
+            if (this.undoStack.len() == 0)
+            {
+                throw "Nothing to undo."
+            }
+            const step: UndoStep = this.undoStack[this.undoStack.len() - 1]
+            var rest: List<UndoStep> = []
+            var i: Int64 = 0
+            while (i < this.undoStack.len() - 1)
+            {
+                rest.push(this.undoStack[i])
+                i = i + 1
+            }
+            const description: String = step.describe()
+            if (step.kind == "create")
+            {
+                // what was made may have been edited since: take it to the trash, not out of existence
+                FileSystem::trash(step.to)
+                this.announce("delete", step.to, "")
+            }
+            else
+            {
+                FileSystem::rename(step.to, step.from)
+                this.announce(step.kind, step.from, step.to)
+            }
+            this.undoStack = rest
+            return description
+        }
+    }
+}

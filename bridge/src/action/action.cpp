@@ -807,6 +807,24 @@ private:
     QMainWindow *m_window;
 };
 
+/// Shows a context menu of actions at a global position. Not modal: the menu is gone when an entry
+/// is chosen or the user clicks elsewhere, and the chosen action raises `action.triggered`.
+Reply popup(Bridge &, const QJsonObject &cmd)
+{
+    QString error;
+    if (!checkItems(cmd.value(QStringLiteral("items")), error)) {
+        return invalid(error);
+    }
+    if (!cmd.value(QStringLiteral("x")).isDouble() || !cmd.value(QStringLiteral("y")).isDouble()) {
+        return invalid(QStringLiteral("action.popup needs the global position \"x\" and \"y\""));
+    }
+    auto *menu = new QMenu;
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    fillMenu(menu, cmd.value(QStringLiteral("items")).toArray());
+    menu->popup(QPoint(cmd.value(QStringLiteral("x")).toInt(), cmd.value(QStringLiteral("y")).toInt()));
+    return Reply::success();
+}
+
 /// A shipped .rc file (or XML text) builds menus and toolbars of a window from the same actions.
 Reply loadUi(Bridge &b, const QJsonObject &cmd)
 {
@@ -929,6 +947,7 @@ void registerCommands(Bridge &bridge)
     reg("action.setMenuBar", setMenuBar);
     reg("action.setToolBar", setToolBar);
     reg("action.setContextMenu", setContextMenu);
+    reg("action.popup", popup);
     reg("action.loadUi", loadUi);
     reg("action.showShortcutsDialog", showShortcutsDialog);
     if (bridge.debugCommandsEnabled()) {

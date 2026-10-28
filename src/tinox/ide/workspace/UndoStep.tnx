@@ -1,0 +1,35 @@
+module tinox.ide.workspace
+
+namespace tinox.ide.workspace
+{
+    /** What it takes to take back one file operation. */
+    class UndoStep
+    {
+        /** "create" (undone by moving to the trash), "rename" or "move" (undone by moving back). */
+        var kind: String
+        /** Where the thing was. */
+        var from: String
+        /** Where it is now. */
+        var to: String
+
+        /** A step. */
+        fnc create(kind: String, from: String, to: String) -> UndoStep
+        {
+            return UndoStep { kind: kind, from: from, to: to }
+        }
+
+        /** A sentence for the status bar. */
+        fn describe() -> String
+        {
+            if (this.kind == "create")
+            {
+                return "move " + FileSystem::baseName(this.to) + " to the trash"
+            }
+            if (this.kind == "rename")
+            {
+                return "rename " + FileSystem::baseName(this.to) + " back to " + FileSystem::baseName(this.from)
+            }
+            return "move " + FileSystem::baseName(this.to) + " back to " + FileSystem::parent(this.from)
+        }
+    }
+}

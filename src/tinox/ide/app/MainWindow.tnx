@@ -20,7 +20,7 @@ namespace tinox.ide.app
      * again. Other modules fill the panels by key (the "projectTree" tree view, the "problems"
      * list, the "editors" tab widget, the "output" log) once those exist.
      *
-     * Store keys read here: ui.projectVisible, ui.bottomVisible, status.message.
+     * Store keys read here: ui.projectVisible, ui.bottomVisible, status.message, workspace.open, workspace.name.
      */
     class MainWindow
     {
@@ -38,24 +38,74 @@ namespace tinox.ide.app
         var mount: Mount
         /** The group window geometry and dock layout are saved under. */
         var stateGroup: String
+        /** Command ids of the File menu in order ("-" is a separator); feature modules add theirs with addFileMenu. */
+        var fileMenu: List<String>
 
         /** A window drawn from `store`, with menus made of the commands in `registry`. */
         fnc create(events: EventLoop, store: Store, bus: EventBus, registry: CommandRegistry, actions: Actions) -> MainWindow
         {
-            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow" }
+            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow", fileMenu: ["file_quit"] }
+        }
+
+        /** Puts commands into the File menu above Quit, followed by a separator. */
+        fn addFileMenu(items: List<String>) -> Nothing
+        {
+            var next: List<String> = []
+            var i: Int64 = 0
+            while (i < this.fileMenu.len() - 1)
+            {
+                next.push(this.fileMenu[i])
+                i = i + 1
+            }
+            if (next.len() > 0)
+            {
+                next.push("-")
+            }
+            i = 0
+            while (i < items.len())
+            {
+                next.push(items[i])
+                i = i + 1
+            }
+            next.push("-")
+            next.push(this.fileMenu[this.fileMenu.len() - 1])
+            this.fileMenu = next
+        }
+
+        /** The title of the window: the project and the application. */
+        fn title() -> String
+        {
+            if (this.store.getBool("workspace.open"))
+            {
+                return this.store.get("workspace.name") + " — Tinox IDE"
+            }
+            return "Tinox IDE"
         }
 
         /** The window as a tree, from the current state. */
         fn describe() -> Node
         {
-            return Ui::window("main", "Tinox IDE")
+            const open: Bool = this.store.getBool("workspace.open")
+            var projectTitle: String = "Project"
+            if (open)
+            {
+                projectTitle = this.store.get("workspace.name")
+            }
+            return Ui::window("main", this.title())
                 .size(1200, 760)
                 .add(Ui::toolBar("tools", "Main"))
-                .add(Ui::dock("project", "Project", "left")
+                .add(Ui::dock("project", projectTitle, "left")
                         .visible(this.store.getBool("ui.projectVisible"))
                         .add(Ui::column("projectPanel")
-                                .add(Ui::label("projectHint", "No folder open"))
-                                .add(Ui::treeView("projectTree"))))
+                                .add(Ui::label("projectHint", "No folder open").visible(!open))
+                                .add(Ui::button("openFolder", "Open Folder…").icon("folder-open").visible(!open))
+                                .add(Ui::treeView("projectTree")
+                                        .visible(open)
+                                        .bool("headerHidden", true)
+                                        .bool("uniformRowHeights", true)
+                                        .bool("dragDrop", true)
+                                        .bool("editable", true)
+                                        .str("selectionMode", "extended"))))
                 .add(Ui::dock("bottom", "Problems and Output", "bottom")
                         .visible(this.store.getBool("ui.bottomVisible"))
                         .add(Ui::tabs("bottomTabs")
@@ -77,7 +127,7 @@ namespace tinox.ide.app
         /** The menu bar: File and View, from commands of the registry. */
         fn menus() -> List<Menu>
         {
-            return [Menu::create("&File").id("file").action("file_quit"), Menu::create("&View").id("view").action("view.project").action("view.bottom")]
+            return [Menu::create("&File").id("file").actions(this.fileMenu), Menu::create("&View").id("view").action("view.project").action("view.bottom")]
         }
 
         /** Builds and shows the window: first render, menus, state changes, saved layout. Call after the registry is attached. */
@@ -93,6 +143,9 @@ namespace tinox.ide.app
             this.store.watch("ui.projectVisible", (value: String) => this.changed())
             this.store.watch("ui.bottomVisible", (value: String) => this.changed())
             this.store.watch("status.message", (value: String) => this.changed())
+            this.store.watch("workspace.open", (value: String) => this.changed())
+            this.store.watch("workspace.name", (value: String) => this.changed())
+            this.mount.onClick("openFolder", (ev: Event) => this.registry.execute("workspace.openFolder"))
             this.bus.subscribe("log.line", (m: BusMessage) => this.mount.append("output", m.str("line")))
             this.mount.restoreState(this.stateGroup)
             this.mount.show()

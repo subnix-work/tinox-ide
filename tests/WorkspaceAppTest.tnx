@@ -1,0 +1,464 @@
+import MockBridge
+import TempProject
+import tinox.core.process.Process
+import tinox.core.process.ProcessResult
+import tinox.ide.app.BusMessage
+import tinox.ide.app.EventBus
+import tinox.ide.IdeApp
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.EventLoop
+import tinox.ide.workspace.FileSystem
+import tinox.ide.workspace.FileTree
+import tinox.ide.workspace.GitStatus
+import tinox.ide.workspace.TreeEntry
+import tinox.ide.workspace.WorkspaceWatcher
+
+class WorkspaceAppTest
+{
+    fnc start(events: EventLoop, model: Int64) -> IdeApp
+    {
+        Bridge::init("test", "Test")
+        const mountObject: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("widget.mount", "{\"id\":" + mountObject.toString() + ",\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"openFolder\":63,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"welcome\":61,\"status\":62}}", "")
+        MockBridge::onCommand("model.create", "{\"id\":" + model.toString() + "}", "")
+        MockBridge::onCommand("config.read", "{\"exists\":false,\"value\":true}", "")
+        for name in ["model.attach", "model.reset", "model.insert", "model.remove", "model.update", "model.setChildren", "model.select", "model.expand", "config.write", "config.delete", "core.log", "action.define", "action.set", "action.setMenuBar", "action.setToolBar", "action.popup", "action.recentAdd", "widget.show", "widget.append", "dialog.input", "dialog.message", "dialog.openDirectory", "notify.send"]
+        {
+            MockBridge::onCommand(name, "", "")
+        }
+        MockBridge::onCommand("widget.update", "{\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"openFolder\":63,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"welcome\":61,\"status\":62}}", "")
+        MockBridge::onCommand("widget.restoreState", "{\"restored\":false}", "")
+        const app: IdeApp = IdeApp::start(events)
+        app.logger.toStderr = false
+        app.workspace.watchFiles = false // the tests push the bus messages the watcher would send
+        WorkspaceAppTest::drain()
+        return app
+    }
+
+    fnc drain() -> List<String>
+    {
+        var out: List<String> = []
+        var next: String = MockBridge::nextCommand()
+        while (next != "")
+        {
+            out.push(next)
+            next = MockBridge::nextCommand()
+        }
+        return out
+    }
+
+    fnc firstWith(all: List<String>, needle: String) -> String
+    {
+        var i: Int64 = 0
+        while (i < all.len())
+        {
+            if (all[i].contains(needle))
+            {
+                return all[i]
+            }
+            i = i + 1
+        }
+        return ""
+    }
+
+    /** Records a failed check by number, so a failing test says which one. */
+    fnc expect(failed: List<Int64>, number: Int64, ok: Bool) -> Nothing
+    {
+        if (!ok)
+        {
+            failed.push(number)
+        }
+    }
+
+    fnc numbers(list: List<Int64>) -> String
+    {
+        var out: String = ""
+        for n in list
+        {
+            out = out + n.toString() + " "
+        }
+        return out
+    }
+
+    fnc project() -> String
+    {
+        const root: String = TempProject::create()
+        TempProject::file(root, "tinox.toml", "[package]\nname = \"demo\"\n")
+        TempProject::file(root, ".gitignore", "build/\n")
+        TempProject::file(root, "src/App.tnx", "class App {}\n")
+        TempProject::file(root, "src/util/Strings.tnx", "x")
+        TempProject::file(root, "build/out.o", "x")
+        TempProject::file(root, "Alpha.txt", "a")
+        TempProject::file(root, "zeta.txt", "z")
+        return root
+    }
+
+    /** What the model's "model.get" would answer for a directory: the paths of the entries now on disk. */
+    fnc scriptChildren(app: IdeApp, directory: String) -> Nothing
+    {
+        var ids: List<String> = []
+        for entry in app.workspace.tree.entries(directory)
+        {
+            ids.push("\"" + entry.path + "\"")
+        }
+        MockBridge::onCommand("model.get", "{\"children\":[" + WorkspaceAppTest::Js_join(ids) + "]}", "")
+    }
+
+    fnc Js_join(parts: List<String>) -> String
+    {
+        var out: String = ""
+        var i: Int64 = 0
+        while (i < parts.len())
+        {
+            if (i > 0)
+            {
+                out = out + ","
+            }
+            out = out + parts[i]
+            i = i + 1
+        }
+        return out
+    }
+
+    @Test("opening a folder lists the top level, fills the store, announces it, remembers it, and closing undoes it")
+    fn testOpenAndClose() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = WorkspaceAppTest::start(events, MockBridge::createObject())
+        var heard: List<String> = []
+        app.bus.subscribe("workspace.opened", (m: BusMessage) => heard.push("opened " + m.str("name") + " " + m.bool("hasManifest").toString()))
+        app.bus.subscribe("workspace.closed", (m: BusMessage) => heard.push("closed"))
+        const root: String = WorkspaceAppTest::project()
+        app.workspace.open(root)
+        const sent: List<String> = WorkspaceAppTest::drain()
+        const reset: String = WorkspaceAppTest::firstWith(sent, "\"cmd\":\"model.reset\"")
+        const recent: String = WorkspaceAppTest::firstWith(sent, "\"cmd\":\"action.recentAdd\"")
+        const remembered: String = WorkspaceAppTest::firstWith(sent, "\"key\":\"last\"")
+        const redraw: String = WorkspaceAppTest::firstWith(sent, "\"title\":\"demo\"")
+        const opened: Bool = app.store.getBool("workspace.open") && app.store.get("workspace.path") == root && app.store.get("workspace.name") == "demo" && app.store.getBool("workspace.hasManifest") && app.workspace.opened
+        const enabled: Bool = app.registry.isEnabled("workspace.closeFolder") && app.registry.isEnabled("workspace.newFile") && !app.registry.isEnabled("workspace.rename")
+        var refused: String = ""
+        try
+        {
+            app.workspace.open(root + "/Alpha.txt")
+        }
+        catch (e: String)
+        {
+            refused = e
+        }
+        const stillOpen: Bool = app.workspace.opened && app.store.get("workspace.path") == root
+        app.workspace.close()
+        const closed: List<String> = WorkspaceAppTest::drain()
+        const afterClose: Bool = !app.store.getBool("workspace.open") && app.store.get("workspace.name") == "" && !app.registry.isEnabled("workspace.closeFolder")
+        TempProject::remove(root)
+        return opened && reset.contains("\"id\":\"" + root + "/src\"") && reset.contains("\"id\":\"" + root + "/Alpha.txt\"") && !reset.contains("build") && !reset.contains("\"id\":\"" + root + "/src/App.tnx\"") &&
+            recent.contains("\"id\":\"file_open_recent\"") && recent.contains("\"url\":\"" + root + "\"") && remembered.contains("\"value\":\"" + root + "\"") && redraw.contains("demo") &&
+            enabled && refused.contains("is not a folder") && stillOpen && heard.len() == 2 && heard[0] == "opened demo true" && heard[1] == "closed" &&
+            WorkspaceAppTest::firstWith(closed, "\"cmd\":\"model.reset\",\"target\":").contains("\"rows\":[]") && afterClose
+    }
+
+    @Test("a folder is listed when it is opened (lazy) and its .gitignore applies")
+    fn testLazyFolders() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const model: Int64 = MockBridge::createObject()
+        const app: IdeApp = WorkspaceAppTest::start(events, model)
+        const root: String = WorkspaceAppTest::project()
+        TempProject::file(root, "src/.gitignore", "Hidden.tnx\n")
+        TempProject::file(root, "src/Hidden.tnx", "x")
+        app.workspace.open(root)
+        WorkspaceAppTest::drain()
+        MockBridge::push("{\"type\":\"model.fetchChildren\",\"target\":" + model.toString() + ",\"id\":\"" + root + "/src\"}")
+        events.pump(1000)
+        const answer: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"cmd\":\"model.setChildren\"")
+        const loaded: Bool = app.workspace.tree.isLoaded(root + "/src") && !app.workspace.tree.isLoaded(root + "/src/util")
+        app.workspace.close()
+        TempProject::remove(root)
+        return answer.contains("\"parent\":\"" + root + "/src\"") && answer.contains("App.tnx") && answer.contains("\"id\":\"" + root + "/src/util\"") && !answer.contains("Hidden") && loaded
+    }
+
+    @Test("changes on disk reach the tree: new files appear at their sorted place, deleted ones go, recoloured by git")
+    fn testExternalChanges() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = WorkspaceAppTest::start(events, MockBridge::createObject())
+        const root: String = WorkspaceAppTest::project()
+        app.workspace.open(root)
+        WorkspaceAppTest::drain()
+        // before: src, Alpha.txt, tinox.toml, zeta.txt, .gitignore ... sorted as the tree sorts them
+        FileSystem::write(root + "/Beta.txt", "b")
+        FileSystem::deleteTree(root + "/zeta.txt")
+        TempProject::dir(root, "docs")
+        WorkspaceAppTest::scriptChildren(app, root)
+        // the model still has the old list: scripted from the old state
+        var old: List<String> = []
+        for path in [root + "/src", root + "/.gitignore", root + "/Alpha.txt", root + "/tinox.toml", root + "/zeta.txt"]
+        {
+            old.push("\"" + path + "\"")
+        }
+        MockBridge::onCommand("model.get", "{\"children\":[" + WorkspaceAppTest::Js_join(old) + "]}", "")
+        app.bus.publish("workspace.fsChanged", "{\"paths\":[\"" + root + "\"]}")
+        const sent: List<String> = WorkspaceAppTest::drain()
+        const removed: String = WorkspaceAppTest::firstWith(sent, "\"cmd\":\"model.remove\"")
+        var inserts: List<String> = []
+        for command in sent
+        {
+            if (command.contains("\"cmd\":\"model.insert\""))
+            {
+                inserts.push(command)
+            }
+        }
+        // an unrelated directory that was never loaded is ignored
+        app.bus.publish("workspace.fsChanged", "{\"paths\":[\"" + root + "/src/util\"]}")
+        const untouched: Bool = WorkspaceAppTest::drain().len() <= 1
+        // git paints the rows
+        app.workspace.gitStatusArrived(" M Alpha.txt\n?? Beta.txt\n")
+        WorkspaceAppTest::scriptChildren(app, root)
+        app.workspace.gitStatusArrived(" M Alpha.txt\n?? Beta.txt\n")
+        const painted: List<String> = WorkspaceAppTest::drain()
+        TempProject::remove(root)
+        app.workspace.close()
+        return removed.contains("\"ids\":[\"" + root + "/zeta.txt\"]") && inserts.len() == 2 && inserts[0].contains("\"index\":0") && inserts[0].contains("\"id\":\"" + root + "/docs\"") && inserts[1].contains("\"id\":\"" + root + "/Beta.txt\"") && untouched &&
+            WorkspaceAppTest::firstWith(painted, "\"id\":\"" + root + "/Alpha.txt\"").contains("#f67400") && WorkspaceAppTest::firstWith(painted, "\"id\":\"" + root + "/Beta.txt\"").contains("#27ae60")
+    }
+
+    /** Pushes the answer of the dialog with request number `req` and lets the handlers run. */
+    fnc answer(events: EventLoop, req: Int64, fields: String) -> Nothing
+    {
+        MockBridge::push("{\"type\":\"dialog.result\",\"dialog\":1,\"req\":" + req.toString() + "," + fields + "}")
+        events.pump(1000)
+    }
+
+    /** Pretends the user selected these paths in the tree. */
+    fnc pick(events: EventLoop, paths: List<String>) -> Nothing
+    {
+        var quoted: List<String> = []
+        for path in paths
+        {
+            quoted.push("\"" + path + "\"")
+        }
+        MockBridge::push("{\"type\":\"model.selectionChanged\",\"target\":55,\"key\":\"projectTree\",\"ids\":[" + WorkspaceAppTest::Js_join(quoted) + "]}")
+        events.pump(1000)
+    }
+
+    @Test("selection decides which commands are available, the context menu and activation")
+    fn testSelectionAndMenus() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = WorkspaceAppTest::start(events, MockBridge::createObject())
+        const root: String = WorkspaceAppTest::project()
+        app.workspace.open(root)
+        WorkspaceAppTest::drain()
+        const none: Bool = !app.registry.isEnabled("workspace.rename") && !app.registry.isEnabled("workspace.delete")
+        WorkspaceAppTest::pick(events, [root + "/Alpha.txt"])
+        const one: Bool = app.registry.isEnabled("workspace.rename") && app.registry.isEnabled("workspace.delete") && app.store.getInt("workspace.selectionCount") == 1 && app.workspace.targetDirectory() == root
+        WorkspaceAppTest::pick(events, [root + "/Alpha.txt", root + "/zeta.txt"])
+        const two: Bool = !app.registry.isEnabled("workspace.rename") && app.registry.isEnabled("workspace.delete") && app.workspace.selection().len() == 2
+        WorkspaceAppTest::pick(events, [root + "/src"])
+        const folder: Bool = app.workspace.targetDirectory() == root + "/src"
+        WorkspaceAppTest::drain()
+        MockBridge::push("{\"type\":\"model.contextMenuRequested\",\"target\":55,\"key\":\"projectTree\",\"id\":\"" + root + "/src\",\"x\":120,\"y\":240,\"ids\":[]}")
+        var opened: List<String> = []
+        app.bus.subscribe("file.openRequested", (m: BusMessage) => opened.push(m.str("path")))
+        MockBridge::push("{\"type\":\"model.activated\",\"target\":55,\"key\":\"projectTree\",\"id\":\"" + root + "/Alpha.txt\"}")
+        MockBridge::push("{\"type\":\"model.activated\",\"target\":55,\"key\":\"projectTree\",\"id\":\"" + root + "/src\"}")
+        events.pump(1000)
+        const popup: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"cmd\":\"action.popup\"")
+        app.workspace.close()
+        TempProject::remove(root)
+        var failed: List<Int64> = []
+        WorkspaceAppTest::expect(failed, 1, none)
+        WorkspaceAppTest::expect(failed, 2, one)
+        WorkspaceAppTest::expect(failed, 3, two)
+        WorkspaceAppTest::expect(failed, 4, folder)
+        WorkspaceAppTest::expect(failed, 5, popup.contains("\"workspace.rename\""))
+        WorkspaceAppTest::expect(failed, 6, popup.contains("\"x\":120"))
+        WorkspaceAppTest::expect(failed, 7, popup.contains("\"y\":240"))
+        WorkspaceAppTest::expect(failed, 8, opened.len() == 1)
+        WorkspaceAppTest::expect(failed, 9, opened[0] == root + "/Alpha.txt")
+        if (failed.len() > 0)
+        {
+            println("failed checks: " + WorkspaceAppTest::numbers(failed))
+        }
+        return failed.len() == 0
+    }
+
+    @Test("new file, rename, delete and undo go through dialogs and change the disk and the tree; bad input is explained")
+    fn testFileOperationsByDialog() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = WorkspaceAppTest::start(events, MockBridge::createObject())
+        const root: String = WorkspaceAppTest::project()
+        app.workspace.open(root)
+        WorkspaceAppTest::drain()
+        var opened: List<String> = []
+        app.bus.subscribe("file.openRequested", (m: BusMessage) => opened.push(FileSystem::baseName(m.str("path"))))
+        // new file in the project folder
+        app.registry.execute("workspace.newFile")
+        const askName: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"cmd\":\"dialog.input\"")
+        WorkspaceAppTest::scriptChildren(app, root)
+        WorkspaceAppTest::answer(events, 1, "\"accepted\":true,\"value\":\"Gamma.txt\"")
+        const created: Bool = FileSystem::exists(root + "/Gamma.txt")
+        const insert: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"cmd\":\"model.insert\"")
+        // a bad name is explained and nothing is created
+        app.registry.execute("workspace.newFile")
+        WorkspaceAppTest::drain()
+        WorkspaceAppTest::answer(events, 2, "\"accepted\":true,\"value\":\"a/b\"")
+        const bad: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"kind\":\"error\"")
+        WorkspaceAppTest::drain()
+        // cancel does nothing
+        app.registry.execute("workspace.newFile")
+        WorkspaceAppTest::drain()
+        WorkspaceAppTest::answer(events, 3, "\"accepted\":false,\"value\":null")
+        // (the answer to the bad name above also leaves commands behind, so look only at what the cancel causes)
+        const cancelled: Bool = WorkspaceAppTest::drain().len() == 0
+        // rename the selected file
+        WorkspaceAppTest::pick(events, [root + "/Alpha.txt"])
+        app.registry.execute("workspace.rename")
+        const askRename: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"cmd\":\"dialog.input\"")
+        WorkspaceAppTest::answer(events, 4, "\"accepted\":true,\"value\":\"Omega.txt\"")
+        const renamed: Bool = FileSystem::exists(root + "/Omega.txt") && !FileSystem::exists(root + "/Alpha.txt")
+        const canUndo: Bool = app.store.getBool("workspace.canUndo") && app.registry.isEnabled("workspace.undo")
+        const status: String = app.store.get("status.message")
+        // undo it
+        app.registry.execute("workspace.undo")
+        const undone: Bool = FileSystem::exists(root + "/Alpha.txt") && !FileSystem::exists(root + "/Omega.txt")
+        // delete for good, after the question
+        WorkspaceAppTest::drain()
+        WorkspaceAppTest::pick(events, [root + "/zeta.txt"])
+        app.registry.execute("workspace.delete")
+        const question: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "\"kind\":\"question\"")
+        WorkspaceAppTest::answer(events, 5, "\"button\":\"cancel\"")
+        const keptOnCancel: Bool = FileSystem::exists(root + "/zeta.txt")
+        app.registry.execute("workspace.delete")
+        WorkspaceAppTest::drain()
+        WorkspaceAppTest::answer(events, 6, "\"button\":\"delete\"")
+        const deleted: Bool = !FileSystem::exists(root + "/zeta.txt")
+        app.workspace.close()
+        TempProject::remove(root)
+        var failed: List<Int64> = []
+        WorkspaceAppTest::expect(failed, 1, askName.contains("\"title\":\"New File\""))
+        WorkspaceAppTest::expect(failed, 2, created)
+        WorkspaceAppTest::expect(failed, 3, insert.contains("Gamma.txt"))
+        WorkspaceAppTest::expect(failed, 4, bad.contains("not a valid file name"))
+        WorkspaceAppTest::expect(failed, 5, cancelled)
+        WorkspaceAppTest::expect(failed, 6, askRename.contains("\"value\":\"Alpha.txt\""))
+        WorkspaceAppTest::expect(failed, 7, renamed)
+        WorkspaceAppTest::expect(failed, 8, canUndo)
+        WorkspaceAppTest::expect(failed, 9, status.contains("Renamed Alpha.txt to Omega.txt"))
+        WorkspaceAppTest::expect(failed, 10, status.contains("Undo File Operation"))
+        WorkspaceAppTest::expect(failed, 11, undone)
+        WorkspaceAppTest::expect(failed, 12, question.contains("Move to &Trash"))
+        WorkspaceAppTest::expect(failed, 13, question.contains("Delete &Permanently"))
+        WorkspaceAppTest::expect(failed, 14, keptOnCancel)
+        WorkspaceAppTest::expect(failed, 15, deleted)
+        WorkspaceAppTest::expect(failed, 16, opened.len() == 1)
+        WorkspaceAppTest::expect(failed, 17, opened[0] == "Gamma.txt")
+        if (failed.len() > 0)
+        {
+            println("failed checks: " + WorkspaceAppTest::numbers(failed))
+        }
+        return failed.len() == 0
+    }
+
+    @Test("dropping rows on a folder moves the files, dropping files from outside copies them")
+    fn testDrop() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const model: Int64 = MockBridge::createObject()
+        const app: IdeApp = WorkspaceAppTest::start(events, model)
+        const root: String = WorkspaceAppTest::project()
+        const outside: String = TempProject::create()
+        TempProject::file(outside, "dropped.txt", "from outside")
+        app.workspace.open(root)
+        WorkspaceAppTest::drain()
+        const t: String = model.toString()
+        MockBridge::push("{\"type\":\"model.dropRequested\",\"target\":" + t + ",\"ids\":[\"" + root + "/Alpha.txt\"],\"urls\":[],\"files\":[],\"parent\":\"" + root + "/src\",\"index\":-1,\"action\":\"move\"}")
+        events.pump(1000)
+        const moved: Bool = FileSystem::exists(root + "/src/Alpha.txt") && !FileSystem::exists(root + "/Alpha.txt")
+        MockBridge::push("{\"type\":\"model.dropRequested\",\"target\":" + t + ",\"ids\":[],\"urls\":[\"file://" + outside + "/dropped.txt\"],\"files\":[\"" + outside + "/dropped.txt\"],\"parent\":null,\"index\":-1,\"action\":\"copy\"}")
+        events.pump(1000)
+        const copied: Bool = FileSystem::read(root + "/dropped.txt") == "from outside" && FileSystem::exists(outside + "/dropped.txt")
+        // a folder into itself is refused with an explanation
+        WorkspaceAppTest::drain()
+        MockBridge::push("{\"type\":\"model.dropRequested\",\"target\":" + t + ",\"ids\":[\"" + root + "/src\"],\"urls\":[],\"files\":[],\"parent\":\"" + root + "/src/util\",\"index\":-1,\"action\":\"move\"}")
+        events.pump(1000)
+        const refused: String = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "itself")
+        // an edit of a row's name in the tree renames the file
+        MockBridge::push("{\"type\":\"model.editRequested\",\"target\":" + t + ",\"id\":\"" + root + "/zeta.txt\",\"column\":0,\"text\":\"eta.txt\"}")
+        events.pump(1000)
+        const edited: Bool = FileSystem::exists(root + "/eta.txt") && !FileSystem::exists(root + "/zeta.txt")
+        app.workspace.close()
+        TempProject::remove(root)
+        TempProject::remove(outside)
+        return moved && copied && refused.contains("kind\":\"error") && edited
+    }
+
+    @Test("the watcher notices a new file in a watched directory and reports the directory on the bus")
+    fn testWatcher() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        const bus: EventBus = EventBus::create()
+        bus.attach(events)
+        var changed: List<String> = []
+        bus.subscribe("workspace.fsChanged", (m: BusMessage) => changed.push(m.text()))
+        const root: String = TempProject::create()
+        const watcher: WorkspaceWatcher = WorkspaceWatcher::start()
+        watcher.add(root)
+        FileSystem::write(root + "/appeared.txt", "x")
+        var waited: Int64 = 0
+        while (changed.len() == 0 && waited < 6000)
+        {
+            events.pump(200)
+            waited = waited + 200
+        }
+        const saw: Bool = changed.len() > 0 && changed[0].contains(root)
+        const mode: Bool = watcher.watching && watcher.fallbackReason == ""
+        watcher.remove(root)
+        watcher.stop()
+        TempProject::remove(root)
+        return saw && mode
+    }
+
+    @Test("git status of a real repository colours its files")
+    fn testGitReal() -> Bool
+    {
+        const root: String = TempProject::create()
+        const init: ProcessResult = Process::run(["git", "init", "-q", root], 10000, "")
+        TempProject::file(root, "tracked.txt", "a")
+        TempProject::file(root, "sub/new.txt", "b")
+        Process::run(["git", "-C", root, "add", "tracked.txt"], 10000, "")
+        const output: String = GitStatus::fetch(root)
+        const status: GitStatus = GitStatus::parse(output, root)
+        const notARepo: String = GitStatus::fetch("/")
+        TempProject::remove(root)
+        return init.exitCode == 0 && status.codeOf(root + "/tracked.txt") == "A" && status.codeOf(root + "/sub/new.txt") == "?" && status.codeOf(root + "/sub") == "?" && notARepo == ""
+    }
+
+    @Test("a file created outside the IDE appears in the tree without any action (real watcher end to end)")
+    fn testExternalWithRealWatcher() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        const app: IdeApp = WorkspaceAppTest::start(events, MockBridge::createObject())
+        app.workspace.watchFiles = true
+        const root: String = WorkspaceAppTest::project()
+        app.workspace.open(root)
+        const watching: Bool = app.workspace.watcher.watching && app.workspace.watcher.directories.contains(root)
+        WorkspaceAppTest::drain()
+        // what the model holds now (scripted), then the change
+        WorkspaceAppTest::scriptChildren(app, root)
+        FileSystem::write(root + "/Appeared.txt", "x")
+        var insert: String = ""
+        var waited: Int64 = 0
+        while (insert == "" && waited < 8000)
+        {
+            events.pump(200)
+            waited = waited + 200
+            insert = WorkspaceAppTest::firstWith(WorkspaceAppTest::drain(), "Appeared.txt")
+        }
+        app.workspace.close()
+        TempProject::remove(root)
+        return watching && insert.contains("\"cmd\":\"model.insert\"")
+    }
+}

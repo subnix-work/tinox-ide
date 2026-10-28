@@ -1,0 +1,182 @@
+module tinox.ide.workspace
+
+import tinox.core.process.Process
+import tinox.core.process.ProcessResult
+
+namespace tinox.ide.workspace
+{
+    /**
+     * The state of a project's files in git, from `git status --porcelain`: which files are
+     * modified, added, untracked or conflicted. Used to colour the project tree. A folder that is
+     * not a git repository, or a machine without git, simply has no status.
+     *
+     * A directory takes the "strongest" status of anything below it, so a collapsed folder shows
+     * that something inside changed.
+     */
+    class GitStatus
+    {
+        /** The project folder the paths are below. */
+        var root: String
+        /** Untracked directories (git lists them as one entry); everything below them is untracked too. */
+        var untrackedDirectories: Map<String, Bool>
+        /** The status code of each changed path: "M" modified, "A" added, "?" untracked, "U" conflict, "D" deleted. */
+        var codes: Map<String, String>
+
+        /** No status. */
+        fnc empty(root: String) -> GitStatus
+        {
+            return GitStatus { root: FileSystem::withoutTrailingSlash(root), codes: Map::new(), untrackedDirectories: Map::new() }
+        }
+
+        /** Runs `git status` in the project folder; empty when it is not a repository or git is missing. Takes a moment on a big repository: run it in the background. */
+        fnc fetch(root: String) -> String
+        {
+            try
+            {
+                const result: ProcessResult = Process::runWithOptions(["git", "status", "--porcelain=v1", "--untracked-files=normal"], 20000, "", root, [])
+                if (result.exitCode == 0 && !result.timedOut)
+                {
+                    return result.stdout
+                }
+            }
+            catch (e: String)
+            {
+                return ""
+            }
+            return ""
+        }
+
+        /** Reads the output of `git status --porcelain=v1` for a repository whose top is `root`. */
+        fnc parse(output: String, root: String) -> GitStatus
+        {
+            const status: GitStatus = GitStatus::empty(root)
+            for line in output.split("\n")
+            {
+                // (no `continue` in for loops: subnix-work/tinox#513)
+                if (line.len() >= 4)
+                {
+                    if (line.startsWith("??") && line.endsWith("/"))
+                    {
+                        status.untrackedDirectories.set(FileSystem::join(status.root, FileSystem::withoutTrailingSlash(GitStatus::pathOf(line))), true)
+                    }
+                    status.mark(FileSystem::join(status.root, FileSystem::withoutTrailingSlash(GitStatus::pathOf(line))), GitStatus::codeFor(line.substring(0, 2)))
+                }
+            }
+            return status
+        }
+
+        /** The path in a porcelain line: after the two status letters and a space; for a rename, the new name; quotes removed. */
+        fnc pathOf(line: String) -> String
+        {
+            var name: String = line.substring(3, line.len())
+            const arrow: Int64 = name.indexOf(" -> ")
+            if (arrow >= 0)
+            {
+                name = name.substring(arrow + 4, name.len())
+            }
+            if (name.startsWith("\"") && name.endsWith("\"") && name.len() >= 2)
+            {
+                name = name.substring(1, name.len() - 1)
+            }
+            return name
+        }
+
+        /** The code for the two status letters of a porcelain line. */
+        fnc codeFor(xy: String) -> String
+        {
+            if (xy == "??")
+            {
+                return "?"
+            }
+            if (xy.contains("U") || xy == "AA" || xy == "DD")
+            {
+                return "U"
+            }
+            if (xy.contains("A"))
+            {
+                return "A"
+            }
+            if (xy.contains("D"))
+            {
+                return "D"
+            }
+            return "M"
+        }
+
+        /** Records a status for a path and, if it is stronger, for the directories above it. */
+        fn mark(path: String, code: String) -> Nothing
+        {
+            this.codes.set(path, code)
+            var dir: String = FileSystem::parent(path)
+            while (dir.len() > this.root.len() && FileSystem::isInside(dir, this.root))
+            {
+                if (!this.codes.contains(dir) || GitStatus::rank(code) > GitStatus::rank(this.codes.get(dir)))
+                {
+                    this.codes.set(dir, code)
+                }
+                dir = FileSystem::parent(dir)
+            }
+        }
+
+        /** How serious a status is: a conflict beats a modification beats an untracked file. */
+        fnc rank(code: String) -> Int64
+        {
+            if (code == "U")
+            {
+                return 4
+            }
+            if (code == "M" || code == "D")
+            {
+                return 3
+            }
+            if (code == "A")
+            {
+                return 2
+            }
+            return 1
+        }
+
+        /** The status code of a path, "" when it is unchanged. */
+        fn codeOf(path: String) -> String
+        {
+            if (this.codes.contains(path))
+            {
+                return this.codes.get(path)
+            }
+            var dir: String = FileSystem::parent(path)
+            while (dir.len() > this.root.len() && FileSystem::isInside(dir, this.root))
+            {
+                if (this.untrackedDirectories.contains(dir))
+                {
+                    return "?"
+                }
+                dir = FileSystem::parent(dir)
+            }
+            return ""
+        }
+
+        /** The colour the tree uses for a status code, "" for none. Colours that read on light and dark themes. */
+        fnc colorFor(code: String) -> String
+        {
+            if (code == "M" || code == "D")
+            {
+                return "#f67400"
+            }
+            if (code == "A" || code == "?")
+            {
+                return "#27ae60"
+            }
+            if (code == "U")
+            {
+                return "#da4453"
+            }
+            return ""
+        }
+
+        /** How many paths have a status. */
+        fn count() -> Int64
+        {
+            return this.codes.keys().len()
+        }
+    }
+}

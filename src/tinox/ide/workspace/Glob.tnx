@@ -1,0 +1,87 @@
+module tinox.ide.workspace
+
+namespace tinox.ide.workspace
+{
+    /**
+     * Glob matching as .gitignore uses it: `*` matches any run of characters except a slash,
+     * `**` any run including slashes, `?` one character except a slash, and a backslash makes
+     * the next character literal. Character classes (`[abc]`) are not supported.
+     */
+    class Glob
+    {
+        /** Whether `text` matches `pattern` as a whole. */
+        fnc matches(pattern: String, text: String) -> Bool
+        {
+            return Glob::step(pattern, 0, text, 0)
+        }
+
+        /** Matches pattern[p..] against text[t..]. */
+        fnc step(pattern: String, p: Int64, text: String, t: Int64) -> Bool
+        {
+            var pi: Int64 = p
+            var ti: Int64 = t
+            while (pi < pattern.len())
+            {
+                const c: String = pattern.substring(pi, pi + 1)
+                if (c == "*")
+                {
+                    var crossesSlashes: Bool = false
+                    var next: Int64 = pi + 1
+                    if (next < pattern.len() && pattern.substring(next, next + 1) == "*")
+                    {
+                        crossesSlashes = true
+                        while (next < pattern.len() && pattern.substring(next, next + 1) == "*")
+                        {
+                            next = next + 1
+                        }
+                    }
+                    // try every length of the run, shortest first
+                    var end: Int64 = ti
+                    while (true)
+                    {
+                        if (Glob::step(pattern, next, text, end))
+                        {
+                            return true
+                        }
+                        if (end >= text.len())
+                        {
+                            return false
+                        }
+                        if (!crossesSlashes && text.substring(end, end + 1) == "/")
+                        {
+                            return false
+                        }
+                        end = end + 1
+                    }
+                }
+                if (ti >= text.len())
+                {
+                    return false
+                }
+                const ch: String = text.substring(ti, ti + 1)
+                if (c == "?")
+                {
+                    if (ch == "/")
+                    {
+                        return false
+                    }
+                }
+                else if (c == "\\" && pi + 1 < pattern.len())
+                {
+                    pi = pi + 1
+                    if (pattern.substring(pi, pi + 1) != ch)
+                    {
+                        return false
+                    }
+                }
+                else if (c != ch)
+                {
+                    return false
+                }
+                pi = pi + 1
+                ti = ti + 1
+            }
+            return ti == text.len()
+        }
+    }
+}
