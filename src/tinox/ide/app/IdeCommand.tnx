@@ -113,18 +113,7 @@ namespace tinox.ide.app
         /** The title without its mnemonic `&`, as the palette shows it. */
         fn label() -> String
         {
-            var out: String = ""
-            var i: Int64 = 0
-            while (i < this.title.len())
-            {
-                const ch: String = this.title.substring(i, i + 1)
-                if (ch != "&")
-                {
-                    out = out + ch
-                }
-                i = i + 1
-            }
-            return out
+            return this.title.replace("&", "")
         }
     }
 }

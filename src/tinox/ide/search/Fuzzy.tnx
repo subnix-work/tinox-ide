@@ -1,0 +1,70 @@
+module tinox.ide.search
+
+import tinox.core.regex.Regex
+
+namespace tinox.ide.search
+{
+    /**
+     * Fuzzy matching for quick open and the command palette: the characters of the query must
+     * appear in the candidate in order (case does not matter). The score rewards runs of
+     * consecutive characters, matches at the start of a word (after `/`, `.`, `_`, `-` or a
+     * space) and an early start; a longer candidate scores a little less.
+     */
+    class Fuzzy
+    {
+        /** The score of `query` in `text`, or -1 when it does not match. Both must be lower case already (see lower()). An empty query matches everything with score 0. */
+        fnc score(query: String, text: String) -> Int64
+        {
+            const n: Int64 = query.len()
+            if (n == 0)
+            {
+                return 0
+            }
+            const m: Int64 = text.len()
+            var total: Int64 = 0
+            var qi: Int64 = 0
+            var previous: Int64 = -2
+            var i: Int64 = 0
+            while (i < m && qi < n)
+            {
+                const ch: String = text.substring(i, i + 1)
+                if (ch == query.substring(qi, qi + 1))
+                {
+                    total = total + 10
+                    if (previous == i - 1)
+                    {
+                        total = total + 15
+                    }
+                    if (i == 0 || Fuzzy::boundary(text.substring(i - 1, i)))
+                    {
+                        total = total + 12
+                    }
+                    if (qi == 0)
+                    {
+                        total = total - i
+                    }
+                    previous = i
+                    qi = qi + 1
+                }
+                i = i + 1
+            }
+            if (qi < n)
+            {
+                return -1
+            }
+            return total * 4 - m / 8
+        }
+
+        /** Whether a character separates words. */
+        fnc boundary(ch: String) -> Bool
+        {
+            return ch == "/" || ch == "." || ch == "_" || ch == "-" || ch == " " || ch == ":"
+        }
+
+        /** The text as score() wants it: lower case, and every character outside ASCII replaced by "_" (string offsets are bytes, so a character cannot be taken apart; subnix-work/tinox#566). */
+        fnc lower(text: String) -> String
+        {
+            return Regex::replaceAll("[^ -~]", text.toLower(), "_")
+        }
+    }
+}

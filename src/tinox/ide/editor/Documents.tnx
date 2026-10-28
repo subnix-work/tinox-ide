@@ -251,6 +251,54 @@ namespace tinox.ide.editor
             }
         }
 
+        /** Opens a file with the cursor at a position (line and column count from 0); a failure is shown to the user. */
+        fn openAt(path: String, line: Int64, column: Int64) -> Nothing
+        {
+            try
+            {
+                const f: OpenFile = this.open(path)
+                f.line = line
+                f.character = column
+                f.views[0].setCursor(Position::create(line, column))
+            }
+            catch (e: String)
+            {
+                this.logger.warn("could not open " + path + " at " + line.toString() + ": " + e)
+                this.dialogs.error("Open File", "Cannot open " + path + ":\n" + e)
+            }
+        }
+
+        /** Whether a file is open in a tab. */
+        fn isOpen(path: String) -> Bool
+        {
+            return this.indexOf(path) >= 0
+        }
+
+        /** The text of a file as the user sees it: the open document, or else the file on disk. */
+        fn textOf(path: String) -> String
+        {
+            const i: Int64 = this.indexOf(path)
+            if (i >= 0)
+            {
+                return this.files[i].doc.text()
+            }
+            return FileSystem::read(path)
+        }
+
+        /** Replaces the text of a file: an open document gets it as an edit the user can undo and save, a file on disk is written. */
+        fn writeText(path: String, text: String) -> Nothing
+        {
+            const i: Int64 = this.indexOf(path)
+            if (i >= 0)
+            {
+                this.files[i].doc.setText(text)
+            }
+            else
+            {
+                FileSystem::write(path, text)
+            }
+        }
+
         /** Opens the file in a new tab, or switches to its tab when it is open already. Throws when it cannot be read. */
         fn open(path: String) -> OpenFile
         {

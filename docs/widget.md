@@ -68,7 +68,14 @@ window ends the loop (`docs/bridge-core.md`); a main window asks first through `
 `widget.currentChanged {index}` (combo box, tabs, stack), `widget.tabMoved {from, to}` (the user dragged a
 tab), `widget.closeRequested {index?, via?}` (window close button; tab close button with its index;
 `via: "middle"` when a tab was closed with the middle mouse button), `widget.dockVisibilityChanged {visible}`,
-`widget.splitterMoved {sizes}`.
+`widget.splitterMoved {sizes}`, `widget.navKey {direction}` (`up`, `down`, `pageUp`, `pageDown` in a
+`QLineEdit` with `navKeys: true`, which then does not move its cursor), `widget.dismissed` (a popup was hidden).
+
+### Popups
+
+A top-level `QWidget` with `popup: true` is a `Qt::Popup`: `widget.show` centres it horizontally in the upper
+part of the active window, Escape or a click outside hides it and raises `widget.dismissed`. Quick open and the command
+palette are such popups (`tinox.ide.search.Picker`).
 
 ## The diff
 

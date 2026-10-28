@@ -1,0 +1,23 @@
+module tinox.ide.search
+
+namespace tinox.ide.search
+{
+    /** One line of a Picker: what is chosen (`id`), what is shown and a second, dimmer column. */
+    class PickItem
+    {
+        /** What the chooser gets back: a path, a command id. */
+        var id: String
+        /** The main text. */
+        var label: String
+        /** The second column (a folder, a shortcut). */
+        var detail: String
+        /** A Breeze icon name, "" for none. */
+        var icon: String
+
+        /** An item. */
+        fnc create(id: String, label: String, detail: String, icon: String) -> PickItem
+        {
+            return PickItem { id: id, label: label, detail: detail, icon: icon }
+        }
+    }
+}

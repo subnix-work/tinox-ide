@@ -1,0 +1,451 @@
+module tinox.ide.search
+
+import tinox.core.json
+import tinox.ide.app.BusMessage
+import tinox.ide.app.CommandContext
+import tinox.ide.app.CommandRegistry
+import tinox.ide.app.EventBus
+import tinox.ide.app.FileSystem
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.Logger
+import tinox.ide.app.MainWindow
+import tinox.ide.app.Store
+import tinox.ide.editor.Documents
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Dialogs
+import tinox.ide.ui.ItemView
+import tinox.ide.ui.Js
+import tinox.ide.ui.Model
+import tinox.ide.ui.Mount
+import tinox.ide.ui.Node
+import tinox.ide.ui.Row
+import tinox.ide.ui.Ui
+import tinox.ide.workspace.WatchControl
+
+namespace tinox.ide.search
+{
+    /**
+     * Find in files and replace in files, in the "Search" tab of the bottom panel.
+     *
+     * A search runs in a background task (FileSearch) and streams its matches to the results
+     * tree, grouped by file, while it goes on; a new search or Cancel ends the old one at once.
+     * A double click on a result opens the file at that line. Replace All asks first, showing
+     * what would change, then changes the files (open ones as an editor edit that stays unsaved,
+     * the others on disk). Undo Replace puts the old text back in every file that still has the
+     * text the replacement wrote.
+     *
+     * Store keys written: search.status (a line of text), search.running, search.canReplace,
+     * search.canUndo.
+     */
+    class FindInFiles
+    {
+        /** The loop events arrive on. */
+        var events: EventLoop
+        /** Messages between modules. */
+        var bus: EventBus
+        /** The application state. */
+        var store: Store
+        /** The commands. */
+        var registry: CommandRegistry
+        /** Questions to the user. */
+        var dialogs: Dialogs
+        /** The window whose bottom panel this fills. */
+        var window: MainWindow
+        /** The open files. */
+        var documents: Documents
+        /** The log. */
+        var logger: Logger
+        /** The results tree. */
+        var model: Model
+        /** What to look for. */
+        var query: String
+        /** What to put instead. */
+        var replacement: String
+        /** Whether upper and lower case differ. */
+        var caseSensitive: Bool
+        /** Whether the query is a regular expression. */
+        var useRegex: Bool
+        /** Whether ripgrep is used when it is installed (the tests switch it off). */
+        var useRipgrep: Bool
+        /** Matches the search stops after. */
+        var limit: Int64
+        /** The number of the current search; messages of older ones are dropped. */
+        var searchId: Int64
+        /** Ends the running search. */
+        var control: WatchControl
+        /** Every match so far. */
+        var matches: List<SearchMatch>
+        /** The files with matches, in the order they came. */
+        var shownFiles: List<String>
+        /** The files that have a row in the tree. */
+        var fileRows: Map<String, Bool>
+        /** What the last Replace All changed. */
+        var replaced: List<ReplacedFile>
+
+        /** The search for a window. */
+        fnc create(events: EventLoop, bus: EventBus, store: Store, registry: CommandRegistry, dialogs: Dialogs, window: MainWindow, documents: Documents, logger: Logger) -> FindInFiles
+        {
+            return FindInFiles { events: events, bus: bus, store: store, registry: registry, dialogs: dialogs, window: window, documents: documents, logger: logger, model: Model::create(events, ["Match"], false), query: "", replacement: "", caseSensitive: false, useRegex: false, useRipgrep: true, limit: 5000, searchId: 0, control: WatchControl::create(), matches: [], shownFiles: [], fileRows: Map::new(), replaced: [] }
+        }
+
+        // ---------------------------------------------------------------- wiring
+
+        /** Adds the panel and the commands. Call before the window starts and the registry is attached. */
+        fn install() -> Nothing
+        {
+            this.window.addBottomPanel((s: Store) => this.panel())
+            this.window.redrawOn("search.status")
+            this.window.redrawOn("search.running")
+            this.window.redrawOn("search.canReplace")
+            this.registry.registerAll([
+                IdeCommand::create("search.find", "&Find in Files…").icon("edit-find").shortcut("Ctrl+Shift+F").category("Search").enabledWhen((s: Store) => s.getBool("workspace.open")).run((c: CommandContext) => this.show("searchQuery")),
+                IdeCommand::create("search.replace", "Rep&lace in Files…").icon("edit-find-replace").shortcut("Ctrl+Shift+H").category("Search").enabledWhen((s: Store) => s.getBool("workspace.open")).run((c: CommandContext) => this.show("searchReplace")),
+                IdeCommand::create("search.cancel", "Cancel Search").icon("process-stop").category("Search").enabledWhen((s: Store) => s.getBool("search.running")).run((c: CommandContext) => this.cancel()),
+                IdeCommand::create("search.undoReplace", "&Undo Replace in Files").icon("edit-undo").category("Search").enabledWhen((s: Store) => s.getBool("search.canUndo")).run((c: CommandContext) => this.undoReplace())
+            ])
+        }
+
+        /** The menu entries. */
+        fn menuItems() -> List<String>
+        {
+            return ["search.find", "search.replace", "search.cancel", "search.undoReplace"]
+        }
+
+        /** Connects the widgets and the bus. Call once the window is mounted. */
+        fn bind() -> Nothing
+        {
+            const mount: Mount = this.window.mount
+            this.model.attach(mount.idOf("searchResults"))
+            mount.onText("searchQuery", (text: String) => this.setQuery(text))
+            mount.onText("searchReplace", (text: String) => this.setReplacement(text))
+            mount.onEnter("searchQuery", (ev: Event) => this.start())
+            mount.onClick("searchGo", (ev: Event) => this.start())
+            mount.onClick("searchCancel", (ev: Event) => this.cancel())
+            mount.onClick("searchReplaceAll", (ev: Event) => this.replaceAll())
+            mount.onClick("searchCase", (ev: Event) => this.setCase(ev.bool("checked")))
+            mount.onClick("searchRegex", (ev: Event) => this.setRegex(ev.bool("checked")))
+            mount.onActivated("searchResults", (id: String) => this.activated(id))
+            this.bus.subscribe("search.batch", (m: BusMessage) => this.batch(m))
+            this.bus.subscribe("search.finished", (m: BusMessage) => this.finished(m))
+            this.bus.subscribe("workspace.closed", (m: BusMessage) => this.reset())
+            this.publish()
+        }
+
+        /** The Search tab. */
+        fn panel() -> Node
+        {
+            return Ui::column("searchPanel")
+                .add(Ui::row("searchBar")
+                        .add(Ui::lineEdit("searchQuery", this.query).str("placeholder", "Find in files").bool("clearButton", true).stretch(3))
+                        .add(Ui::checkBox("searchCase", "Aa").bool("checked", this.caseSensitive).toolTip("Match case"))
+                        .add(Ui::checkBox("searchRegex", ".*").bool("checked", this.useRegex).toolTip("Regular expression"))
+                        .add(Ui::button("searchGo", "Search").icon("edit-find"))
+                        .add(Ui::button("searchCancel", "Cancel").icon("process-stop").enabled(this.store.getBool("search.running"))))
+                .add(Ui::row("replaceBar")
+                        .add(Ui::lineEdit("searchReplace", this.replacement).str("placeholder", "Replace with").bool("clearButton", true).stretch(3))
+                        .add(Ui::button("searchReplaceAll", "Replace All").icon("edit-find-replace").enabled(this.store.getBool("search.canReplace")))
+                        .add(Ui::label("searchStatus", this.store.get("search.status")).stretch(2)))
+                .add(Ui::treeView("searchResults").bool("headerHidden", true).bool("uniformRowHeights", true).str("selectionMode", "single").stretch(1))
+                .inTab("Search", "edit-find")
+        }
+
+        /** Brings the Search tab forward and puts the cursor into a field. */
+        fn show(field: String) -> Nothing
+        {
+            this.window.showBottomTab(2)
+            this.window.mount.focus(field)
+        }
+
+        /** Remembers the text of the query field. */
+        fn setQuery(text: String) -> Nothing
+        {
+            this.query = text
+        }
+
+        /** Remembers the text of the replacement field. */
+        fn setReplacement(text: String) -> Nothing
+        {
+            this.replacement = text
+        }
+
+        /** The Match case box. */
+        fn setCase(value: Bool) -> Nothing
+        {
+            this.caseSensitive = value
+        }
+
+        /** The Regular expression box. */
+        fn setRegex(value: Bool) -> Nothing
+        {
+            this.useRegex = value
+        }
+
+        /** Writes the derived state into the store. */
+        fn publish() -> Nothing
+        {
+            this.store.setBool("search.canReplace", this.matches.len() > 0 && !this.store.getBool("search.running"))
+            this.store.setBool("search.canUndo", this.replaced.len() > 0)
+            this.registry.refresh()
+        }
+
+        // ---------------------------------------------------------------- searching
+
+        /** Starts a search for the query field's text, ending the one that runs. */
+        fn start() -> Nothing
+        {
+            if (this.query == "")
+            {
+                return
+            }
+            if (!this.store.getBool("workspace.open"))
+            {
+                this.store.set("search.status", "Open a folder first")
+                return
+            }
+            this.control.stopped = true
+            this.reset()
+            this.searchId = this.searchId + 1
+            this.control = WatchControl::create()
+            this.store.setBool("search.running", true)
+            this.store.set("search.status", "Searching…")
+            spawn FileSearch::run(this.searchId, this.store.get("workspace.path"), this.query, this.useRegex, this.caseSensitive, this.useRipgrep, this.limit, this.control)
+            this.publish()
+        }
+
+        /** Ends the running search; what was found stays. */
+        fn cancel() -> Nothing
+        {
+            if (this.store.getBool("search.running"))
+            {
+                this.control.stopped = true
+                this.store.setBool("search.running", false)
+                this.store.set("search.status", this.matches.len().toString() + " matches (cancelled)")
+                this.searchId = this.searchId + 1
+                this.publish()
+            }
+        }
+
+        /** Empties the results. */
+        fn reset() -> Nothing
+        {
+            this.matches = []
+            this.shownFiles = []
+            this.fileRows = Map::new()
+            this.model.reset([])
+            this.store.set("search.status", "")
+            this.publish()
+        }
+
+        /** A batch of matches arrived from the search task. */
+        fn batch(m: BusMessage) -> Nothing
+        {
+            if (m.int("id") != this.searchId)
+            {
+                return
+            }
+            for item in m.payload.getField("matches").asList()
+            {
+                var hits: List<String> = []
+                for hit in item.getField("hits").asList()
+                {
+                    hits.push(hit.getString())
+                }
+                this.add(SearchMatch::create(item.getField("path").getString(), item.getField("line").getInt(), item.getField("col").getInt(), item.getField("text").getString(), hits))
+            }
+            this.store.set("search.status", this.matches.len().toString() + " matches in " + this.shownFiles.len().toString() + " files…")
+        }
+
+        /** Shows one match under its file. */
+        fn add(found: SearchMatch) -> Nothing
+        {
+            if (!this.fileRows.contains(found.path))
+            {
+                var name: String = found.path
+                const root: String = this.store.get("workspace.path") + "/"
+                if (name.startsWith(root))
+                {
+                    name = name.substring(root.len(), name.len())
+                }
+                this.model.insert("", this.shownFiles.len(), [Row::create(found.path, name).icon("text-x-generic").bold(true)])
+                this.shownFiles.push(found.path)
+                this.fileRows.set(found.path, true)
+            }
+            this.model.append(found.path, [Row::create(found.rowId(), found.preview())])
+            this.matches.push(found)
+        }
+
+        /** The search ended. */
+        fn finished(m: BusMessage) -> Nothing
+        {
+            if (m.int("id") != this.searchId)
+            {
+                return
+            }
+            this.store.setBool("search.running", false)
+            var text: String = m.int("count").toString() + " matches in " + m.int("files").toString() + " files"
+            if (m.bool("truncated"))
+            {
+                text = text + " (stopped at the limit)"
+            }
+            if (m.str("error") != "")
+            {
+                text = "Search failed: " + m.str("error")
+            }
+            this.store.set("search.status", text)
+            this.publish()
+        }
+
+        /** A result was activated: open the file at the line. */
+        fn activated(id: String) -> Nothing
+        {
+            for found in this.matches
+            {
+                if (found.rowId() == id)
+                {
+                    this.documents.openAt(found.path, found.line - 1, found.column)
+                    return
+                }
+            }
+            if (FileSystem::exists(id) && !FileSystem::isDirectory(id))
+            {
+                this.documents.openAt(id, 0, 0)
+            }
+        }
+
+        // ---------------------------------------------------------------- replacing
+
+        /** What Replace All would do, as lines of text: path, line, old and new text (the first `max`). */
+        fn preview(max: Int64) -> String
+        {
+            var lines: List<String> = []
+            for found in this.matches
+            {
+                if (lines.len() < max)
+                {
+                    lines.push(found.path + ":" + found.line.toString() + "\n    - " + found.text.trim() + "\n    + " + found.replaced(this.replacement).trim())
+                }
+            }
+            if (this.matches.len() > max)
+            {
+                lines.push("… and " + (this.matches.len() - max).toString() + " more")
+            }
+            return Js::join(lines, "\n")
+        }
+
+        /** Asks, with a preview, then replaces in all found lines. */
+        fn replaceAll() -> Nothing
+        {
+            if (this.matches.len() == 0 || this.store.getBool("search.running"))
+            {
+                return
+            }
+            const count: Int64 = this.matches.len()
+            this.dialogs.confirm("Replace in Files", "Replace " + count.toString() + " matches in " + this.shownFiles.len().toString() + " files with \"" + this.replacement + "\"?", this.preview(15), (yes: Bool) => this.replaceIf(yes))
+        }
+
+        /** Replaces when the user agreed. */
+        fn replaceIf(yes: Bool) -> Nothing
+        {
+            if (yes)
+            {
+                this.replaceNow()
+            }
+        }
+
+        /** Replaces without asking. Lines that changed since the search are left alone. */
+        fn replaceNow() -> Nothing
+        {
+            var done: List<ReplacedFile> = []
+            var changedLines: Int64 = 0
+            var skipped: Int64 = 0
+            for path in this.shownFiles
+            {
+                try
+                {
+                    const before: String = this.documents.textOf(path)
+                    var lines: List<String> = before.split("\n")
+                    var touched: Bool = false
+                    for found in this.matches
+                    {
+                        if (found.path == path)
+                        {
+                            const at: Int64 = found.line - 1
+                            if (at < lines.len() && FileSearch::chomp(lines[at]) == found.text)
+                            {
+                                const ending: String = lines[at].substring(found.text.len(), lines[at].len())
+                                lines[at] = found.replaced(this.replacement) + ending
+                                changedLines = changedLines + 1
+                                touched = true
+                            }
+                            else
+                            {
+                                skipped = skipped + 1
+                            }
+                        }
+                    }
+                    if (touched)
+                    {
+                        const after: String = Js::join(lines, "\n")
+                        this.documents.writeText(path, after)
+                        done.push(ReplacedFile::create(path, before, after))
+                    }
+                }
+                catch (e: String)
+                {
+                    this.logger.warn("could not replace in " + path + ": " + e)
+                    skipped = skipped + 1
+                }
+            }
+            this.replaced = done
+            var text: String = "Replaced " + changedLines.toString() + " lines in " + done.len().toString() + " files"
+            if (skipped > 0)
+            {
+                text = text + " (" + skipped.toString() + " skipped: changed since the search)"
+            }
+            this.reset()
+            this.store.set("search.status", text)
+            this.publish()
+        }
+
+        /** Puts the old text back in the files of the last Replace All that still have the replaced text. */
+        fn undoReplace() -> Nothing
+        {
+            var restored: Int64 = 0
+            var skipped: Int64 = 0
+            for file in this.replaced
+            {
+                try
+                {
+                    if (this.documents.textOf(file.path) == file.after)
+                    {
+                        this.documents.writeText(file.path, file.before)
+                        restored = restored + 1
+                    }
+                    else
+                    {
+                        skipped = skipped + 1
+                    }
+                }
+                catch (e: String)
+                {
+                    skipped = skipped + 1
+                }
+            }
+            this.replaced = []
+            var text: String = "Restored " + restored.toString() + " files"
+            if (skipped > 0)
+            {
+                text = text + " (" + skipped.toString() + " changed since, left alone)"
+            }
+            this.store.set("search.status", text)
+            this.publish()
+        }
+
+        /** The program is ending: ends a running search. No call to the bridge. */
+        fn shutdown() -> Nothing
+        {
+            this.control.stopped = true
+        }
+    }
+}

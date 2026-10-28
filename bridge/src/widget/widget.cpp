@@ -17,6 +17,7 @@
 #include <QHeaderView>
 #include <QIcon>
 #include <QJsonArray>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
@@ -214,7 +215,17 @@ const std::map<QString, TypeDef> &types()
     static const std::map<QString, TypeDef> table = [] {
         std::map<QString, TypeDef> m;
 
-        m.emplace(QStringLiteral("QWidget"), makeType<QWidget>());
+        {
+            TypeDef t = makeType<QWidget>();
+            // a top-level widget that floats over the main window and closes on Escape or a click outside (quick open, palette)
+            add<QWidget>(t, "popup", Kind::Bool, false, [](QWidget *w, const QJsonValue &v) {
+                if (w->isWindow()) {
+                    w->setWindowFlag(Qt::Popup, v.toBool());
+                }
+                w->setProperty("tkdePopup", v.toBool());
+            });
+            m.emplace(QStringLiteral("QWidget"), std::move(t));
+        }
 
         {
             TypeDef t = makeType<QMainWindow>();
@@ -313,6 +324,9 @@ const std::map<QString, TypeDef> &types()
             add<QLineEdit>(t, "readOnly", Kind::Bool, false, [](QLineEdit *w, const QJsonValue &v) { w->setReadOnly(v.toBool()); });
             add<QLineEdit>(t, "clearButton", Kind::Bool, false,
                            [](QLineEdit *w, const QJsonValue &v) { w->setClearButtonEnabled(v.toBool()); });
+            // Up, Down, PageUp and PageDown do not move the cursor but raise widget.navKey (a list below the field follows them)
+            add<QLineEdit>(t, "navKeys", Kind::Bool, false,
+                           [](QLineEdit *w, const QJsonValue &v) { w->setProperty("tkdeNavKeys", v.toBool()); });
             m.emplace(QStringLiteral("QLineEdit"), std::move(t));
         }
         {
@@ -465,6 +479,62 @@ private:
 };
 
 /// Closing a tab with the middle mouse button, as browsers and editors do: QTabBar only has the close button.
+/// Raises widget.dismissed when a popup is hidden.
+class PopupWatcher : public QObject
+{
+public:
+    PopupWatcher(QWidget *popup, std::function<void(const char *, QJsonObject)> emitEvent) : QObject(popup), m_emit(std::move(emitEvent)) {}
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::Hide && watched->property("tkdePopup").toBool() && !static_cast<QWidget *>(watched)->isVisible()) {
+            m_emit("widget.dismissed", QJsonObject());
+        }
+        return false;
+    }
+
+private:
+    std::function<void(const char *, QJsonObject)> m_emit;
+};
+
+/// Turns the arrow and page keys of a line edit with the navKeys prop into widget.navKey events.
+class NavKeys : public QObject
+{
+public:
+    NavKeys(QLineEdit *edit, std::function<void(const char *, QJsonObject)> emitEvent) : QObject(edit), m_emit(std::move(emitEvent)) {}
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() != QEvent::KeyPress || !watched->property("tkdeNavKeys").toBool()) {
+            return false;
+        }
+        const char *name = nullptr;
+        switch (static_cast<QKeyEvent *>(event)->key()) {
+        case Qt::Key_Up:
+            name = "up";
+            break;
+        case Qt::Key_Down:
+            name = "down";
+            break;
+        case Qt::Key_PageUp:
+            name = "pageUp";
+            break;
+        case Qt::Key_PageDown:
+            name = "pageDown";
+            break;
+        default:
+            return false;
+        }
+        m_emit("widget.navKey", QJsonObject{{QStringLiteral("direction"), QLatin1String(name)}});
+        return true;
+    }
+
+private:
+    std::function<void(const char *, QJsonObject)> m_emit;
+};
+
 class MiddleClickClose : public QObject
 {
 public:
@@ -840,6 +910,10 @@ void connectEvents(Bridge &bridge, Node &n)
         f.insert(QStringLiteral("key"), key);
         bridge.emitEvent(QString::fromLatin1(type), f, id);
     };
+    if (n.type == QLatin1String("QWidget")) {
+        // popups tell the logic when they went away, however that happened
+        w->installEventFilter(new PopupWatcher(w, emitEvent));
+    }
     if (auto *b = qobject_cast<QPushButton *>(w)) {
         QObject::connect(b, &QPushButton::clicked, b, [emitEvent](bool checked) { emitEvent("widget.clicked", one("checked", checked)); });
     } else if (auto *c = qobject_cast<QCheckBox *>(w)) {
@@ -848,6 +922,7 @@ void connectEvents(Bridge &bridge, Node &n)
         QObject::connect(e, &QLineEdit::textChanged, e,
                          [emitEvent](const QString &text) { emitEvent("widget.textChanged", one("text", text)); });
         QObject::connect(e, &QLineEdit::returnPressed, e, [emitEvent] { emitEvent("widget.returnPressed", QJsonObject()); });
+        e->installEventFilter(new NavKeys(e, emitEvent));
     } else if (auto *combo = qobject_cast<QComboBox *>(w)) {
         QObject::connect(combo, &QComboBox::currentIndexChanged, combo,
                          [emitEvent](int index) { emitEvent("widget.currentChanged", one("index", index)); });
@@ -1277,6 +1352,13 @@ Reply showWidget(Bridge &b, const QJsonObject &cmd)
     if (!w) {
         return fail;
     }
+    if (w->isWindow() && w->property("tkdePopup").toBool()) {
+        // centred horizontally, in the upper third of the window that has the focus
+        if (QWidget *anchor = QApplication::activeWindow()) {
+            const QRect area = anchor->frameGeometry();
+            w->move(area.x() + (area.width() - w->width()) / 2, area.y() + area.height() / 6);
+        }
+    }
     w->show();
     if (w->isWindow()) {
         w->raise();
@@ -1452,6 +1534,15 @@ Reply debugAct(Bridge &b, const QJsonObject &cmd)
             const int from = v.toArray().at(0).toInt(), to = v.toArray().at(1).toInt();
             t->tabBar()->moveTab(from, to);
             Q_EMIT t->tabBar()->tabMoved(from, to); // moveTab() alone is silent; a drag by the user emits it
+            return Reply::success();
+        }
+    } else if (act == QLatin1String("key")) {
+        // key press as the user would type it, e.g. "Down"
+        const QKeySequence seq(v.toString());
+        if (seq.count() == 1) {
+            const int code = seq[0].key();
+            QKeyEvent press(QEvent::KeyPress, code, Qt::NoModifier);
+            QApplication::sendEvent(w, &press);
             return Reply::success();
         }
     } else if (act == QLatin1String("middleClick")) {

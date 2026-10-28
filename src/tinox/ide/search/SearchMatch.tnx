@@ -1,0 +1,54 @@
+module tinox.ide.search
+
+namespace tinox.ide.search
+{
+    /** One line of a file that matches a search. */
+    class SearchMatch
+    {
+        /** The absolute path of the file. */
+        var path: String
+        /** The line, counted from 1. */
+        var line: Int64
+        /** The column of the first match in the line, counted from 0. */
+        var column: Int64
+        /** The text of the line without its line break. */
+        var text: String
+        /** The text of each match in the line, in order. */
+        var hits: List<String>
+
+        /** A match. */
+        fnc create(path: String, line: Int64, column: Int64, text: String, hits: List<String>) -> SearchMatch
+        {
+            return SearchMatch { path: path, line: line, column: column, text: text, hits: hits }
+        }
+
+        /** The row id in the results tree. */
+        fn rowId() -> String
+        {
+            return this.path + ":" + this.line.toString()
+        }
+
+        /** The line as the results tree shows it. */
+        fn preview() -> String
+        {
+            return this.line.toString() + ":  " + this.text.trim()
+        }
+
+        /** The line with each match replaced by `replacement`. Matches are found again from the left, so the text of the line must still be the one that was searched. */
+        fn replaced(replacement: String) -> String
+        {
+            var out: String = ""
+            var from: Int64 = 0
+            for hit in this.hits
+            {
+                const at: Int64 = TextScan::indexFrom(this.text, hit, from)
+                if (at >= 0 && hit.len() > 0)
+                {
+                    out = out + this.text.substring(from, at) + replacement
+                    from = at + hit.len()
+                }
+            }
+            return out + this.text.substring(from, this.text.len())
+        }
+    }
+}

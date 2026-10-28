@@ -42,6 +42,12 @@ namespace tinox.ide.app
         var editorTabs: fnc(Store) -> List<Node>
         /** The index of the current tab. */
         var editorIndex: fnc(Store) -> Int64
+        /** Extra tabs of the bottom panel, each drawn from the store. */
+        var bottomPanels: List<fnc(Store) -> Node>
+        /** Command ids of the Go menu. */
+        var goMenu: List<String>
+        /** Command ids of the Search menu. */
+        var searchMenu: List<String>
         /** Command ids of the View menu in order. */
         var viewMenu: List<String>
         /** Command ids of the File menu in order ("-" is a separator); feature modules add theirs with addFileMenu. */
@@ -50,7 +56,7 @@ namespace tinox.ide.app
         /** A window drawn from `store`, with menus made of the commands in `registry`. */
         fnc create(events: EventLoop, store: Store, bus: EventBus, registry: CommandRegistry, actions: Actions) -> MainWindow
         {
-            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow", fileMenu: ["file_quit"], viewMenu: ["view.project", "view.bottom"], editorTabs: (s: Store) => MainWindow::welcomeTabs(), editorIndex: (s: Store) => 0 }
+            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow", fileMenu: ["file_quit"], viewMenu: ["view.project", "view.bottom"], bottomPanels: [], goMenu: [], searchMenu: [], editorTabs: (s: Store) => MainWindow::welcomeTabs(), editorIndex: (s: Store) => 0 }
         }
 
         /** The editor area before any file is open. */
@@ -64,6 +70,34 @@ namespace tinox.ide.app
         {
             this.editorTabs = tabs
             this.editorIndex = index
+        }
+
+        /** Gives the window a Go menu and a Search menu with these commands. */
+        fn addGoMenu(go: List<String>, search: List<String>) -> Nothing
+        {
+            this.goMenu = go
+            this.searchMenu = search
+        }
+
+        /** Adds a tab to the bottom panel; `panel` makes its node (placed with inTab) from the store. */
+        fn addBottomPanel(panel: fnc(Store) -> Node) -> Nothing
+        {
+            var next: List<fnc(Store) -> Node> = this.bottomPanels
+            next.push(panel)
+            this.bottomPanels = next
+        }
+
+        /** Draws the window again whenever the store key changes. */
+        fn redrawOn(key: String) -> Nothing
+        {
+            this.store.watch(key, (value: String) => this.changed())
+        }
+
+        /** Shows the bottom panel's tab with this index (and the panel itself). */
+        fn showBottomTab(index: Int64) -> Nothing
+        {
+            this.store.setInt("ui.bottomTab", index)
+            this.store.setBool("ui.bottomVisible", true)
         }
 
         /** Puts commands into the View menu. */
@@ -142,14 +176,27 @@ namespace tinox.ide.app
                 .add(Ui::dock("bottom", "Problems and Output", "bottom")
                         .visible(this.store.getBool("ui.bottomVisible"))
                         .add(Ui::tabs("bottomTabs")
+                                .currentIndex(this.store.getInt("ui.bottomTab"))
                                 .add(Ui::listView("problems").inTab("Problems", "dialog-warning"))
-                                .add(Ui::log("output").inTab("Output", "utilities-terminal"))))
+                                .add(Ui::log("output").inTab("Output", "utilities-terminal"))
+                                .addAll(this.panels())))
                 .add(Ui::tabs("editors")
                         .bool("tabsClosable", true)
                         .bool("movable", true)
                         .currentIndex(this.editorIndex(this.store))
                         .addAll(this.editorTabs(this.store)))
                 .add(Ui::statusBar("status").str("message", this.store.get("status.message")))
+        }
+
+        /** The nodes of the extra bottom tabs. */
+        fn panels() -> List<Node>
+        {
+            var out: List<Node> = []
+            for panel in this.bottomPanels
+            {
+                out.push(panel(this.store))
+            }
+            return out
         }
 
         /** Draws the window from the current state. */
@@ -161,7 +208,7 @@ namespace tinox.ide.app
         /** The menu bar: File and View, from commands of the registry. */
         fn menus() -> List<Menu>
         {
-            return [Menu::create("&File").id("file").actions(this.fileMenu), Menu::create("&View").id("view").actions(this.viewMenu)]
+            return [Menu::create("&File").id("file").actions(this.fileMenu), Menu::create("&View").id("view").actions(this.viewMenu), Menu::create("&Go").id("go").actions(this.goMenu), Menu::create("&Search").id("search").actions(this.searchMenu)]
         }
 
         /** Builds and shows the window: first render, menus, state changes, saved layout. Call after the registry is attached. */
@@ -171,11 +218,13 @@ namespace tinox.ide.app
             this.actions.menuBar(this.mount.rootWidget(), this.menus())
             this.actions.toolBar(this.mount.idOf("tools"), ["view.project", "view.bottom"])
             this.mount.onCloseRequested("main", (ev: Event) => this.registry.execute("file_quit"))
+            this.mount.onIndex("bottomTabs", (index: Int64) => this.store.setInt("ui.bottomTab", index))
             this.mount.onDockVisible("project", (visible: Bool) => this.store.setBool("ui.projectVisible", visible))
             this.mount.onDockVisible("bottom", (visible: Bool) => this.store.setBool("ui.bottomVisible", visible))
             // the window follows the state, never the other way round
             this.store.watch("ui.projectVisible", (value: String) => this.changed())
             this.store.watch("ui.bottomVisible", (value: String) => this.changed())
+            this.store.watch("ui.bottomTab", (value: String) => this.changed())
             this.store.watch("status.message", (value: String) => this.changed())
             this.store.watch("workspace.open", (value: String) => this.changed())
             this.store.watch("workspace.name", (value: String) => this.changed())

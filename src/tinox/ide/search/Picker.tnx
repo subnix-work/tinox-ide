@@ -1,0 +1,237 @@
+module tinox.ide.search
+
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.ItemView
+import tinox.ide.ui.Model
+import tinox.ide.ui.Mount
+import tinox.ide.ui.Node
+import tinox.ide.ui.Row
+import tinox.ide.ui.Ui
+
+namespace tinox.ide.search
+{
+    /**
+     * The popup behind quick open and the command palette: a text field above a list that
+     * follows what is typed. Up and Down move the choice while the cursor stays in the field,
+     * Enter or a double click chooses, Escape or a click outside closes.
+     *
+     *     picker.open("Go to file…", "", (text: String) => items(text), (item: PickItem) => open(item.id))
+     *
+     * The provider is asked again for every change of the text and returns the items to show,
+     * best first.
+     */
+    class Picker
+    {
+        /** The loop events arrive on. */
+        var events: EventLoop
+        /** The popup's widgets (a window of its own). */
+        var mount: Mount
+        /** The rows. */
+        var model: Model
+        /** What is listed now. */
+        var items: List<PickItem>
+        /** Index of the chosen item, -1 for none. */
+        var chosen: Int64
+        /** Hint text of the field. */
+        var placeholder: String
+        /** Makes the items for a text. */
+        var provider: fnc(String) -> List<PickItem>
+        /** Called with the item the user picked. */
+        var accept: fnc(PickItem) -> Nothing
+        /** Whether the popup is on screen. */
+        var visible: Bool
+        /** Whether widgets and model exist. */
+        var built: Bool
+
+        /** A picker that is not shown yet. */
+        fnc create(events: EventLoop) -> Picker
+        {
+            return Picker { events: events, mount: Mount::create(events), model: Model::create(events, ["Name", "Detail"], false), items: [], chosen: -1, placeholder: "", provider: (t: String) => [], accept: (i: PickItem) => Picker::ignore(), visible: false, built: false }
+        }
+
+        /** Does nothing. */
+        fnc ignore() -> Nothing
+        {
+        }
+
+        /** The popup as a widget tree. */
+        fn describe() -> Node
+        {
+            return Ui::column("picker")
+                .bool("popup", true)
+                .ints("minimumSize", [680, 380])
+                .add(Ui::lineEdit("query", "").str("placeholder", this.placeholder).bool("navKeys", true).bool("clearButton", true))
+                .add(Ui::treeView("results")
+                        .bool("headerHidden", true)
+                        .bool("uniformRowHeights", true)
+                        .bool("rootIsDecorated", false)
+                        .str("selectionMode", "single")
+                        .stretch(1))
+        }
+
+        /** Shows the popup with a fresh field, filled by `provider("")`. */
+        fn open(placeholder: String, provider: fnc(String) -> List<PickItem>, accept: fnc(PickItem) -> Nothing) -> Nothing
+        {
+            this.discard()
+            this.placeholder = placeholder
+            this.provider = provider
+            this.accept = accept
+            this.mount = Mount::create(this.events)
+            this.mount.render(this.describe())
+            this.built = true
+            this.model.attach(this.mount.idOf("results"))
+            this.mount.onText("query", (text: String) => this.refill(text))
+            this.mount.onNavKey("query", (direction: String) => this.navigate(direction))
+            this.mount.onEnter("query", (ev: Event) => this.choose())
+            this.mount.onActivated("results", (id: String) => this.pick(id))
+            this.mount.onSelection("results", (ids: List<String>) => this.selected(ids))
+            this.mount.onDismissed("picker", (ev: Event) => this.dismissed())
+            this.refill("")
+            this.visible = true
+            this.mount.show()
+            this.mount.focus("query")
+        }
+
+        /** Asks the provider again and shows the answer with the first item chosen. */
+        fn refill(text: String) -> Nothing
+        {
+            this.items = this.provider(text)
+            var rows: List<Row> = []
+            for item in this.items
+            {
+                var row: Row = Row::create(item.id, item.label).cell(item.detail)
+                if (item.icon != "")
+                {
+                    row = row.icon(item.icon)
+                }
+                rows.push(row)
+            }
+            this.model.reset(rows)
+            this.chosen = -1
+            if (this.items.len() > 0)
+            {
+                this.mark(0)
+            }
+        }
+
+        /** Chooses the item with this index in the list. */
+        fn mark(index: Int64) -> Nothing
+        {
+            this.chosen = index
+            const id: String = this.items[index].id
+            ItemView::of(this.mount, "results").choose([id], id)
+        }
+
+        /** Up, down, page up, page down. */
+        fn navigate(direction: String) -> Nothing
+        {
+            if (this.items.len() == 0)
+            {
+                return
+            }
+            var step: Int64 = 1
+            if (direction == "up")
+            {
+                step = -1
+            }
+            else if (direction == "pageUp")
+            {
+                step = -8
+            }
+            else if (direction == "pageDown")
+            {
+                step = 8
+            }
+            var next: Int64 = this.chosen + step
+            if (next < 0)
+            {
+                next = 0
+            }
+            if (next >= this.items.len())
+            {
+                next = this.items.len() - 1
+            }
+            this.mark(next)
+        }
+
+        /** The user clicked another row. */
+        fn selected(ids: List<String>) -> Nothing
+        {
+            if (ids.len() != 1)
+            {
+                return
+            }
+            var i: Int64 = 0
+            while (i < this.items.len())
+            {
+                if (this.items[i].id == ids[0])
+                {
+                    this.chosen = i
+                }
+                i = i + 1
+            }
+        }
+
+        /** Enter: picks the chosen item. */
+        fn choose() -> Nothing
+        {
+            if (this.chosen >= 0 && this.chosen < this.items.len())
+            {
+                this.finish(this.items[this.chosen])
+            }
+        }
+
+        /** A double click on a row. */
+        fn pick(id: String) -> Nothing
+        {
+            for item in this.items
+            {
+                if (item.id == id)
+                {
+                    this.finish(item)
+                    return
+                }
+            }
+        }
+
+        /** Closes the popup, then hands the item over. */
+        fn finish(item: PickItem) -> Nothing
+        {
+            this.close()
+            this.accept(item)
+        }
+
+        /** Hides the popup. */
+        fn close() -> Nothing
+        {
+            if (this.visible)
+            {
+                this.visible = false
+                this.mount.hide()
+            }
+        }
+
+        /** The popup went away by itself (Escape, click outside). */
+        fn dismissed() -> Nothing
+        {
+            this.visible = false
+        }
+
+        /** Whether the popup is on screen. */
+        fn isOpen() -> Bool
+        {
+            return this.visible
+        }
+
+        /** Frees the widgets of the last popup. */
+        fn discard() -> Nothing
+        {
+            if (this.built)
+            {
+                this.mount.dispose()
+                this.built = false
+            }
+        }
+    }
+}
