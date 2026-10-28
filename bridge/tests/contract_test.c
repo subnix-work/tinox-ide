@@ -120,6 +120,18 @@ static void *logic(void *unused)
     CHECK_HAS(failed, "\"ok\":false");
     free(failed);
 
+    /* a message from any thread comes back as an event with the same topic and payload */
+    CHECK(tkde_post("{\"cmd\":\"core.message\",\"topic\":\"task.done\",\"payload\":{\"n\":7,\"s\":\"x\"}}") == TKDE_OK);
+    char *message = keep(tkde_next_event(5000));
+    CHECK_HAS(message, "\"type\":\"core.message\"");
+    CHECK_HAS(message, "\"topic\":\"task.done\"");
+    CHECK_HAS(message, "\"n\":7");
+    free(message);
+    CHECK_HAS(tkde_query("{\"cmd\":\"core.message\",\"payload\":1}"), "\"code\":-1"); /* a topic is required */
+    CHECK_HAS(tkde_query("{\"cmd\":\"core.message\",\"topic\":\"\"}"), "\"code\":-1");
+    CHECK_HAS(tkde_query("{\"cmd\":\"core.message\",\"topic\":\"t\"}"), "\"ok\":true");
+    free(keep(tkde_next_event(5000))); /* its event */
+
     /* ids: positive, assigned by the bridge; unknown or invalid ids are errors, not crashes */
     CHECK(tkde_release(424242) == TKDE_E_NOT_FOUND);
     CHECK(tkde_release(0) == TKDE_E_INVALID_ARG);

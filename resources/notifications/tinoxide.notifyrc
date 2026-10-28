@@ -32,3 +32,9 @@ Name=Language server stopped
 Comment=The language server has stopped unexpectedly
 Action=Popup
 IconName=dialog-error
+
+[Event/internalError]
+Name=Internal error
+Comment=Something went wrong inside the IDE
+Action=Popup
+IconName=dialog-error

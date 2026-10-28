@@ -1,0 +1,21 @@
+module tinox.ide.app
+
+namespace tinox.ide.app
+{
+    /** What a command handler is told about how it was started. */
+    class CommandContext
+    {
+        /** The command being run. */
+        var command: IdeCommand
+        /** Where the request came from: "action" (menu, tool bar or shortcut), "palette" or "code". */
+        var source: String
+        /** For a checkable command, the state the user chose. */
+        var checked: Bool
+
+        /** A context for running `command`. */
+        fnc create(command: IdeCommand, source: String, checked: Bool) -> CommandContext
+        {
+            return CommandContext { command: command, source: source, checked: checked }
+        }
+    }
+}

@@ -122,8 +122,10 @@ for the lost range: its `seq` is the first dropped `seq`, `last_seq` the last,
 | command `core.release` | `target` | releases the object |
 | command `core.quit` | `code` (default 0) | ends `tkde_exec` with that exit code |
 | command `core.log` | `level`, `message` | writes to the bridge's log category |
+| command `core.message` | `topic` (string, required), `payload` (any) | puts a `core.message` event into the event stream; safe from any thread, so background tasks can report to the logic task |
 | event `core.ready` | | the event loop started and the windows are shown |
 | event `core.reply` | `req`, `ok`, ... | reply to a posted command |
+| event `core.message` | `topic`, `payload` | what a `core.message` command sent |
 | event `core.error` | `error`, `cmd` | a posted command without `req` failed |
 | event `core.overflow` | `dropped`, `last_seq` | events `seq`..`last_seq` were dropped (see above) |
 | event `core.quit` | `code` | quit was requested (before windows close) |

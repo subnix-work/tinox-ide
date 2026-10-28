@@ -1,0 +1,66 @@
+import tinox.ide.app.BusMessage
+import tinox.ide.app.EventBus
+import tinox.ide.app.Store
+
+class StoreTest
+{
+    @Test("values are read as text, boolean and integer; unset keys are empty")
+    fn testTypes() -> Bool
+    {
+        const store: Store = Store::create(EventBus::create())
+        store.set("a.text", "hello")
+        store.setBool("a.flag", true)
+        store.setInt("a.count", 42)
+        store.set("a.bad", "x")
+        return store.get("a.text") == "hello" && store.getBool("a.flag") && store.getInt("a.count") == 42 && store.get("none") == "" && !store.getBool("none") && store.getInt("none") == 0 && store.has("a.text") && !store.has("none")
+    }
+
+    @Test("a change is announced once, an unchanged value is not")
+    fn testAnnounce() -> Bool
+    {
+        const bus: EventBus = EventBus::create()
+        const store: Store = Store::create(bus)
+        var seen: List<String> = []
+        bus.subscribe("state.changed", (m: BusMessage) => seen.push(m.str("key") + "=" + m.str("value")))
+        const first: Bool = store.set("k", "1")
+        const again: Bool = store.set("k", "1")
+        const changed: Bool = store.set("k", "2")
+        return first && !again && changed && seen.len() == 2 && seen[0] == "k=1" && seen[1] == "k=2" && store.version == 2
+    }
+
+    @Test("watch calls back with the new value of one key only, until unsubscribed")
+    fn testWatch() -> Bool
+    {
+        const bus: EventBus = EventBus::create()
+        const store: Store = Store::create(bus)
+        var seen: List<String> = []
+        const token: Int64 = store.watch("ui.visible", (value: String) => seen.push(value))
+        store.set("ui.other", "x")
+        store.set("ui.visible", "true")
+        store.set("ui.visible", "false")
+        bus.unsubscribe(token)
+        store.set("ui.visible", "true")
+        return seen.len() == 2 && seen[0] == "true" && seen[1] == "false"
+    }
+
+    @Test("toggle flips a boolean and returns the new state")
+    fn testToggle() -> Bool
+    {
+        const store: Store = Store::create(EventBus::create())
+        const first: Bool = store.toggle("flag")
+        const second: Bool = store.toggle("flag")
+        return first && !second && !store.getBool("flag")
+    }
+
+    @Test("a watcher may write another key; the writes are announced in order")
+    fn testNestedWrites() -> Bool
+    {
+        const bus: EventBus = EventBus::create()
+        const store: Store = Store::create(bus)
+        var seen: List<String> = []
+        store.watch("a", (value: String) => store.set("b", "from " + value))
+        bus.subscribe("state.changed", (m: BusMessage) => seen.push(m.str("key")))
+        store.set("a", "1")
+        return store.get("b") == "from 1" && seen.len() == 2
+    }
+}

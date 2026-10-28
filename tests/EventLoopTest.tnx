@@ -118,4 +118,20 @@ class EventLoopTest
         events.run()
         return !events.isShutdown() && events.delivered == 1
     }
+
+    @Test("a failure handler hears every failure, and one that throws does not break the loop")
+    fn testFailureHandler() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events: EventLoop = EventLoop::create()
+        var told: List<String> = []
+        events.onFailure((message: String) => told.push(message))
+        events.onType("boom", (ev: Event) => { throw "first" })
+        MockBridge::push("{\"type\":\"boom\"}")
+        events.pump(1000)
+        events.handle("this is not json")
+        events.onFailure((message: String) => { throw "handler broke" })
+        events.fail("third")
+        return told.len() == 2 && told[0].contains("first") && told[1].contains("unreadable") && events.failureCount() == 3
+    }
 }

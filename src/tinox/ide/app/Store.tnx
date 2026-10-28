@@ -1,0 +1,108 @@
+module tinox.ide.app
+
+import tinox.ide.ui.Js
+
+namespace tinox.ide.app
+{
+    /**
+     * The one place that holds the state of the application: a table of named values.
+     *
+     * Updates are unidirectional: commands, event handlers and background results *write* the
+     * store with set(); the UI and other modules *read* it and react to changes, never the
+     * other way round. A change publishes "state.changed" and "state.<key>" on the bus (only
+     * when the value really differs), so a subscriber re-renders from the store instead of
+     * keeping a copy.
+     *
+     * Keys are lower-case and dotted, grouped by module ("ui.projectVisible",
+     * "status.message", "workspace.path"). Values are text; getBool/getInt read them typed.
+     */
+    class Store
+    {
+        /** The values by key. */
+        var values: Map<String, String>
+        /** The bus changes are published on. */
+        var bus: EventBus
+        /** How many changes happened. */
+        var version: Int64
+
+        /** An empty store that announces changes on this bus. */
+        fnc create(bus: EventBus) -> Store
+        {
+            return Store { values: Map::new(), bus: bus, version: 0 }
+        }
+
+        /** The value of a key, "" when it was never set. */
+        fn get(key: String) -> String
+        {
+            if (this.values.contains(key))
+            {
+                return this.values.get(key)
+            }
+            return ""
+        }
+
+        /** Whether the key was ever set. */
+        fn has(key: String) -> Bool
+        {
+            return this.values.contains(key)
+        }
+
+        /** The value as a boolean ("true" is true, everything else false). */
+        fn getBool(key: String) -> Bool
+        {
+            return this.get(key) == "true"
+        }
+
+        /** The value as an integer, 0 when it is not one or not set. */
+        fn getInt(key: String) -> Int64
+        {
+            const value: String = this.get(key)
+            if (value == "")
+            {
+                return 0
+            }
+            return value.toInt()
+        }
+
+        /** Changes a value and announces it; returns false and does nothing when the value is the same. */
+        fn set(key: String, value: String) -> Bool
+        {
+            if (this.values.contains(key) && this.values.get(key) == value)
+            {
+                return false
+            }
+            this.values.set(key, value)
+            this.version = this.version + 1
+            const payload: String = Js::object([Js::strField("key", key), Js::strField("value", value)])
+            this.bus.publish("state." + key, payload)
+            this.bus.publish("state.changed", payload)
+            return true
+        }
+
+        /** Sets a boolean. */
+        fn setBool(key: String, value: Bool) -> Bool
+        {
+            return this.set(key, value.toString())
+        }
+
+        /** Sets an integer. */
+        fn setInt(key: String, value: Int64) -> Bool
+        {
+            return this.set(key, value.toString())
+        }
+
+        /** Flips a boolean and returns the new value. */
+        fn toggle(key: String) -> Bool
+        {
+            const next: Bool = !this.getBool(key)
+            this.setBool(key, next)
+            return next
+        }
+
+        /** Calls `handler` with the new value whenever this key changes; the token ends it (EventBus.unsubscribe). */
+        fn watch(key: String, handler: fnc(String) -> Nothing) -> Int64
+        {
+            return this.bus.subscribe("state." + key, (m: BusMessage) => handler(m.str("value")))
+        }
+    }
+}

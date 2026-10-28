@@ -1,0 +1,212 @@
+module tinox.ide.app
+
+import tinox.ide.kde.Event
+import tinox.ide.ui.Action
+import tinox.ide.ui.Actions
+import tinox.ide.ui.Js
+
+namespace tinox.ide.app
+{
+    /**
+     * Every command of the IDE, in one place. Registering a command makes it an action of the
+     * bridge (so menus, tool bars and shortcuts can use it, and users can remap its shortcut)
+     * and available to the command palette; running it, from wherever, goes through run().
+     *
+     * A command is available when its predicate says so; the registry re-evaluates predicates
+     * when the store changes and enables or disables the matching actions. A handler that
+     * throws does not take the IDE down: the failure is published as "error.report" on the bus
+     * (the ErrorReporter shows it).
+     */
+    class CommandRegistry
+    {
+        /** The commands by id. */
+        var commands: Map<String, IdeCommand>
+        /** The ids in registration order. */
+        var order: List<String>
+        /** The state the predicates look at. */
+        var store: Store
+        /** Where failures go. */
+        var bus: EventBus
+        /** The bridge's actions, once attach() was called. */
+        var actions: Actions
+        /** Whether attach() was called. */
+        var attached: Bool
+        /** The enabled state last sent to the actions, by id. */
+        var sent: Map<String, String>
+
+        /** An empty registry; `actions` is the bridge side the commands are mirrored to (attach() connects it). */
+        fnc create(store: Store, bus: EventBus, actions: Actions) -> CommandRegistry
+        {
+            return CommandRegistry { commands: Map::new(), order: [], store: store, bus: bus, actions: actions, attached: false, sent: Map::new() }
+        }
+
+        /** Registers a command. Throws when the id is taken. */
+        fn register(command: IdeCommand) -> Nothing
+        {
+            if (this.commands.contains(command.id))
+            {
+                throw "command '" + command.id + "' is already registered"
+            }
+            this.commands.set(command.id, command)
+            this.order.push(command.id)
+            if (this.attached)
+            {
+                this.define([command])
+                this.refresh()
+            }
+        }
+
+        /** Registers several commands. */
+        fn registerAll(list: List<IdeCommand>) -> Nothing
+        {
+            var i: Int64 = 0
+            while (i < list.len())
+            {
+                this.register(list[i])
+                i = i + 1
+            }
+        }
+
+        /** Mirrors the commands to the bridge as actions and keeps their enabled state current. Call once, after the commands are registered. */
+        fn attach() -> Nothing
+        {
+            if (this.attached)
+            {
+                return
+            }
+            this.attached = true
+            var all: List<IdeCommand> = []
+            var i: Int64 = 0
+            while (i < this.order.len())
+            {
+                all.push(this.commands.get(this.order[i]))
+                i = i + 1
+            }
+            this.define(all)
+            this.store.bus.subscribe("state.changed", (m: BusMessage) => this.refresh())
+            this.refresh()
+        }
+
+        /** Defines actions for these commands on the bridge side. */
+        fn define(list: List<IdeCommand>) -> Nothing
+        {
+            var actions: List<Action> = []
+            var i: Int64 = 0
+            while (i < list.len())
+            {
+                const command: IdeCommand = list[i]
+                var action: Action = Action::create(command.id).text(command.title)
+                if (command.isStandard)
+                {
+                    action = Action::standard(command.id)
+                }
+                if (command.iconName != "")
+                {
+                    action = action.icon(command.iconName)
+                }
+                if (command.shortcutText != "")
+                {
+                    action = action.shortcut(command.shortcutText)
+                }
+                if (command.isCheckable)
+                {
+                    action = action.checkable(true)
+                }
+                const id: String = command.id
+                action = action.onTrigger((ev: Event) => this.run(id, "action", ev.bool("checked")))
+                actions.push(action)
+                i = i + 1
+            }
+            this.actions.define(actions)
+        }
+
+        /** The command with this id; throws when there is none. */
+        fn find(id: String) -> IdeCommand
+        {
+            if (!this.commands.contains(id))
+            {
+                throw "no command '" + id + "'"
+            }
+            return this.commands.get(id)
+        }
+
+        /** Whether a command with this id exists. */
+        fn has(id: String) -> Bool
+        {
+            return this.commands.contains(id)
+        }
+
+        /** All commands in registration order (the palette's list). */
+        fn list() -> List<IdeCommand>
+        {
+            var out: List<IdeCommand> = []
+            var i: Int64 = 0
+            while (i < this.order.len())
+            {
+                out.push(this.commands.get(this.order[i]))
+                i = i + 1
+            }
+            return out
+        }
+
+        /** Whether the command is available now (its predicate holds). */
+        fn isEnabled(id: String) -> Bool
+        {
+            const command: IdeCommand = this.find(id)
+            if (command.hasPredicate)
+            {
+                return command.predicate(this.store)
+            }
+            return true
+        }
+
+        /** Runs a command. Returns false, doing nothing, when it is not available. A failing handler is reported, not thrown. */
+        fn run(id: String, source: String, checked: Bool) -> Bool
+        {
+            const command: IdeCommand = this.find(id)
+            if (!this.isEnabled(id))
+            {
+                return false
+            }
+            try
+            {
+                command.handler(CommandContext::create(command, source, checked))
+            }
+            catch (e: String)
+            {
+                this.bus.publish("error.report", Js::object([Js::strField("where", "command " + id), Js::strField("message", e)]))
+            }
+            return true
+        }
+
+        /** Runs a command from code or the palette. Same as run(id, "code", false). */
+        fn execute(id: String) -> Bool
+        {
+            return this.run(id, "code", false)
+        }
+
+        /** Re-evaluates the availability of every command and tells the bridge about changes. */
+        fn refresh() -> Nothing
+        {
+            if (!this.attached)
+            {
+                return
+            }
+            var i: Int64 = 0
+            while (i < this.order.len())
+            {
+                const id: String = this.order[i]
+                const enabled: String = this.isEnabled(id).toString()
+                if (!this.sent.contains(id) || this.sent.get(id) != enabled)
+                {
+                    if (this.sent.contains(id) || enabled == "false")
+                    {
+                        this.actions.setEnabled(id, enabled == "true")
+                    }
+                    this.sent.set(id, enabled)
+                }
+                i = i + 1
+            }
+        }
+    }
+}

@@ -1,0 +1,164 @@
+import MockBridge
+import tinox.ide.app.IdeApp
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.EventLoop
+
+class IdeAppTest
+{
+    fnc script() -> Nothing
+    {
+        Bridge::init("test", "Test")
+        const mountObject: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("widget.mount", "{\"id\":" + mountObject.toString() + ",\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"welcome\":61,\"status\":62}}", "")
+        MockBridge::onCommand("config.read", "{\"exists\":false,\"value\":true}", "")
+        for name in ["config.write", "core.log", "action.define", "action.set", "action.setMenuBar", "action.setToolBar", "widget.update", "widget.restoreState", "widget.saveState", "widget.show", "widget.append", "widget.close"]
+        {
+            MockBridge::onCommand(name, "", "")
+        }
+        MockBridge::onCommand("widget.restoreState", "{\"restored\":false}", "")
+    }
+
+    fnc start() -> IdeApp
+    {
+        IdeAppTest::script()
+        const app: IdeApp = IdeApp::start(EventLoop::create())
+        app.logger.toStderr = false
+        return app
+    }
+
+    fnc commands() -> List<String>
+    {
+        var out: List<String> = []
+        var next: String = MockBridge::nextCommand()
+        while (next != "")
+        {
+            out.push(next)
+            next = MockBridge::nextCommand()
+        }
+        return out
+    }
+
+    fnc firstWith(all: List<String>, needle: String) -> String
+    {
+        var i: Int64 = 0
+        while (i < all.len())
+        {
+            if (all[i].contains(needle))
+            {
+                return all[i]
+            }
+            i = i + 1
+        }
+        return ""
+    }
+
+    @Test("starting builds the window with all its docks, the menus, the commands, and shows it")
+    fn testStart() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        const sent: List<String> = IdeAppTest::commands()
+        const mount: String = IdeAppTest::firstWith(sent, "\"cmd\":\"widget.mount\"")
+        const menu: String = IdeAppTest::firstWith(sent, "\"cmd\":\"action.setMenuBar\"")
+        const tools: String = IdeAppTest::firstWith(sent, "\"cmd\":\"action.setToolBar\"")
+        const define: String = IdeAppTest::firstWith(sent, "\"cmd\":\"action.define\"")
+        return app.running && app.registry.has("file_quit") && app.registry.has("view.project") && app.registry.has("view.bottom") &&
+            mount.contains("\"key\":\"project\"") && mount.contains("\"key\":\"bottom\"") && mount.contains("\"key\":\"editors\"") && mount.contains("\"key\":\"status\"") && mount.contains("\"key\":\"tools\"") &&
+            mount.contains("\"title\":\"Problems and Output\"") && mount.contains("\"message\":\"Ready\"") &&
+            define.contains("{\"id\":\"file_quit\",\"standard\":true}") && define.contains("\"shortcut\":\"Alt+1\"") &&
+            menu.contains("\"title\":\"&File\"") && menu.contains("\"file_quit\"") && menu.contains("\"view.project\"") && tools.contains("[\"view.project\",\"view.bottom\"]") &&
+            IdeAppTest::firstWith(sent, "\"cmd\":\"widget.show\"") != "" && IdeAppTest::firstWith(sent, "\"cmd\":\"widget.restoreState\"") != ""
+    }
+
+    @Test("the Quit command saves the layout and asks the bridge to quit, once")
+    fn testQuit() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        IdeAppTest::script()
+        const app: IdeApp = IdeApp::start(events)
+        app.logger.toStderr = false
+        IdeAppTest::commands()
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"file_quit\",\"checked\":false}")
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"file_quit\",\"checked\":false}")
+        events.pump(1000)
+        const sent: List<String> = IdeAppTest::commands()
+        var saves: Int64 = 0
+        var i: Int64 = 0
+        while (i < sent.len())
+        {
+            if (sent[i].contains("\"cmd\":\"widget.saveState\""))
+            {
+                saves = saves + 1
+            }
+            i = i + 1
+        }
+        return !app.running && saves == 1 && events.failureCount() == 0
+    }
+
+    @Test("closing the window asks the Quit command")
+    fn testWindowClose() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        IdeAppTest::script()
+        const app: IdeApp = IdeApp::start(events)
+        app.logger.toStderr = false
+        IdeAppTest::commands()
+        MockBridge::push("{\"type\":\"widget.closeRequested\",\"target\":50,\"key\":\"main\"}")
+        events.pump(1000)
+        return !app.running
+    }
+
+    @Test("a view command writes the store, the window is drawn again and the layout flag is saved")
+    fn testViewToggle() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        IdeAppTest::script()
+        const app: IdeApp = IdeApp::start(events)
+        app.logger.toStderr = false
+        IdeAppTest::commands()
+        MockBridge::push("{\"type\":\"action.triggered\",\"id\":\"view.project\",\"checked\":false}")
+        events.pump(1000)
+        const sent: List<String> = IdeAppTest::commands()
+        const update: String = IdeAppTest::firstWith(sent, "\"cmd\":\"widget.update\"")
+        const write: String = IdeAppTest::firstWith(sent, "\"cmd\":\"config.write\"")
+        const check: String = IdeAppTest::firstWith(sent, "\"cmd\":\"action.set\",\"id\":\"view.project\",\"checked\":false")
+        return !app.store.getBool("ui.projectVisible") && update.contains("\"key\":\"project\"") && update.contains("\"visible\":false") &&
+            write.contains("\"key\":\"projectVisible\"") && write.contains("\"value\":false") && check != ""
+    }
+
+    @Test("the user closing a dock updates the store, not the other way round")
+    fn testDockClose() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        IdeAppTest::script()
+        const app: IdeApp = IdeApp::start(events)
+        app.logger.toStderr = false
+        IdeAppTest::commands()
+        MockBridge::push("{\"type\":\"widget.dockVisibilityChanged\",\"target\":56,\"key\":\"bottom\",\"visible\":false}")
+        events.pump(1000)
+        return !app.store.getBool("ui.bottomVisible") && IdeAppTest::firstWith(IdeAppTest::commands(), "\"visible\":false") != ""
+    }
+
+    @Test("log lines reach the Output panel through the bus")
+    fn testOutputPanel() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        IdeAppTest::commands()
+        app.logger.info("indexing finished")
+        const append: String = IdeAppTest::firstWith(IdeAppTest::commands(), "\"cmd\":\"widget.append\"")
+        return append == "{\"cmd\":\"widget.append\",\"target\":59,\"text\":\"INFO  indexing finished\"}"
+    }
+
+    @Test("an error anywhere shows in the status line and re-draws the window")
+    fn testErrorShown() -> Bool
+    {
+        const events: EventLoop = EventLoop::create()
+        IdeAppTest::script()
+        MockBridge::onCommand("notify.send", "{\"id\":1}", "")
+        const app: IdeApp = IdeApp::start(events)
+        app.logger.toStderr = false
+        IdeAppTest::commands()
+        app.bus.publish("error.report", "{\"where\":\"workspace\",\"message\":\"cannot read the folder\"}")
+        const sent: List<String> = IdeAppTest::commands()
+        return app.store.get("status.message") == "Error in workspace: cannot read the folder" && IdeAppTest::firstWith(sent, "\"cmd\":\"notify.send\"").contains("internalError") && IdeAppTest::firstWith(sent, "\"cmd\":\"widget.update\"").contains("cannot read the folder")
+    }
+}

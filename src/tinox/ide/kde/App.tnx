@@ -27,7 +27,7 @@ namespace tinox.ide.kde
             }
             catch (e: String)
             {
-                printStderr("tinox-ide: the logic task failed: " + e)
+                events.fail("the logic task failed: " + e)
                 // make sure Qt's loop ends even though the logic gave up
                 Bridge::quit()
             }

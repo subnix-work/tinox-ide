@@ -1,0 +1,68 @@
+import MockBridge
+import tinox.ide.app.BusMessage
+import tinox.ide.app.EventBus
+import tinox.ide.app.Logger
+import tinox.ide.kde.Bridge
+
+class LoggerTest
+{
+    @Test("lines below the minimum level are dropped, the others are kept with a level tag")
+    fn testLevels() -> Bool
+    {
+        const logger: Logger = Logger::create(1)
+        logger.toStderr = false
+        logger.debug("hidden")
+        logger.info("one")
+        logger.warn("two")
+        logger.error("three")
+        return logger.count == 3 && logger.recent.len() == 3 && logger.recent[0] == "INFO  one" && logger.recent[1] == "WARN  two" && logger.recent[2] == "ERROR three"
+    }
+
+    @Test("level names map to numbers, unknown names mean info")
+    fn testLevelNames() -> Bool
+    {
+        return Logger::levelOf("debug") == 0 && Logger::levelOf("info") == 1 && Logger::levelOf("warn") == 2 && Logger::levelOf("warning") == 2 && Logger::levelOf("error") == 3 && Logger::levelOf("") == 1 && Logger::levelOf("loud") == 1
+    }
+
+    @Test("only the most recent lines are kept")
+    fn testRing() -> Bool
+    {
+        const logger: Logger = Logger::create(0)
+        logger.toStderr = false
+        logger.capacity = 3
+        logger.info("a")
+        logger.info("b")
+        logger.info("c")
+        logger.info("d")
+        logger.info("e")
+        return logger.recent.len() == 3 && logger.recent[0] == "INFO  c" && logger.recent[2] == "INFO  e" && logger.count == 5
+    }
+
+    @Test("an attached logger publishes every kept line on the bus")
+    fn testBus() -> Bool
+    {
+        const bus: EventBus = EventBus::create()
+        const logger: Logger = Logger::create(1)
+        logger.toStderr = false
+        logger.attach(bus)
+        var seen: List<String> = []
+        bus.subscribe("log.line", (m: BusMessage) => seen.push(m.int("level").toString() + " " + m.str("line")))
+        logger.debug("no")
+        logger.warn("careful \"now\"")
+        return seen.len() == 1 && seen[0] == "2 WARN  careful \"now\""
+    }
+
+    @Test("warnings and errors can be forwarded to the bridge's log")
+    fn testBridge() -> Bool
+    {
+        Bridge::init("test", "Test")
+        MockBridge::onCommand("core.log", "", "")
+        const logger: Logger = Logger::create(0)
+        logger.toStderr = false
+        logger.forwardToBridge(true)
+        logger.info("quiet")
+        logger.warn("w")
+        logger.error("e")
+        return MockBridge::nextCommand() == "{\"cmd\":\"core.log\",\"level\":\"warning\",\"message\":\"w\"}" && MockBridge::nextCommand() == "{\"cmd\":\"core.log\",\"level\":\"error\",\"message\":\"e\"}" && MockBridge::pending() == 0
+    }
+}

@@ -1,0 +1,63 @@
+module tinox.ide.app
+
+import tinox.core.json
+
+namespace tinox.ide.app
+{
+    /** A message on the EventBus: a topic and a JSON payload. */
+    class BusMessage
+    {
+        /** What the message is about, e.g. "state.changed" or "workspace.opened". */
+        var topic: String
+        /** The payload; JSON null when the sender gave none. */
+        var payload: JsonValue
+
+        /** A message with this topic and payload. */
+        fnc create(topic: String, payload: JsonValue) -> BusMessage
+        {
+            return BusMessage { topic: topic, payload: payload }
+        }
+
+        /** Whether the payload is an object with a non-null field `key`. */
+        fn has(key: String) -> Bool
+        {
+            return this.payload.isObject() && !this.payload.getField(key).isNull()
+        }
+
+        /** A string field of the payload ("" when absent). */
+        fn str(key: String) -> String
+        {
+            if (this.has(key))
+            {
+                return this.payload.getField(key).getString()
+            }
+            return ""
+        }
+
+        /** An integer field of the payload (0 when absent). */
+        fn int(key: String) -> Int64
+        {
+            if (this.has(key))
+            {
+                return this.payload.getField(key).getInt()
+            }
+            return 0
+        }
+
+        /** A boolean field of the payload (false when absent). */
+        fn bool(key: String) -> Bool
+        {
+            if (this.has(key))
+            {
+                return this.payload.getField(key).getBool()
+            }
+            return false
+        }
+
+        /** The payload as JSON text. */
+        fn text() -> String
+        {
+            return Json::stringify(this.payload)
+        }
+    }
+}

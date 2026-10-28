@@ -1,0 +1,164 @@
+module tinox.ide.app
+
+import tinox.core.json
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+namespace tinox.ide.app
+{
+    /**
+     * The in-process publish/subscribe channel that decouples the modules of the IDE:
+     * the workspace announces that a folder was opened, the editor part reacts, and neither
+     * knows the other.
+     *
+     *     bus.subscribe("workspace.opened", (m: BusMessage) => Main::reload(m.str("path")))
+     *     bus.publish("workspace.opened", "{\"path\":\"/home/me/project\"}")
+     *
+     * Subscribers of a topic are called in subscription order; the topic "*" receives every
+     * message. A subscriber that throws is reported to the failure hook (see onFailure) and
+     * the others still run. Everything happens on the logic task.
+     *
+     * **Background tasks** are not on the logic task. They report with Background.report(),
+     * which goes through the bridge's thread-safe event queue; attach() turns those events
+     * into bus messages on the logic task.
+     */
+    class EventBus
+    {
+        /** Subscribers' handlers by token. */
+        var handlers: Map<String, fnc(BusMessage) -> Nothing>
+        /** The tokens subscribed to each topic, in subscription order. */
+        var tokens: Map<String, List<Int64>>
+        /** The topic of each token. */
+        var topicOf: Map<String, String>
+        /** The next token. */
+        var nextToken: Int64
+        /** How many messages were published. */
+        var published: Int64
+        /** Told about a subscriber that threw. */
+        var failureHandler: fnc(String) -> Nothing
+
+        /** A bus without subscribers. */
+        fnc create() -> EventBus
+        {
+            return EventBus { handlers: Map::new(), tokens: Map::new(), topicOf: Map::new(), nextToken: 1, published: 0, failureHandler: (message: String) => EventLoop::ignore() }
+        }
+
+        /** Calls `handler` with every failure of a subscriber (the message names the topic). */
+        fn onFailure(handler: fnc(String) -> Nothing) -> Nothing
+        {
+            this.failureHandler = handler
+        }
+
+        /** Subscribes to a topic ("*" for all); the token ends the subscription (unsubscribe). */
+        fn subscribe(topic: String, handler: fnc(BusMessage) -> Nothing) -> Int64
+        {
+            const token: Int64 = this.nextToken
+            this.nextToken = this.nextToken + 1
+            this.handlers.set(token.toString(), handler)
+            this.topicOf.set(token.toString(), topic)
+            if (!this.tokens.contains(topic))
+            {
+                this.tokens.set(topic, [])
+            }
+            this.tokens.get(topic).push(token)
+            return token
+        }
+
+        /** Ends a subscription; an unknown token is ignored. */
+        fn unsubscribe(token: Int64) -> Nothing
+        {
+            const name: String = token.toString()
+            if (!this.handlers.contains(name))
+            {
+                return
+            }
+            const topic: String = this.topicOf.get(name)
+            this.handlers.remove(name)
+            this.topicOf.remove(name)
+            var rest: List<Int64> = []
+            const all: List<Int64> = this.tokens.get(topic)
+            var i: Int64 = 0
+            while (i < all.len())
+            {
+                if (all[i] != token)
+                {
+                    rest.push(all[i])
+                }
+                i = i + 1
+            }
+            this.tokens.set(topic, rest)
+        }
+
+        /** How many subscribers a topic has. */
+        fn subscriberCount(topic: String) -> Int64
+        {
+            if (this.tokens.contains(topic))
+            {
+                return this.tokens.get(topic).len()
+            }
+            return 0
+        }
+
+        /** Publishes a message to the subscribers of its topic, then to those of "*". */
+        fn send(message: BusMessage) -> Nothing
+        {
+            this.published = this.published + 1
+            this.deliver(message.topic, message)
+            if (message.topic != "*")
+            {
+                this.deliver("*", message)
+            }
+        }
+
+        /** Calls the subscribers of `topic` that are still subscribed when their turn comes. */
+        fn deliver(topic: String, message: BusMessage) -> Nothing
+        {
+            if (!this.tokens.contains(topic))
+            {
+                return
+            }
+            const snapshot: List<Int64> = this.tokens.get(topic)
+            var i: Int64 = 0
+            while (i < snapshot.len())
+            {
+                const name: String = snapshot[i].toString()
+                if (this.handlers.contains(name))
+                {
+                    const handler: fnc(BusMessage) -> Nothing = this.handlers.get(name)
+                    try
+                    {
+                        handler(message)
+                    }
+                    catch (e: String)
+                    {
+                        this.failureHandler("a subscriber of '" + message.topic + "' failed: " + e)
+                    }
+                }
+                i = i + 1
+            }
+        }
+
+        /** Publishes `payloadJson` (JSON text; "" for none) under `topic`. */
+        fn publish(topic: String, payloadJson: String) -> Nothing
+        {
+            var payload: JsonValue = Json::parse("null")
+            if (payloadJson != "")
+            {
+                payload = Json::parse(payloadJson)
+            }
+            this.send(BusMessage::create(topic, payload))
+        }
+
+        /** Publishes a message without payload. */
+        fn signal(topic: String) -> Nothing
+        {
+            this.publish(topic, "")
+        }
+
+        /** Turns the bridge's core.message events (sent by background tasks, see Background) into bus messages. */
+        fn attach(events: EventLoop) -> Nothing
+        {
+            events.onType("core.message", (ev: Event) => this.send(BusMessage::create(ev.str("topic"), ev.field("payload"))))
+        }
+    }
+}

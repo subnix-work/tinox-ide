@@ -606,6 +606,16 @@ J runCommandLocked(State &st, const J &cmd, bool viaQuery)
         requestQuitLocked(st, c && c->isInt() ? c->asInt() : 0);
     } else if (n == "core.log") {
         // accepted; the mock has no log sink
+    } else if (n == "core.message") {
+        const J *topic = cmd.get("topic");
+        if (!topic || topic->t != J::Str || topic->s.empty()) {
+            return errorReply(TKDE_E_INVALID_ARG, "core.message needs a non-empty string \"topic\"");
+        }
+        J extra = J::object();
+        extra.set("topic", *topic);
+        const J *payload = cmd.get("payload");
+        extra.set("payload", payload ? *payload : J());
+        pushType(st, "core.message", std::move(extra));
     } else if (auto it = st.scripts.find(n); it != st.scripts.end()) {
         for (const auto &p : it->second.reply.o) {
             reply.set(p.first, p.second);

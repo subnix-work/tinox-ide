@@ -27,11 +27,13 @@ namespace tinox.ide.kde
         var delivered: Int64
         /** Messages of handlers that threw and of events that could not be read. */
         var failures: List<String>
+        /** Told about every failure, e.g. to show an error message to the user. */
+        var failureHandler: fnc(String) -> Nothing
 
         /** A loop with no handlers. */
         fnc create() -> EventLoop
         {
-            return EventLoop { byType: Map::new(), byTarget: Map::new(), stopped: false, shutdown: false, delivered: 0, failures: [] }
+            return EventLoop { byType: Map::new(), byTarget: Map::new(), stopped: false, shutdown: false, delivered: 0, failures: [], failureHandler: (message: String) => EventLoop::ignore() }
         }
 
         /** Runs `handler` for every event of this type; replaces an earlier one. */
@@ -76,11 +78,30 @@ namespace tinox.ide.kde
             return this.failures.len()
         }
 
-        /** Records a failure and prints it on stderr; the loop carries on. */
+        /** Does nothing: the default failure handler. */
+        fnc ignore() -> Nothing
+        {
+        }
+
+        /** Calls `handler` with the message of every failure from now on (after it was recorded and printed). A handler that throws is ignored. */
+        fn onFailure(handler: fnc(String) -> Nothing) -> Nothing
+        {
+            this.failureHandler = handler
+        }
+
+        /** Records a failure, prints it on stderr and tells the failure handler; the loop carries on. */
         fn fail(message: String) -> Nothing
         {
             this.failures.push(message)
             printStderr("tinox-ide: " + message)
+            try
+            {
+                this.failureHandler(message)
+            }
+            catch (e: String)
+            {
+                printStderr("tinox-ide: the failure handler failed too: " + e)
+            }
         }
 
         /** Runs the handlers for one event. */
