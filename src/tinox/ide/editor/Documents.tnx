@@ -10,6 +10,7 @@ import tinox.ide.app.FileSystem
 import tinox.ide.app.IdeCommand
 import tinox.ide.app.MainWindow
 import tinox.ide.app.Store
+import tinox.ide.app.Tr
 import tinox.ide.kde.Event
 import tinox.ide.kde.EventLoop
 import tinox.ide.settings.Settings
@@ -299,7 +300,7 @@ namespace tinox.ide.editor
             catch (e: String)
             {
                 this.logger.warn("could not open " + path + ": " + e)
-                this.dialogs.error("Open File", "Cannot open " + path + ":\n" + e)
+                this.dialogs.error("Open File", Tr::f("Cannot open %1:\n%2", [path, e]))
             }
         }
 
@@ -316,7 +317,7 @@ namespace tinox.ide.editor
             catch (e: String)
             {
                 this.logger.warn("could not open " + path + " at " + line.toString() + ": " + e)
-                this.dialogs.error("Open File", "Cannot open " + path + ":\n" + e)
+                this.dialogs.error("Open File", Tr::f("Cannot open %1:\n%2", [path, e]))
             }
         }
 
@@ -604,7 +605,7 @@ namespace tinox.ide.editor
             catch (e: String)
             {
                 this.logger.warn("could not save " + f.path + ": " + e)
-                this.dialogs.error("Save", "Cannot save " + f.path + ":\n" + e)
+                this.dialogs.error("Save", Tr::f("Cannot save %1:\n%2", [f.path, e]))
                 return false
             }
         }
@@ -676,7 +677,7 @@ namespace tinox.ide.editor
             }
             catch (e: String)
             {
-                this.dialogs.error("Save As", "Cannot save " + path + ":\n" + e)
+                this.dialogs.error("Save As", Tr::f("Cannot save %1:\n%2", [path, e]))
             }
         }
 

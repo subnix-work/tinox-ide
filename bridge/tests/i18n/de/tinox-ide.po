@@ -1,0 +1,45 @@
+# Test catalog for bridge/tests/i18n_test.cpp: strings no real catalog contains.
+msgid ""
+msgstr ""
+"Project-Id-Version: tinox-ide test\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Zzz Label"
+msgstr "Zzz Beschriftung"
+
+msgid "Zzz Tip"
+msgstr "Zzz Hinweis"
+
+msgid "Zzz &Action"
+msgstr "Zzz &Aktion"
+
+msgid "Zzz Tab"
+msgstr "Zzz Reiter"
+
+msgid "Zzz Choice"
+msgstr "Zzz Auswahl"
+
+msgid "Zzz Column"
+msgstr "Zzz Spalte"
+
+msgid "Zzz Placeholder"
+msgstr "Zzz Platzhalter"
+
+msgid "Zzz Same"
+msgstr "Zzz Gleich"
+
+msgctxt "menu"
+msgid "Zzz Same"
+msgstr "Zzz Gleich (Menü)"
+
+msgid "Zzz saved %1 of %2"
+msgstr "Zzz %2: %1 gespeichert"
+
+msgid "Zzz %1 file"
+msgid_plural "Zzz %1 files"
+msgstr[0] "Zzz %1 Datei"
+msgstr[1] "Zzz %1 Dateien"

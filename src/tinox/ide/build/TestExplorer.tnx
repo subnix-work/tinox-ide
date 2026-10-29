@@ -2,6 +2,7 @@ module tinox.ide.build
 
 import tinox.core.json
 import tinox.ide.app.MainWindow
+import tinox.ide.app.Tr
 import tinox.ide.editor.Documents
 import tinox.ide.ui.ItemView
 import tinox.ide.ui.Model
@@ -263,8 +264,8 @@ namespace tinox.ide.build
         /** "3 passed · 1 failed · 4 tests". */
         fn summary() -> String
         {
-            var text: String = this.count("passed").toString() + " passed · " + this.count("failed").toString() + " failed · " + this.cases.len().toString() + " tests"
-            if (this.errors.len() > 0) { text = text + " · " + this.errors.len().toString() + " not collected" }
+            var text: String = Tr::f("%1 passed · %2 failed · %3 tests", [this.count("passed").toString(), this.count("failed").toString(), this.cases.len().toString()])
+            if (this.errors.len() > 0) { text = text + Tr::f(" · %1 not collected", [this.errors.len().toString()]) }
             return text
         }
 

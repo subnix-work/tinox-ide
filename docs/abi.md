@@ -138,6 +138,7 @@ Until then the namespace is not in `core.capabilities`.
 
 | Namespace | Issue | Content |
 |---|---|---|
+| `i18n` | #32 | **implemented**, see [i18n.md](i18n.md): `i18n.translate` for messages Tinox assembles at run time |
 | `editor` | #12 | **implemented**, see [editor.md](editor.md): KTextEditor documents and views, edits, diagnostics, completion, hover |
 | `widget` | #9 | **implemented**, see [widget.md](widget.md): declarative widget tree, layouts, docks, tabs, widget events |
 | `action` | #10 | **implemented**, see [action.md](action.md): actions, menus, toolbars, shortcuts, command palette backend |

@@ -6,6 +6,7 @@ import tinox.ide.app.CommandContext
 import tinox.ide.app.IdeCommand
 import tinox.ide.app.MainWindow
 import tinox.ide.app.Store
+import tinox.ide.app.Tr
 import tinox.ide.build.HostCommand
 import tinox.ide.editor.Documents
 import tinox.ide.editor.OpenFile
@@ -443,7 +444,7 @@ namespace tinox.ide.debug
             if (reason == "") { reason = "stopped" }
             if (event.str("description") != "") { reason = reason + " (" + event.str("description") + ")" }
             this.say("\x1b[1mStopped: " + reason + "\x1b[0m\n")
-            store.set("status.message", "Stopped: " + reason)
+            store.set("status.message", Tr::f("Stopped: %1", [reason]))
             if (this.cursorPath != "")
             {
                 const path: String = this.cursorPath

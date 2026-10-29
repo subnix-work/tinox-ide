@@ -12,6 +12,7 @@ import tinox.ide.app.EventBus
 import tinox.ide.app.IdeCommand
 import tinox.ide.app.Logger
 import tinox.ide.app.Store
+import tinox.ide.app.Tr
 import tinox.ide.kde.Bridge
 import tinox.ide.kde.Event
 import tinox.ide.kde.EventLoop
@@ -266,7 +267,7 @@ namespace tinox.ide.workspace
             this.store.set("workspace.selection", "")
             this.store.setInt("workspace.selectionCount", 0)
             this.store.setBool("workspace.open", true)
-            this.store.set("status.message", "Opened " + this.manifest.title(clean))
+            this.store.set("status.message", Tr::f("Opened %1", [this.manifest.title(clean)]))
             this.bus.publish("workspace.opened", Js::object([Js::strField("path", clean), Js::strField("name", this.manifest.title(clean)), Js::boolField("hasManifest", this.manifest.present), Js::strField("entry", this.manifest.entry)]))
             this.actions.recentAdd("file_open_recent", clean)
             this.settings.setString("Workspace", "last", clean)
@@ -487,7 +488,7 @@ namespace tinox.ide.workspace
             {
                 names = picked.len().toString() + " items (" + FileSystem::baseName(picked[0]) + ", ...)"
             }
-            this.dialogs.ask("Delete", "Move " + names + " to the trash?", ["trash", "delete", "cancel"], ["Move to &Trash", "Delete &Permanently", "Cancel"], (answer: String) => this.deleteConfirmed(answer, picked))
+            this.dialogs.ask("Delete", Tr::f("Move %1 to the trash?", [names]), ["trash", "delete", "cancel"], ["Move to &Trash", "Delete &Permanently", "Cancel"], (answer: String) => this.deleteConfirmed(answer, picked))
         }
 
         /** The answer of the Delete dialog. */

@@ -11,3 +11,5 @@ Accessibility (issue #32): accessible names on all focusable widgets with an aut
 project tree, bottom panel and editor, a Debug menu, legible log colours on dark and high-contrast schemes.
 File-scoped test discovery (issue #63): Discover Tests in Current File, a scope label above the test tree, and a cancelled
 discovery no longer replaces earlier results.
+Localisation (issue #32): the bridge translates the UI strings it is given (KDE catalogs, domain tinox-ide), `Tr` for messages
+assembled at run time, `scripts/i18n-extract.py` and a German translation.

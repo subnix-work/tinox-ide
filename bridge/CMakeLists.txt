@@ -39,7 +39,7 @@ pkg_check_modules(GC REQUIRED IMPORTED_TARGET bdw-gc)
 find_package(Threads REQUIRED)
 
 add_library(tinoxkde SHARED
-    src/abi.cpp src/bridge.cpp src/terminal/terminal.cpp
+    src/abi.cpp src/bridge.cpp src/i18n.cpp src/terminal/terminal.cpp
     src/editor/editor.cpp src/editor/diagnostics.cpp src/editor/semantics.cpp src/editor/completion.cpp src/editor/viewfeatures.cpp src/editor/breakpoints.cpp
     src/widget/widget.cpp src/action/action.cpp src/model/model.cpp
     src/dialog/dialog.cpp src/dialog/config.cpp src/dialog/notify.cpp)
@@ -56,6 +56,11 @@ set_target_properties(tinoxkde PROPERTIES
 
 install(TARGETS tinoxkde LIBRARY DESTINATION ${KDE_INSTALL_LIBDIR})
 install(FILES include/tinoxkde.h DESTINATION ${KDE_INSTALL_INCLUDEDIR})
+
+# Translations: po/<language>/tinox-ide.po become share/locale/<language>/LC_MESSAGES/tinox-ide.mo (docs/i18n.md)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../po")
+    ki18n_install("${CMAKE_CURRENT_SOURCE_DIR}/../po")
+endif()
 
 # Install the separately compiled Tinox executable and its freedesktop/KDE resources.
 # Plain bridge builds remain possible without a Tinox binary.
@@ -127,6 +132,27 @@ if(BUILD_TESTING)
     target_compile_definitions(widget_test PRIVATE TKDE_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/widget")
     add_test(NAME widget COMMAND widget_test)
     set_tests_properties(widget PROPERTIES TIMEOUT 180)
+
+    # A German test catalog, compiled into a private share directory the test puts into XDG_DATA_DIRS.
+    find_program(MSGFMT msgfmt)
+    if(MSGFMT)
+        set(I18N_SHARE "${CMAKE_CURRENT_BINARY_DIR}/i18n-share")
+        add_custom_command(OUTPUT "${I18N_SHARE}/locale/de/LC_MESSAGES/tinox-ide.mo"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${I18N_SHARE}/locale/de/LC_MESSAGES"
+            COMMAND ${MSGFMT} -o "${I18N_SHARE}/locale/de/LC_MESSAGES/tinox-ide.mo" "${CMAKE_CURRENT_SOURCE_DIR}/tests/i18n/de/tinox-ide.po"
+            DEPENDS tests/i18n/de/tinox-ide.po)
+        add_custom_target(i18n_test_catalog DEPENDS "${I18N_SHARE}/locale/de/LC_MESSAGES/tinox-ide.mo")
+        add_executable(i18n_test tests/i18n_test.cpp)
+        add_dependencies(i18n_test i18n_test_catalog)
+        target_link_libraries(i18n_test PRIVATE tinoxkde Qt6::Core Qt6::Gui Threads::Threads PkgConfig::GC)
+        set_target_properties(i18n_test PROPERTIES AUTOMOC OFF)
+        target_compile_options(i18n_test PRIVATE -UQT_NO_CAST_FROM_ASCII -UQT_NO_CAST_TO_ASCII)
+        target_compile_definitions(i18n_test PRIVATE TKDE_I18N_SHARE="${I18N_SHARE}")
+        add_test(NAME i18n COMMAND i18n_test)
+        set_tests_properties(i18n PROPERTIES TIMEOUT 120)
+    else()
+        message(STATUS "msgfmt not found: the i18n test is skipped")
+    endif()
 
     find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Test)
     add_executable(action_test tests/action_test.cpp)

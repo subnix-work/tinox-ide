@@ -1,0 +1,74 @@
+import tinox.core.json
+import tinox.ide.IdeApp
+import tinox.ide.app.Tr
+import tinox.ide.kde.App
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+
+class Main
+{
+    fnc main() -> Int32
+    {
+        return App::run("tinoxide", "Tinox Translation Smoke", (events: EventLoop) => Main::logic(events))
+    }
+
+    fnc logic(events: EventLoop) -> Int32
+    {
+        const results: List<Bool> = []
+        events.onType("core.ready", (event: Event) => Main::check(events, results))
+        events.run()
+        if (results.len() != 1 || !results[0]) { return 1 }
+        return 0
+    }
+
+    fnc expect(ok: Bool, message: String) -> Nothing
+    {
+        if (!ok) { throw message }
+    }
+
+    /** The text of an action as the bridge has it ("" when unknown). */
+    fnc actionText(id: String) -> String
+    {
+        const reply: JsonValue = Bridge::query(Command::named("action.list").build())
+        for item in reply.getField("actions").asList()
+        {
+            if (item.getField("id").getString() == id) { return item.getField("text").getString() }
+        }
+        return ""
+    }
+
+    fnc check(events: EventLoop, results: List<Bool>) -> Nothing
+    {
+        const app: IdeApp = IdeApp::start(events)
+        try
+        {
+            app.events.pump(100)
+            // commands and menus
+            Main::expect(Main::actionText("build.build") == "&Erstellen", "build.build: " + Main::actionText("build.build"))
+            Main::expect(Main::actionText("debug.start") == "&Debuggen starten", "debug.start: " + Main::actionText("debug.start"))
+            // the widget tree of the window
+            const dump: String = Json::stringify(Bridge::query(Command::named("widget.debug.dump").target(app.window.mount.mountId).build()))
+            Main::expect(dump.contains("Ordner öffnen…"), "the Open Folder button is not German")
+            Main::expect(dump.contains("Kein Ordner geöffnet"), "the empty-project hint is not German")
+            Main::expect(dump.contains("Probleme und Ausgabe"), "the bottom dock title is not German")
+            Main::expect(dump.contains("Aufrufstapel"), "the call stack tab is not German")
+            // messages the IDE assembles
+            Main::expect(Tr::f("Opened %1", ["Main.tnx"]) == "Main.tnx geöffnet", "Tr::f: " + Tr::f("Opened %1", ["Main.tnx"]))
+            Main::expect(Tr::n("%1 test found", "%1 tests found", 3, []) == "3 Tests gefunden", "Tr::n: " + Tr::n("%1 test found", "%1 tests found", 3, []))
+            Main::expect(Tr::n("%1 test found", "%1 tests found", 1, []) == "1 Test gefunden", "Tr::n one")
+            // data is never translated
+            Main::expect(Tr::t("Main.tnx") == "Main.tnx", "data changed")
+            Main::expect(events.failureCount() == 0, "an event-loop handler failed")
+            println("i18n: commands, menus, widgets and assembled messages are German under LANGUAGE=de")
+            results.push(true)
+        }
+        catch (e: String)
+        {
+            printStderr("i18n smoke failed: " + e)
+            results.push(false)
+        }
+        app.quit()
+    }
+}

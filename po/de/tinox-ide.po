@@ -1,0 +1,955 @@
+# German translation of the Tinox IDE.
+msgid ""
+msgstr ""
+"Project-Id-Version: tinox-ide\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-10-29 21:00+0100\n"
+"Last-Translator: Tinox IDE contributors\n"
+"Language-Team: German\n"
+"Language: de\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/tinox/ide/build/TestExplorer.tnx:268
+msgid " · %1 not collected"
+msgstr " · %1 nicht erfasst"
+
+#: src/tinox/ide/build/TestExplorer.tnx:267
+msgid "%1 passed · %2 failed · %3 tests"
+msgstr "%1 bestanden · %2 fehlgeschlagen · %3 Tests"
+
+#: src/tinox/ide/build/BuildService.tnx:307
+msgid "%1 started"
+msgstr "%1 gestartet"
+
+#: src/tinox/ide/build/BuildService.tnx:560
+msgid "%1 stopped"
+msgstr "%1 angehalten"
+
+#: src/tinox/ide/build/BuildService.tnx:568
+msgid "%1 succeeded"
+msgstr "%1 erfolgreich"
+
+#: src/tinox/ide/build/BuildService.tnx:565
+msgid "%1 test found"
+msgid_plural "%1 tests found"
+msgstr[0] "%1 Test gefunden"
+msgstr[1] "%1 Tests gefunden"
+
+#: src/tinox/ide/build/BuildService.tnx:564
+msgid "%1 test found in %2"
+msgid_plural "%1 tests found in %2"
+msgstr[0] "%1 Test in %2 gefunden"
+msgstr[1] "%1 Tests in %2 gefunden"
+
+#: src/tinox/ide/build/BuildService.tnx:567
+msgid "%2 failed: %1 error"
+msgid_plural "%2 failed: %1 errors"
+msgstr[0] "%2 fehlgeschlagen: %1 Fehler"
+msgstr[1] "%2 fehlgeschlagen: %1 Fehler"
+
+#: src/tinox/ide/app/MainWindow.tnx:250 src/tinox/ide/build/BuildService.tnx:121 src/tinox/ide/examples/ShellExample.tnx:124
+#, no-c-format
+msgid "&Build"
+msgstr "&Erstellen"
+
+#: src/tinox/ide/build/BuildService.tnx:122
+#, no-c-format
+msgid "&Check"
+msgstr "&Prüfen"
+
+#: src/tinox/ide/debug/DebugService.tnx:133
+#, no-c-format
+msgid "&Continue"
+msgstr "&Fortsetzen"
+
+#: src/tinox/ide/app/MainWindow.tnx:250
+#, no-c-format
+msgid "&Debug"
+msgstr "&Debuggen"
+
+#: src/tinox/ide/workspace/Workspace.tnx:132
+#, no-c-format
+msgid "&Delete…"
+msgstr "&Löschen…"
+
+#: src/tinox/ide/build/BuildService.tnx:130
+#, no-c-format
+msgid "&Discover Tests"
+msgstr "Tests &erkennen"
+
+#: src/tinox/ide/app/MainWindow.tnx:250
+#, no-c-format
+msgid "&Edit"
+msgstr "&Bearbeiten"
+
+#: src/tinox/ide/build/BuildService.tnx:126
+#, no-c-format
+msgid "&Edit Run Configurations…"
+msgstr "Startkonfigurationen &bearbeiten…"
+
+#: src/tinox/ide/app/MainWindow.tnx:250 src/tinox/ide/examples/ShellExample.tnx:123
+#, no-c-format
+msgid "&File"
+msgstr "&Datei"
+
+#: src/tinox/ide/search/FindInFiles.tnx:102
+#, no-c-format
+msgid "&Find in Files…"
+msgstr "In Dateien &suchen…"
+
+#: src/tinox/ide/editing/EditService.tnx:52
+#, no-c-format
+msgid "&Format Document"
+msgstr "Dokument &formatieren"
+
+#: src/tinox/ide/app/MainWindow.tnx:250
+#, no-c-format
+msgid "&Go"
+msgstr "&Gehe zu"
+
+#: src/tinox/ide/diagnostics/Problems.tnx:40
+#, no-c-format
+msgid "&Next Problem"
+msgstr "&Nächstes Problem"
+
+#: src/tinox/ide/editor/Documents.tnx:103
+#, no-c-format
+msgid "&Next Tab"
+msgstr "&Nächster Reiter"
+
+#: src/tinox/ide/editing/EditService.tnx:55
+#, no-c-format
+msgid "&Organize Imports"
+msgstr "Importe &ordnen"
+
+#: src/tinox/ide/debug/DebugService.tnx:134
+#, no-c-format
+msgid "&Pause"
+msgstr "&Pause"
+
+#: src/tinox/ide/diagnostics/Problems.tnx:41
+#, no-c-format
+msgid "&Previous Problem"
+msgstr "&Vorheriges Problem"
+
+#: src/tinox/ide/editor/Documents.tnx:104
+#, no-c-format
+msgid "&Previous Tab"
+msgstr "&Vorheriger Reiter"
+
+#: src/tinox/ide/editor/Documents.tnx:99
+#, no-c-format
+msgid "&Reload from Disk"
+msgstr "Von Festplatte neu &laden"
+
+#: src/tinox/ide/editor/Documents.tnx:102
+#, no-c-format
+msgid "&Remove Split"
+msgstr "Teilung &entfernen"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:82
+#, no-c-format
+msgid "&Rename Symbol…"
+msgstr "Symbol &umbenennen…"
+
+#: src/tinox/ide/workspace/Workspace.tnx:131
+#, no-c-format
+msgid "&Rename…"
+msgstr "&Umbenennen…"
+
+#: src/tinox/ide/build/BuildService.tnx:123
+#, no-c-format
+msgid "&Run"
+msgstr "&Ausführen"
+
+#: src/tinox/ide/app/MainWindow.tnx:250
+#, no-c-format
+msgid "&Search"
+msgstr "&Suchen"
+
+#: src/tinox/ide/build/BuildService.tnx:124
+#, no-c-format
+msgid "&Stop"
+msgstr "&Stopp"
+
+#: src/tinox/ide/workspace/Workspace.tnx:133
+#, no-c-format
+msgid "&Undo File Operation"
+msgstr "Dateioperation &rückgängig machen"
+
+#: src/tinox/ide/search/FindInFiles.tnx:105
+#, no-c-format
+msgid "&Undo Replace in Files"
+msgstr "Ersetzen in Dateien &rückgängig machen"
+
+#: src/tinox/ide/app/MainWindow.tnx:250 src/tinox/ide/examples/ShellExample.tnx:125
+#, no-c-format
+msgid "&View"
+msgstr "&Ansicht"
+
+#: bridge/src/bridge.cpp:144
+msgid "(c) 2026 Tino Gohl"
+msgstr "(c) 2026 Tino Gohl"
+
+#: src/tinox/ide/debug/DebugService.tnx:237
+msgid "A debug session is already running"
+msgstr "Es läuft bereits eine Debug-Sitzung"
+
+#: src/tinox/ide/build/BuildService.tnx:281
+msgid "A task is already running"
+msgstr "Es läuft bereits eine Aufgabe"
+
+#: src/tinox/ide/search/FindInFiles.tnx:141
+msgid "Aa"
+msgstr "Aa"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:117 src/tinox/ide/navigation/NavigationService.tnx:83
+msgid "Apply Rename"
+msgstr "Umbenennung anwenden"
+
+#: src/tinox/ide/settings/Preferences.tnx:50
+msgid "Autosave interval in seconds"
+msgstr "Intervall der automatischen Speicherung in Sekunden"
+
+#: src/tinox/ide/build/BuildService.tnx:121 src/tinox/ide/build/BuildService.tnx:122 src/tinox/ide/build/BuildService.tnx:123 src/tinox/ide/build/BuildService.tnx:124
+msgid "Build"
+msgstr "Erstellen"
+
+#: src/tinox/ide/build/BuildService.tnx:91
+msgid "Build output"
+msgstr "Erstellungsausgabe"
+
+#: src/tinox/ide/build/BuildService.tnx:92
+msgid "Build problems"
+msgstr "Erstellungsprobleme"
+
+#: src/tinox/ide/build/BuildService.tnx:92
+msgid "Build Problems"
+msgstr "Erstellungsprobleme"
+
+#: src/tinox/ide/debug/DebugService.tnx:98
+msgid "Call stack"
+msgstr "Aufrufstapel"
+
+#: src/tinox/ide/debug/DebugService.tnx:98
+msgid "Call Stack"
+msgstr "Aufrufstapel"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:117 src/tinox/ide/search/FindInFiles.tnx:144
+msgid "Cancel"
+msgstr "Abbrechen"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:84
+msgid "Cancel Rename"
+msgstr "Umbenennung abbrechen"
+
+#: src/tinox/ide/search/FindInFiles.tnx:104
+msgid "Cancel Search"
+msgstr "Suche abbrechen"
+
+#: src/tinox/ide/editor/Documents.tnx:303 src/tinox/ide/editor/Documents.tnx:320
+msgid "Cannot open %1:\n%2"
+msgstr "%1 kann nicht geöffnet werden:\n%2"
+
+#: src/tinox/ide/build/BuildService.tnx:662 src/tinox/ide/editor/Documents.tnx:608 src/tinox/ide/editor/Documents.tnx:680
+msgid "Cannot save %1:\n%2"
+msgstr "%1 kann nicht gespeichert werden:\n%2"
+
+#: src/tinox/ide/settings/SettingsDialog.tnx:229
+msgid "Changes are saved and applied at once."
+msgstr "Änderungen werden sofort gespeichert und angewendet."
+
+#: src/tinox/ide/settings/SettingsDialog.tnx:230
+msgid "Close"
+msgstr "Schließen"
+
+#: src/tinox/ide/editor/Documents.tnx:98
+#, no-c-format
+msgid "Close All &Files"
+msgstr "Alle &Dateien schließen"
+
+#: src/tinox/ide/workspace/Workspace.tnx:128
+#, no-c-format
+msgid "Close Fol&der"
+msgstr "&Ordner schließen"
+
+#: src/tinox/ide/workspace/Workspace.tnx:309
+msgid "Closed the project"
+msgstr "Projekt geschlossen"
+
+#: src/tinox/ide/build/BuildService.tnx:90 src/tinox/ide/diagnostics/Problems.tnx:37
+msgid "Code"
+msgstr "Code"
+
+#: src/tinox/ide/editing/EditService.tnx:54
+#, no-c-format
+msgid "Code &Actions…"
+msgstr "Code-&Aktionen…"
+
+#: src/tinox/ide/app/MainWindow.tnx:218
+msgid "Code Actions"
+msgstr "Code-Aktionen"
+
+#: src/tinox/ide/app/MainWindow.tnx:218
+msgid "Code actions (Alt+Enter)"
+msgstr "Code-Aktionen (Alt+Eingabe)"
+
+#: src/tinox/ide/settings/Preferences.tnx:53
+msgid "Colour theme"
+msgstr "Farbschema"
+
+#: src/tinox/ide/search/Navigation.tnx:55
+#, no-c-format
+msgid "Command &Palette…"
+msgstr "Befehls&palette…"
+
+#: src/tinox/ide/settings/SettingsDialog.tnx:243
+msgid "Configure Editor…"
+msgstr "Editor einrichten…"
+
+#: src/tinox/ide/settings/SettingsDialog.tnx:247
+msgid "Configure Shortcuts…"
+msgstr "Tastenkürzel einrichten…"
+
+#: src/tinox/ide/debug/DebugService.tnx:132 src/tinox/ide/debug/DebugService.tnx:133 src/tinox/ide/debug/DebugService.tnx:134 src/tinox/ide/debug/DebugService.tnx:135
+msgid "Debug"
+msgstr "Debuggen"
+
+#: src/tinox/ide/debug/DebugService.tnx:100
+msgid "Debug Console"
+msgstr "Debug-Konsole"
+
+#: src/tinox/ide/debug/DebugService.tnx:100
+msgid "Debug console input"
+msgstr "Eingabe der Debug-Konsole"
+
+#: src/tinox/ide/debug/DebugService.tnx:100
+msgid "Debug console output"
+msgstr "Ausgabe der Debug-Konsole"
+
+#: src/tinox/ide/build/BuildService.tnx:563
+msgid "Debugger started"
+msgstr "Debugger gestartet"
+
+#: src/tinox/ide/workspace/Workspace.tnx:491 src/tinox/ide/workspace/Workspace.tnx:519
+msgid "Delete"
+msgstr "Löschen"
+
+#: src/tinox/ide/search/Picker.tnx:50
+msgid "Detail"
+msgstr "Details"
+
+#: src/tinox/ide/build/BuildService.tnx:131
+#, no-c-format
+msgid "Discover Tests in Current Fi&le"
+msgstr "Tests der aktuellen &Datei erkennen"
+
+#: src/tinox/ide/build/BuildService.tnx:257
+msgid "Discovered: %1 (other files keep their earlier results)"
+msgstr "Erkannt: %1 (andere Dateien behalten ihre früheren Ergebnisse)"
+
+#: src/tinox/ide/build/BuildService.tnx:256
+msgid "Discovered: all tests in the workspace"
+msgstr "Erkannt: alle Tests des Arbeitsbereichs"
+
+#: src/tinox/ide/editing/EditService.tnx:52 src/tinox/ide/editing/EditService.tnx:53 src/tinox/ide/editing/EditService.tnx:54 src/tinox/ide/editing/EditService.tnx:55
+msgid "Edit"
+msgstr "Bearbeiten"
+
+#: bridge/src/editor/editor.cpp:382
+msgctxt "accessible name of the text editor, %1 is the file name"
+msgid "Editor: %1"
+msgstr "Editor: %1"
+
+#: src/tinox/ide/app/ErrorReporter.tnx:58
+msgid "Error in %1: %2"
+msgstr "Fehler in %1: %2"
+
+#: src/tinox/ide/debug/DebugService.tnx:100
+msgid "Evaluate an expression or run a debugger command"
+msgstr "Ausdruck auswerten oder Debugger-Befehl ausführen"
+
+#: src/tinox/ide/settings/Preferences.tnx:55
+msgid "Extra arguments"
+msgstr "Zusätzliche Argumente"
+
+#: src/tinox/ide/settings/Preferences.tnx:57
+msgid "Extra arguments for tinox"
+msgstr "Zusätzliche Argumente für tinox"
+
+#: src/tinox/ide/editor/Documents.tnx:97 src/tinox/ide/editor/Documents.tnx:98 src/tinox/ide/editor/Documents.tnx:99 src/tinox/ide/navigation/NavigationService.tnx:77
+msgid "File"
+msgstr "Datei"
+
+#: src/tinox/ide/editor/Documents.tnx:866
+msgid "File Changed"
+msgstr "Datei geändert"
+
+#: src/tinox/ide/examples/ShellExample.tnx:104
+msgid "Files"
+msgstr "Dateien"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:81
+#, no-c-format
+msgid "Find &References"
+msgstr "&Verweise suchen"
+
+#: src/tinox/ide/search/FindInFiles.tnx:140
+msgid "Find in files"
+msgstr "In Dateien suchen"
+
+#: src/tinox/ide/IdeApp.tnx:179
+#, no-c-format
+msgid "Focus &Editor"
+msgstr "&Editor fokussieren"
+
+#: src/tinox/ide/IdeApp.tnx:178
+#, no-c-format
+msgid "Focus Pro&blems and Output"
+msgstr "Pro&bleme und Ausgabe fokussieren"
+
+#: src/tinox/ide/IdeApp.tnx:177
+#, no-c-format
+msgid "Focus Pro&ject Tree"
+msgstr "Pro&jektbaum fokussieren"
+
+#: src/tinox/ide/settings/SettingsDialog.tnx:243
+msgid "Fonts, indentation, ..."
+msgstr "Schriften, Einrückung, …"
+
+#: src/tinox/ide/editing/EditService.tnx:53
+#, no-c-format
+msgid "Format &Selection"
+msgstr "&Auswahl formatieren"
+
+#: src/tinox/ide/settings/Preferences.tnx:52
+msgid "Format Tinox files before saving"
+msgstr "Tinox-Dateien vor dem Speichern formatieren"
+
+#: src/tinox/ide/debug/DebugService.tnx:96
+msgid "Frame"
+msgstr "Frame"
+
+#: src/tinox/ide/diagnostics/Problems.tnx:40 src/tinox/ide/diagnostics/Problems.tnx:41 src/tinox/ide/navigation/NavigationService.tnx:80 src/tinox/ide/navigation/NavigationService.tnx:81
+msgid "Go"
+msgstr "Gehe zu"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:80
+#, no-c-format
+msgid "Go to &Definition"
+msgstr "Zur &Definition gehen"
+
+#: src/tinox/ide/search/Navigation.tnx:54
+#, no-c-format
+msgid "Go to &File…"
+msgstr "Zu &Datei gehen…"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:88
+#, no-c-format
+msgid "Go to Workspace &Symbol…"
+msgstr "Zu Arbeitsbereichs-&Symbol gehen…"
+
+#: src/tinox/ide/editing/EditService.tnx:320
+msgid "Imports are already organized"
+msgstr "Die Importe sind bereits geordnet"
+
+#: src/tinox/ide/settings/Preferences.tnx:51
+msgid "Keep a backup copy (name~) when saving"
+msgstr "Beim Speichern eine Sicherungskopie (name~) behalten"
+
+#: src/tinox/ide/settings/SettingsDialog.tnx:247
+msgid "Keyboard"
+msgstr "Tastatur"
+
+#: src/tinox/ide/settings/Preferences.tnx:54
+msgid "Language server (tinox-lsp)"
+msgstr "Sprachserver (tinox-lsp)"
+
+#: src/tinox/ide/build/BuildService.tnx:90 src/tinox/ide/debug/DebugService.tnx:96 src/tinox/ide/diagnostics/Problems.tnx:37
+msgid "Location"
+msgstr "Ort"
+
+#: src/tinox/ide/app/MainWindow.tnx:195 src/tinox/ide/examples/ShellExample.tnx:103
+msgid "Main"
+msgstr "Hauptleiste"
+
+#: src/tinox/ide/search/FindInFiles.tnx:89
+msgid "Match"
+msgstr "Treffer"
+
+#: src/tinox/ide/search/FindInFiles.tnx:141
+msgid "Match case"
+msgstr "Groß-/Kleinschreibung beachten"
+
+#: src/tinox/ide/build/BuildService.tnx:90 src/tinox/ide/diagnostics/Problems.tnx:37
+msgid "Message"
+msgstr "Meldung"
+
+#: src/tinox/ide/workspace/Workspace.tnx:575
+msgid "Move"
+msgstr "Verschieben"
+
+#: src/tinox/ide/workspace/Workspace.tnx:491
+msgid "Move %1 to the trash?"
+msgstr "%1 in den Papierkorb verschieben?"
+
+#: src/tinox/ide/debug/DebugService.tnx:96 src/tinox/ide/examples/ShellExample.tnx:58 src/tinox/ide/search/Picker.tnx:50
+msgid "Name"
+msgstr "Name"
+
+#: bridge/src/bridge.cpp:143
+msgid "Native IDE for the Tinox language"
+msgstr "Native IDE für die Sprache Tinox"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:86
+#, no-c-format
+msgid "Navigate &Back"
+msgstr "&Zurück navigieren"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:87
+#, no-c-format
+msgid "Navigate &Forward"
+msgstr "&Vorwärts navigieren"
+
+#: src/tinox/ide/workspace/Workspace.tnx:129
+#, no-c-format
+msgid "New &File…"
+msgstr "Neue &Datei…"
+
+#: src/tinox/ide/workspace/Workspace.tnx:411
+msgid "New File"
+msgstr "Neue Datei"
+
+#: src/tinox/ide/workspace/Workspace.tnx:130
+#, no-c-format
+msgid "New Fo&lder…"
+msgstr "Neuer &Ordner…"
+
+#: src/tinox/ide/workspace/Workspace.tnx:436
+msgid "New Folder"
+msgstr "Neuer Ordner"
+
+#: src/tinox/ide/editing/EditService.tnx:323
+msgid "No code actions at this position"
+msgstr "An dieser Stelle gibt es keine Code-Aktionen"
+
+#: src/tinox/ide/app/MainWindow.tnx:199
+msgid "No folder open"
+msgstr "Kein Ordner geöffnet"
+
+#: src/tinox/ide/workspace/Workspace.tnx:126
+#, no-c-format
+msgid "Open &Folder…"
+msgstr "&Ordner öffnen…"
+
+#: src/tinox/ide/terminal/TerminalPanel.tnx:38
+#, no-c-format
+msgid "Open &Terminal"
+msgstr "&Terminal öffnen"
+
+#: src/tinox/ide/build/BuildService.tnx:286
+msgid "Open a folder first"
+msgstr "Öffnen Sie zuerst einen Ordner"
+
+#: src/tinox/ide/app/MainWindow.tnx:73
+msgid "Open a folder or a file to start"
+msgstr "Öffnen Sie zum Start einen Ordner oder eine Datei"
+
+#: src/tinox/ide/editor/Documents.tnx:303 src/tinox/ide/editor/Documents.tnx:320
+msgid "Open File"
+msgstr "Datei öffnen"
+
+#: src/tinox/ide/app/MainWindow.tnx:220
+msgid "Open files"
+msgstr "Geöffnete Dateien"
+
+#: src/tinox/ide/workspace/Workspace.tnx:212
+msgid "Open Folder"
+msgstr "Ordner öffnen"
+
+#: src/tinox/ide/app/MainWindow.tnx:200
+msgid "Open Folder…"
+msgstr "Ordner öffnen…"
+
+#: src/tinox/ide/build/BuildService.tnx:245
+msgid "Open or select a Tinox file to discover its tests"
+msgstr "Öffnen oder wählen Sie eine Tinox-Datei, um ihre Tests zu erkennen"
+
+#: src/tinox/ide/terminal/TerminalPanel.tnx:121
+msgid "Open Terminal"
+msgstr "Terminal öffnen"
+
+#: src/tinox/ide/workspace/Workspace.tnx:270
+msgid "Opened %1"
+msgstr "%1 geöffnet"
+
+#: src/tinox/ide/app/MainWindow.tnx:209
+msgid "Outline"
+msgstr "Gliederung"
+
+#: src/tinox/ide/app/MainWindow.tnx:216
+msgid "Output"
+msgstr "Ausgabe"
+
+#: src/tinox/ide/settings/SettingsDialog.tnx:52
+msgid "Page"
+msgstr "Seite"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:77
+msgid "Position"
+msgstr "Position"
+
+#: src/tinox/ide/app/MainWindow.tnx:215
+msgid "Problems"
+msgstr "Probleme"
+
+#: src/tinox/ide/app/MainWindow.tnx:210
+msgid "Problems and Output"
+msgstr "Probleme und Ausgabe"
+
+#: src/tinox/ide/app/MainWindow.tnx:213
+msgid "Problems and output panels"
+msgstr "Bereiche für Probleme und Ausgabe"
+
+#: src/tinox/ide/build/BuildService.tnx:562
+msgid "Program exited with status %1"
+msgstr "Programm beendet mit Status %1"
+
+#: src/tinox/ide/app/MainWindow.tnx:202
+msgid "Project files"
+msgstr "Projektdateien"
+
+#: src/tinox/ide/workspace/Workspace.tnx:134
+#, no-c-format
+msgid "Re&fresh Project"
+msgstr "Projekt &aktualisieren"
+
+#: src/tinox/ide/IdeApp.tnx:166
+msgid "Ready"
+msgstr "Bereit"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:117
+msgid "References / Rename"
+msgstr "Verweise / Umbenennen"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:117
+msgid "References and rename preview"
+msgstr "Verweise und Umbenennungsvorschau"
+
+#: src/tinox/ide/search/FindInFiles.tnx:142
+msgid "Regular expression"
+msgstr "Regulärer Ausdruck"
+
+#: src/tinox/ide/editor/Documents.tnx:908
+msgid "Reload"
+msgstr "Neu laden"
+
+#: src/tinox/ide/debug/DebugService.tnx:141
+#, no-c-format
+msgid "Remove &All Breakpoints"
+msgstr "&Alle Haltepunkte entfernen"
+
+#: src/tinox/ide/workspace/Workspace.tnx:474
+msgid "Rename"
+msgstr "Umbenennen"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:574
+msgid "Rename applied to buffers; save when ready. Undo Rename Across Files: Ctrl+Alt+Z"
+msgstr "Umbenennung auf die Puffer angewendet; speichern Sie, wenn Sie fertig sind. Umbenennung in allen Dateien rückgängig machen: Strg+Alt+Z"
+
+#: src/tinox/ide/settings/Preferences.tnx:47
+msgid "Reopen the last project on start"
+msgstr "Beim Start das letzte Projekt wieder öffnen"
+
+#: src/tinox/ide/search/FindInFiles.tnx:103
+#, no-c-format
+msgid "Rep&lace in Files…"
+msgstr "In Dateien &ersetzen…"
+
+#: src/tinox/ide/search/FindInFiles.tnx:147
+msgid "Replace All"
+msgstr "Alle ersetzen"
+
+#: src/tinox/ide/search/FindInFiles.tnx:344
+msgid "Replace in Files"
+msgstr "In Dateien ersetzen"
+
+#: src/tinox/ide/search/FindInFiles.tnx:146
+msgid "Replace with"
+msgstr "Ersetzen durch"
+
+#: src/tinox/ide/build/BuildService.tnx:132
+#, no-c-format
+msgid "Rerun Tests on Sa&ve"
+msgstr "Tests beim Spei&chern erneut ausführen"
+
+#: src/tinox/ide/lsp/LanguageService.tnx:62
+#, no-c-format
+msgid "Restart &Language Server"
+msgstr "&Sprachserver neu starten"
+
+#: src/tinox/ide/settings/Preferences.tnx:48
+msgid "Restore the open files on start"
+msgstr "Beim Start die geöffneten Dateien wiederherstellen"
+
+#: src/tinox/ide/build/TestExplorer.tnx:48
+msgid "Result"
+msgstr "Ergebnis"
+
+#: src/tinox/ide/search/Picker.tnx:65
+msgid "Results"
+msgstr "Ergebnisse"
+
+#: src/tinox/ide/build/BuildService.tnx:303
+msgid "Run"
+msgstr "Ausführen"
+
+#: src/tinox/ide/build/BuildService.tnx:127
+#, no-c-format
+msgid "Run &All Tests"
+msgstr "&Alle Tests ausführen"
+
+#: src/tinox/ide/build/BuildService.tnx:129
+#, no-c-format
+msgid "Run &Failed Tests"
+msgstr "&Fehlgeschlagene Tests ausführen"
+
+#: src/tinox/ide/build/BuildService.tnx:645
+msgid "Run Configuration"
+msgstr "Startkonfiguration"
+
+#: src/tinox/ide/build/BuildService.tnx:654
+msgid "Run configuration: %1"
+msgstr "Startkonfiguration: %1"
+
+#: src/tinox/ide/build/BuildService.tnx:662
+msgid "Run Configurations"
+msgstr "Startkonfigurationen"
+
+#: src/tinox/ide/build/BuildService.tnx:128
+#, no-c-format
+msgid "Run Tests in &Selected File"
+msgstr "Tests der &ausgewählten Datei ausführen"
+
+#: src/tinox/ide/debug/DebugService.tnx:138
+#, no-c-format
+msgid "Run to Cu&rsor"
+msgstr "Bis zum Cu&rsor ausführen"
+
+#: src/tinox/ide/debug/DebugService.tnx:463
+msgid "Running"
+msgstr "Läuft"
+
+#: src/tinox/ide/app/MainWindow.tnx:250
+#, no-c-format
+msgid "S&ettings"
+msgstr "E&instellungen"
+
+#: src/tinox/ide/debug/DebugService.tnx:139
+#, no-c-format
+msgid "S&top Debugging"
+msgstr "Debuggen &beenden"
+
+#: src/tinox/ide/editor/Documents.tnx:608
+msgid "Save"
+msgstr "Speichern"
+
+#: src/tinox/ide/editor/Documents.tnx:97
+#, no-c-format
+msgid "Save A&ll"
+msgstr "&Alles speichern"
+
+#: src/tinox/ide/settings/Preferences.tnx:58
+msgid "Save all files before building"
+msgstr "Vor dem Erstellen alle Dateien speichern"
+
+#: src/tinox/ide/editor/Documents.tnx:655 src/tinox/ide/editor/Documents.tnx:665 src/tinox/ide/editor/Documents.tnx:680
+msgid "Save As"
+msgstr "Speichern unter"
+
+#: src/tinox/ide/settings/Preferences.tnx:49
+msgid "Save modified files automatically"
+msgstr "Geänderte Dateien automatisch speichern"
+
+#: src/tinox/ide/search/FindInFiles.tnx:102 src/tinox/ide/search/FindInFiles.tnx:103 src/tinox/ide/search/FindInFiles.tnx:104 src/tinox/ide/search/FindInFiles.tnx:105
+msgid "Search"
+msgstr "Suchen"
+
+#: src/tinox/ide/search/FindInFiles.tnx:149
+msgid "Search results"
+msgstr "Suchergebnisse"
+
+#: src/tinox/ide/build/BuildService.tnx:125
+#, no-c-format
+msgid "Select Run &Configuration…"
+msgstr "Startkonfiguration &wählen…"
+
+#: src/tinox/ide/build/BuildService.tnx:645
+msgid "Selected: %1"
+msgstr "Ausgewählt: %1"
+
+#: src/tinox/ide/settings/SettingsDialog.tnx:226
+msgid "Settings pages"
+msgstr "Einstellungsseiten"
+
+#: src/tinox/ide/settings/SettingsDialog.tnx:222
+msgid "Settings — Tinox IDE"
+msgstr "Einstellungen — Tinox IDE"
+
+#: src/tinox/ide/examples/ShellExample.tnx:101
+msgid "Shell example"
+msgstr "Shell-Beispiel"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:90
+#, no-c-format
+msgid "Show &Outline"
+msgstr "&Gliederung anzeigen"
+
+#: src/tinox/ide/diagnostics/Problems.tnx:39
+#, no-c-format
+msgid "Show &Problems"
+msgstr "&Probleme anzeigen"
+
+#: src/tinox/ide/IdeApp.tnx:176
+#, no-c-format
+msgid "Show &Problems and Output"
+msgstr "&Probleme und Ausgabe anzeigen"
+
+#: src/tinox/ide/IdeApp.tnx:175
+#, no-c-format
+msgid "Show &Project"
+msgstr "&Projekt anzeigen"
+
+#: src/tinox/ide/settings/Preferences.tnx:59
+msgid "Show the output panel when a build starts"
+msgstr "Ausgabebereich beim Start eines Builds anzeigen"
+
+#: src/tinox/ide/settings/Preferences.tnx:60
+msgid "Show the tool bar"
+msgstr "Werkzeugleiste anzeigen"
+
+#: src/tinox/ide/examples/ShellExample.tnx:58
+msgid "Size"
+msgstr "Größe"
+
+#: src/tinox/ide/diagnostics/Problems.tnx:37
+msgid "Source"
+msgstr "Quelle"
+
+#: src/tinox/ide/editor/Documents.tnx:101
+#, no-c-format
+msgid "Split &Down"
+msgstr "Nach &unten teilen"
+
+#: src/tinox/ide/editor/Documents.tnx:100
+#, no-c-format
+msgid "Split &Right"
+msgstr "Nach &rechts teilen"
+
+#: src/tinox/ide/debug/DebugService.tnx:132
+#, no-c-format
+msgid "Start &Debugging"
+msgstr "&Debuggen starten"
+
+#: src/tinox/ide/debug/DebugService.tnx:136
+#, no-c-format
+msgid "Step &Into"
+msgstr "&Einzelschritt hinein"
+
+#: src/tinox/ide/debug/DebugService.tnx:135
+#, no-c-format
+msgid "Step &Over"
+msgstr "Einzelschritt &über"
+
+#: src/tinox/ide/debug/DebugService.tnx:137
+#, no-c-format
+msgid "Step Ou&t"
+msgstr "Einzelschritt hera&us"
+
+#: src/tinox/ide/debug/DebugService.tnx:447
+msgid "Stopped: %1"
+msgstr "Angehalten: %1"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:77
+msgid "Symbol"
+msgstr "Symbol"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:77
+msgid "Symbol / Edit"
+msgstr "Symbol / Bearbeiten"
+
+#: src/tinox/ide/terminal/TerminalPanel.tnx:119
+msgid "Terminal"
+msgstr "Terminal"
+
+#: src/tinox/ide/build/TestExplorer.tnx:48
+msgid "Test"
+msgstr "Test"
+
+#: src/tinox/ide/build/BuildService.tnx:561
+msgid "Test discovery failed; the earlier tests are kept"
+msgstr "Die Testerkennung ist fehlgeschlagen; die bisherigen Tests bleiben erhalten"
+
+#: src/tinox/ide/build/BuildService.tnx:302 src/tinox/ide/build/BuildService.tnx:93
+msgid "Tests"
+msgstr "Tests"
+
+#: src/tinox/ide/debug/DebugService.tnx:96
+msgid "Thread"
+msgstr "Thread"
+
+#: src/tinox/ide/debug/DebugService.tnx:99
+msgid "Threads"
+msgstr "Threads"
+
+#: src/tinox/ide/build/TestExplorer.tnx:48
+msgid "Time"
+msgstr "Zeit"
+
+#: src/tinox/ide/settings/Preferences.tnx:56
+msgid "Tinox compiler"
+msgstr "Tinox-Compiler"
+
+#: src/tinox/ide/debug/DebugService.tnx:140
+#, no-c-format
+msgid "Toggle &Breakpoint"
+msgstr "&Haltepunkt umschalten"
+
+#: src/tinox/ide/lsp/LanguageService.tnx:62
+msgid "Tools"
+msgstr "Werkzeuge"
+
+#: src/tinox/ide/debug/DebugService.tnx:96
+msgid "Type"
+msgstr "Typ"
+
+#: src/tinox/ide/workspace/Workspace.tnx:540
+msgid "Undo"
+msgstr "Rückgängig"
+
+#: src/tinox/ide/navigation/NavigationService.tnx:85
+msgid "Undo Rename Across Files"
+msgstr "Umbenennung in allen Dateien rückgängig machen"
+
+#: src/tinox/ide/editor/Documents.tnx:1087 src/tinox/ide/editor/Documents.tnx:718
+msgid "Unsaved Changes"
+msgstr "Ungespeicherte Änderungen"
+
+#: src/tinox/ide/debug/DebugService.tnx:96
+msgid "Value"
+msgstr "Wert"
+
+#: src/tinox/ide/debug/DebugService.tnx:97
+msgid "Variables"
+msgstr "Variablen"
+
+#: src/tinox/ide/IdeApp.tnx:175 src/tinox/ide/IdeApp.tnx:176 src/tinox/ide/IdeApp.tnx:177 src/tinox/ide/IdeApp.tnx:178
+msgid "View"
+msgstr "Ansicht"
+
+#: src/tinox/ide/app/MainWindow.tnx:73
+msgid "Welcome"
+
+msgstr "Willkommen"

@@ -1,0 +1,26 @@
+import MockBridge
+import tinox.ide.kde.Bridge
+import tinox.ide.app.Tr
+
+class TrTest
+{
+    @Test("without a translating bridge the English text comes back with the arguments in place")
+    fn testFallback() -> Bool
+    {
+        return Tr::t("Ready") == "Ready" && Tr::c("menu", "Open") == "Open" && Tr::f("Saved %1 of %2", ["3", "main.tnx"]) == "Saved 3 of main.tnx" && Tr::f("%2 before %1", ["a", "b"]) == "b before a"
+    }
+
+    @Test("plurals fall back to the singular for one and the plural otherwise, with %1 the count")
+    fn testPlural() -> Bool
+    {
+        return Tr::n("%1 file", "%1 files", 1, []) == "1 file" && Tr::n("%1 file", "%1 files", 5, []) == "5 files" && Tr::n("%1 error in %2", "%1 errors in %2", 2, ["a.tnx"]) == "2 errors in a.tnx"
+    }
+
+    @Test("the bridge's answer is used when there is one")
+    fn testBridgeAnswer() -> Bool
+    {
+        Bridge::init("tr-test", "Tr test")
+        MockBridge::onCommand("i18n.translate", "{\"text\":\"3 gespeichert\"}", "")
+        return Tr::f("%1 saved", ["3"]) == "3 gespeichert"
+    }
+}

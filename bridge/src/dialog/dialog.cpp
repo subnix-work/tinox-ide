@@ -1,6 +1,7 @@
 #include "dialog.h"
 
 #include "../bridge.h"
+#include "../i18n.h"
 #include "configutil.h"
 #include "tinoxkde.h"
 
@@ -119,7 +120,7 @@ Reply fileDialog(Bridge &b, const QJsonObject &cmd, QFileDialog::AcceptMode mode
     if (cmd.contains(QStringLiteral("filters")) && !cmd.value(QStringLiteral("filters")).isArray()) {
         return invalid(QStringLiteral("\"filters\" is an array such as [\"Tinox (*.tnx)\", \"All files (*)\"]"));
     }
-    auto *dlg = new QFileDialog(parent, cmd.value(QStringLiteral("title")).toString(), cmd.value(QStringLiteral("dir")).toString());
+    auto *dlg = new QFileDialog(parent, tr(cmd.value(QStringLiteral("title")).toString()), cmd.value(QStringLiteral("dir")).toString());
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setAttribute(Qt::WA_QuitOnClose, false); // closing a dialog is never "the last window closed"
     dlg->setAcceptMode(mode);
@@ -270,8 +271,8 @@ Reply message(Bridge &b, const QJsonObject &cmd)
             return Reply::success(r);
         }
     }
-    auto *box = new QMessageBox(icon->second, cmd.value(QStringLiteral("title")).toString(), cmd.value(QStringLiteral("text")).toString(),
-                                QMessageBox::NoButton, parent);
+    auto *box = new QMessageBox(icon->second, tr(cmd.value(QStringLiteral("title")).toString()),
+                                tr(cmd.value(QStringLiteral("text")).toString()), QMessageBox::NoButton, parent);
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->setAttribute(Qt::WA_QuitOnClose, false);
     box->setWindowModality(parent ? Qt::WindowModal : Qt::ApplicationModal);
@@ -280,9 +281,9 @@ Reply message(Bridge &b, const QJsonObject &cmd)
     }
     std::map<QAbstractButton *, QString> ids;
     for (const Choice &c : choices) {
-        QAbstractButton *button = c.standard != QMessageBox::NoButton ? box->addButton(c.standard) : box->addButton(c.text, c.role);
+        QAbstractButton *button = c.standard != QMessageBox::NoButton ? box->addButton(c.standard) : box->addButton(tr(c.text), c.role);
         if (!c.text.isEmpty() && c.standard != QMessageBox::NoButton) {
-            button->setText(c.text);
+            button->setText(tr(c.text));
         }
         button->setObjectName(c.id);
         ids[button] = c.id;
@@ -363,7 +364,7 @@ Reply input(Bridge &b, const QJsonObject &cmd)
     auto *dlg = new QInputDialog(parent);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setAttribute(Qt::WA_QuitOnClose, false); // closing a dialog is never "the last window closed"
-    dlg->setWindowTitle(cmd.value(QStringLiteral("title")).toString());
+    dlg->setWindowTitle(tr(cmd.value(QStringLiteral("title")).toString()));
     dlg->setLabelText(cmd.value(QStringLiteral("label")).toString());
     if (kind == QLatin1String("text") || kind == QLatin1String("password")) {
         dlg->setInputMode(QInputDialog::TextInput);
@@ -429,7 +430,7 @@ Reply progressOpen(Bridge &b, const QJsonObject &cmd)
     }
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setAttribute(Qt::WA_QuitOnClose, false); // closing a dialog is never "the last window closed"
-    dlg->setWindowTitle(cmd.value(QStringLiteral("title")).toString());
+    dlg->setWindowTitle(tr(cmd.value(QStringLiteral("title")).toString()));
     dlg->setMinimumDuration(0);
     dlg->setAutoClose(false);
     dlg->setAutoReset(false);
@@ -682,7 +683,7 @@ Reply settings(Bridge &b, const QJsonObject &cmd)
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setAttribute(Qt::WA_QuitOnClose, false); // closing a dialog is never "the last window closed"
     dlg->setFaceType(KPageDialog::List);
-    dlg->setWindowTitle(cmd.value(QStringLiteral("title")).toString(QStringLiteral("Settings")));
+    dlg->setWindowTitle(tr(cmd.value(QStringLiteral("title")).toString(QStringLiteral("Settings"))));
     dlg->setStandardButtons(QDialogButtonBox::Ok | QDialogButtonBox::Apply | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults);
     for (const QJsonValue &pv : pagesValue.toArray()) {
         const QJsonObject p = pv.toObject();
