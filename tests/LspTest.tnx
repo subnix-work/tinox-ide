@@ -166,6 +166,24 @@ class LspTest
         return client.state == "closed" && client.lastError == "Disconnected"
     }
 
+    @Test("request churn preserves outstanding requests and safely ignores late cancelled replies")
+    fn testRequestChurn() -> Bool
+    {
+        const client: LspClient = LspClient::create((json: String) => LspClient::ignore())
+        LspTest::ready(client)
+        const survivor: RpcFuture = client.request("textDocument/hover", "{}", 5000)
+        for i in 0..100
+        {
+            const request: RpcFuture = client.request("textDocument/semanticTokens/full", "{}", 100)
+            if (i % 2 == 0) { client.cancel(request) }
+            client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + request.id.toString() + ",\"result\":null}")
+        }
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":999999,\"result\":null}")
+        const kept: Bool = !survivor.done && client.pending.keys().len() == 1
+        client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + survivor.id.toString() + ",\"result\":null}")
+        return kept && survivor.done && survivor.code == 0 && client.pending.keys().len() == 0
+    }
+
     fnc brokenSender(json: String) -> Nothing
     {
         throw "Disconnected"

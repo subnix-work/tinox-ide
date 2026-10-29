@@ -216,3 +216,17 @@ sequenceDiagram
   for and `core.capabilities` for the namespaces it needs, and fails with a clear
   message instead of misbehaving.
 * The shared library's SONAME major version equals the ABI version.
+
+### Semantic tokens
+
+`editor.setSemanticTokens {target: documentId, version, legend: [tokenType, ...],
+data: [deltaLine, deltaStart, length, tokenTypeIndex, modifierBits, ...],
+colors?: {tokenType: "#RRGGBB"}}` atomically replaces the document's semantic
+foreground overlay. Positions and lengths are UTF-16 units; tokens must be
+single-line, ordered, nonoverlapping and within the current document. Version is
+mandatory and must equal `editor.info.version`. Bad data/colours reject the whole
+batch; empty data clears it. Reply: `{count}`. Moving ranges track edits until
+replaced and are removed before document release or reload. Colours follow the
+view's theme with optional per-type overrides; see [semantic highlighting](semantic-highlighting.md).
+With debug commands enabled, `editor.debug.semanticTokens {target}` returns
+`{items: [{type, range, color}]}` for integration tests.

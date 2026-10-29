@@ -216,7 +216,7 @@ namespace tinox.ide.settings
             var stack: Node = Ui::stack("prefStack").currentIndex(this.page).stretch(4)
             for name in Preferences::pages()
             {
-                stack = stack.add(this.pageNode(name))
+                stack = stack.add(Ui::scroll("prefScroll:" + name).add(this.pageNode(name)))
             }
             return Ui::column("prefs")
                 .windowTitle("Settings — Tinox IDE")

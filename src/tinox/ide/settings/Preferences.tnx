@@ -3,6 +3,7 @@ module tinox.ide.settings
 import tinox.ide.app.EventBus
 import tinox.ide.app.Store
 import tinox.ide.ui.Js
+import tinox.ide.lsp.SemanticHighlighting
 
 namespace tinox.ide.settings
 {
@@ -36,13 +37,13 @@ namespace tinox.ide.settings
         /** The names of the pages in the order of the dialog. */
         fnc pages() -> List<String>
         {
-            return ["General", "Editor", "Language Server", "Build", "Shortcuts", "Appearance"]
+            return ["General", "Editor", "Language Server", "Build", "Shortcuts", "Appearance", "Semantic Colours"]
         }
 
         /** The preferences the IDE has. */
         fnc standard() -> List<PrefDef>
         {
-            return [
+            var defs: List<PrefDef> = [
                 PrefDef::bool("General", "Workspace", "reopenLast", "Reopen the last project on start", true),
                 PrefDef::bool("General", "Session", "restore", "Restore the open files on start", true),
                 PrefDef::bool("General", "Editor", "autosave", "Save modified files automatically", false),
@@ -58,6 +59,13 @@ namespace tinox.ide.settings
                 PrefDef::bool("Build", "Build", "showOutput", "Show the output panel when a build starts", true),
                 PrefDef::bool("Appearance", "Appearance", "toolbar", "Show the tool bar", true)
             ]
+            for tokenType in SemanticHighlighting::types()
+            {
+                const def = PrefDef::text("Semantic Colours", "SemanticColors", tokenType, "Semantic " + tokenType + " colour (#RRGGBB, empty = theme)", "")
+                def.kind = "color"
+                defs.push(def)
+            }
+            return defs
         }
 
         /** The definition with this id (`group.key`); throws for an unknown one. */
@@ -147,6 +155,14 @@ namespace tinox.ide.settings
         /** Why `text` is not allowed for the preference, or "" when it is. */
         fn check(d: PrefDef, text: String) -> String
         {
+            if (d.kind == "color" && text != "")
+            {
+                if (text.len() != 7 || !text.startsWith("#")) { return "Enter #RRGGBB or leave empty for the theme" }
+                for i in 1..7
+                {
+                    if (!"0123456789abcdefABCDEF".contains(text.substring(i, i + 1))) { return "Enter #RRGGBB or leave empty for the theme" }
+                }
+            }
             if (d.kind == "int")
             {
                 if (text.trim() == "" || !Preferences::isNumber(text.trim()))

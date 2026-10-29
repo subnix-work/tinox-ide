@@ -34,7 +34,7 @@ find_package(Threads REQUIRED)
 
 add_library(tinoxkde SHARED
     src/abi.cpp src/bridge.cpp src/terminal/terminal.cpp
-    src/editor/editor.cpp src/editor/diagnostics.cpp src/editor/completion.cpp src/editor/viewfeatures.cpp
+    src/editor/editor.cpp src/editor/diagnostics.cpp src/editor/semantics.cpp src/editor/completion.cpp src/editor/viewfeatures.cpp
     src/widget/widget.cpp src/action/action.cpp src/model/model.cpp
     src/dialog/dialog.cpp src/dialog/config.cpp src/dialog/notify.cpp)
 target_include_directories(tinoxkde PUBLIC

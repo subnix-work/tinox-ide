@@ -1,0 +1,127 @@
+module tinox.ide.lsp
+
+import tinox.core.json
+import tinox.core.time.Time
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.ui.Js
+
+namespace tinox.ide.lsp
+{
+    /** Debounces full semantic snapshots while native moving ranges preserve the previous colours. */
+    class SemanticHighlighting
+    {
+        /** Latest pending snapshot for each URI. */
+        var pending: Map<String, SemanticRequest>
+        /** Number of successfully applied snapshots. */
+        var reports: Int64
+
+        /** An idle semantic overlay controller. */
+        fnc create() -> SemanticHighlighting
+        {
+            return SemanticHighlighting { pending: Map::new(), reports: 0 }
+        }
+
+        /** The standard LSP token types exposed as colour preferences. */
+        fnc types() -> List<String>
+        {
+            return ["namespace", "type", "class", "enum", "interface", "struct", "typeParameter", "parameter", "variable", "property", "enumMember", "event", "function", "method", "macro", "keyword", "modifier", "comment", "string", "number", "regexp", "operator", "decorator"]
+        }
+
+        /** Cancels obsolete work without clearing moving ranges during typing. */
+        fn cancel(service: LanguageService, uri: String) -> Nothing
+        {
+            if (!this.pending.contains(uri)) { return }
+            const item: SemanticRequest = this.pending.get(uri)
+            if (item.sent && !item.future.done) { service.client.cancel(item.future) }
+            // tinox#581: rebuild instead of leaving tombstones after repeated request churn.
+            var live: Map<String, SemanticRequest> = Map::new()
+            for key in this.pending.keys()
+            {
+                if (key != uri) { live.set(key, this.pending.get(key)) }
+            }
+            this.pending = live
+        }
+
+        /** Coalesces edits into one request after 180 milliseconds of quiet. */
+        fn schedule(service: LanguageService, uri: String) -> Nothing
+        {
+            this.cancel(service, uri)
+            if (!service.client.documents.contains(uri)) { return }
+            this.pending.set(uri, SemanticRequest { version: service.client.documents.get(uri).version, due: Time::now() + 180, sent: false, future: RpcFuture::create(0, 0) })
+        }
+
+        /** Removes a closed document's colours while its bridge handle remains alive. */
+        fn close(service: LanguageService, uri: String) -> Nothing
+        {
+            this.cancel(service, uri)
+            if (!service.paths.contains(uri)) { return }
+            const index = service.documents.indexOf(service.paths.get(uri))
+            if (index < 0) { return }
+            const doc = service.documents.files[index].doc
+            try { Bridge::query(Command::named("editor.setSemanticTokens").target(doc.id()).int("version", doc.version()).raw("legend", "[]").raw("data", "[]").build()) }
+            catch (e: String) { }
+        }
+
+        /** Drops session-owned work and decorations before restart or shutdown. */
+        fn clear(service: LanguageService) -> Nothing
+        {
+            for uri in service.paths.keys() { this.close(service, uri) }
+            this.pending = Map::new()
+        }
+
+        /** Applies colour preference changes by requesting fresh snapshots. */
+        fn refresh(service: LanguageService) -> Nothing
+        {
+            for uri in service.paths.keys() { this.schedule(service, uri) }
+        }
+
+        /** Dispatches and commits only current, successful full results; unsupported servers remain quiet. */
+        fn poll(service: LanguageService) -> Nothing
+        {
+            if (service.client.state != "ready") { return }
+            const provider = service.client.capabilities.getField("semanticTokensProvider")
+            const full = provider.getField("full")
+            const supported: Bool = (full.isBool() && full.getBool()) || full.isObject()
+            // tinox#513: continue in a for-in loop skips the increment. Process one URI with early returns.
+            for uri in this.pending.keys() { this.step(service, uri, provider, supported) }
+        }
+
+        /** Advances one snapshot without blocking other open documents. */
+        fn step(service: LanguageService, uri: String, provider: JsonValue, supported: Bool) -> Nothing
+        {
+            const item: SemanticRequest = this.pending.get(uri)
+            if (!supported || !service.paths.contains(uri) || !service.client.documents.contains(uri)) { this.cancel(service, uri)
+                return }
+            const index = service.documents.indexOf(service.paths.get(uri))
+            if (index < 0) { this.cancel(service, uri)
+                return }
+            const doc = service.documents.files[index].doc
+            if (doc.version() != item.version) { this.cancel(service, uri)
+                return }
+            if (!item.sent)
+            {
+                if (Time::now() < item.due) { return }
+                item.future = service.client.request("textDocument/semanticTokens/full", Js::object([Js::field("textDocument", Js::object([Js::strField("uri", uri)]))]), 5000)
+                item.sent = true
+            }
+            if (!item.future.done) { return }
+            this.cancel(service, uri)
+            if (item.future.code != 0) { return }
+            var colors: List<String> = []
+            for tokenType in SemanticHighlighting::types()
+            {
+                const color = service.preferences.get("SemanticColors." + tokenType)
+                if (color != "") { colors.push(Js::strField(tokenType, color)) }
+            }
+            var data: String = "[]"
+            if (!item.future.result.isNull()) { data = Json::stringify(item.future.result.getField("data")) }
+            try
+            {
+                Bridge::query(Command::named("editor.setSemanticTokens").target(doc.id()).int("version", item.version).raw("legend", Json::stringify(provider.getField("legend").getField("tokenTypes"))).raw("data", data).raw("colors", Js::object(colors)).build())
+                this.reports = this.reports + 1
+            }
+            catch (e: String) { }
+        }
+    }
+}

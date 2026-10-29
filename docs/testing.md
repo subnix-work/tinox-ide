@@ -129,6 +129,11 @@ The diagnostics, navigation and editing smoke scripts use `test-gui-smoke.sh`
 to reject unexpected stderr, including errors emitted after a fixture has printed
 its success message. Normal application INFO lines remain visible.
 
+`scripts/test-semantics.sh` checks real LSP method/field/type classification,
+distinct default colours, retained moving ranges during typing, live per-type
+colour overrides and shutdown cleanup. Like the other LSP smokes it uses
+`test-gui-smoke.sh` to reject unexpected stderr through teardown.
+
 ## Build and test tasks
 
 `tests/BuildTest.tnx` runs the real `tinox` tool against throw-away projects (needs `tinox` on
