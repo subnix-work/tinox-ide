@@ -94,15 +94,17 @@ crash recovery and teardown against a scripted peer, then uses the real tinox-ls
 Set `TINOX_LSP` when the executable is outside PATH and the sibling Tinox checkout.
 See [lsp-client.md](lsp-client.md) for the library's ownership and polling contract.
 
-## Existing search test race
+## Ripgrep exit-status regression
 
-`SearchTest::testSearchRipgrep` can intermittently report zero matches instead of
-an error for an invalid regular expression. This also reproduces on the baseline
-commit `8f54f68`, without terminal support. `FileSearch.runRipgrep` treats pipe EOF
-as completion, reads the exit code once and then kills the process; EOF does not
+`SearchTest::testSearchRipgrep` could intermittently report zero matches instead of
+an error for an invalid regular expression. This also reproduced on the baseline
+commit `8f54f68`, without terminal support. `FileSearch.runRipgrep` treated pipe EOF
+as completion, read the exit code once and then killed the process; EOF does not
 guarantee the child has exited. If its exit status is not available yet, the
-ripgrep error is lost. Keep this failure visible; the terminal tests do not skip
-or change the search test.
+ripgrep error was lost. The fix waits for status after EOF while honoring
+cancellation ([#60](https://github.com/subnix-work/tinox-ide/issues/60)).
+`SearchExitStatusTest` deterministically closes both pipes before a delayed exit
+and verifies the preserved error. The original search tests remain unchanged.
 
 Older installed compilers also compile once per test method; the performance
 issue is tracked in [tinox#514](https://github.com/subnix-work/tinox/issues/514).

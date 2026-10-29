@@ -2,6 +2,7 @@ module tinox.ide.search
 
 import tinox.core.json
 import tinox.core.process.InteractiveProcess
+import tinox.core.process.Process
 import tinox.core.regex.Regex
 import tinox.ide.app.Background
 import tinox.ide.app.FileSystem
@@ -115,7 +116,13 @@ namespace tinox.ide.search
                     finished = true
                 }
             }
-            const code: Int64 = InteractiveProcess::exitCode(proc)
+            var code: Int64 = InteractiveProcess::exitCode(proc)
+            // #60: pipe EOF can precede waitpid status. Preserve errors without blocking cancellation.
+            while (finished && code == -9223372036854775808 && !control.stopped)
+            {
+                Process::sleep(1)
+                code = InteractiveProcess::exitCode(proc)
+            }
             InteractiveProcess::kill(proc)
             if (finished && code == 2 && counter.count == 0)
             {
