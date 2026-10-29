@@ -20,14 +20,14 @@ class WorkspaceAppTest
     {
         Bridge::init("test", "Test")
         const mountObject: Int64 = MockBridge::createObject()
-        MockBridge::onCommand("widget.mount", "{\"id\":" + mountObject.toString() + ",\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"openFolder\":63,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"welcome\":61,\"status\":62,\"searchPanel\":70,\"searchResults\":71,\"searchQuery\":72,\"searchReplace\":73,\"searchGo\":74,\"searchReplaceAll\":75,\"searchCase\":76,\"searchRegex\":77,\"searchCancel\":78}}", "")
+        MockBridge::onCommand("widget.mount", "{\"id\":" + mountObject.toString() + ",\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"openFolder\":63,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"outlineDock\":95,\"outlineTree\":90,\"navigationResults\":91,\"renameApply\":92,\"renameCancel\":93,\"breadcrumbs\":94,\"welcome\":61,\"status\":62,\"searchPanel\":70,\"searchResults\":71,\"searchQuery\":72,\"searchReplace\":73,\"searchGo\":74,\"searchReplaceAll\":75,\"searchCase\":76,\"searchRegex\":77,\"searchCancel\":78}}", "")
         MockBridge::onCommand("model.create", "{\"id\":" + model.toString() + "}", "")
         MockBridge::onCommand("config.read", "{\"exists\":false,\"value\":true}", "")
         for name in ["model.attach", "model.reset", "model.insert", "model.remove", "model.update", "model.setChildren", "model.select", "model.expand", "config.write", "config.delete", "core.log", "action.define", "action.set", "action.setMenuBar", "action.setToolBar", "action.popup", "action.recentAdd", "widget.show", "widget.append", "dialog.input", "dialog.message", "dialog.openDirectory", "notify.send"]
         {
             MockBridge::onCommand(name, "", "")
         }
-        MockBridge::onCommand("widget.update", "{\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"openFolder\":63,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"welcome\":61,\"status\":62,\"searchPanel\":70,\"searchResults\":71,\"searchQuery\":72,\"searchReplace\":73,\"searchGo\":74,\"searchReplaceAll\":75,\"searchCase\":76,\"searchRegex\":77,\"searchCancel\":78}}", "")
+        MockBridge::onCommand("widget.update", "{\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"openFolder\":63,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"outlineDock\":95,\"outlineTree\":90,\"navigationResults\":91,\"renameApply\":92,\"renameCancel\":93,\"breadcrumbs\":94,\"welcome\":61,\"status\":62,\"searchPanel\":70,\"searchResults\":71,\"searchQuery\":72,\"searchReplace\":73,\"searchGo\":74,\"searchReplaceAll\":75,\"searchCase\":76,\"searchRegex\":77,\"searchCancel\":78}}", "")
         MockBridge::onCommand("widget.restoreState", "{\"restored\":false}", "")
         const app: IdeApp = IdeApp::start(events)
         app.logger.toStderr = false

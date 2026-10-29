@@ -21,6 +21,8 @@ namespace tinox.ide.ui
     {
         /** The loop the view's events arrive on. */
         var events: EventLoop
+        /** Additional observers without replacing cursor/completion handlers. */
+        var observers: List<fnc(Event) -> Nothing>
         /** The bridge's object id. */
         var viewId: Int64
         /** Answers completion requests. */
@@ -45,6 +47,7 @@ namespace tinox.ide.ui
             const view: EditorView = EditorView {
                 events: events,
                 viewId: reply.getField("id").getInt(),
+                observers: [],
                 provider: NoCompletions {},
                 hasProvider: false,
                 asynchronousCompletion: false,
@@ -66,6 +69,11 @@ namespace tinox.ide.ui
         /** Dispatches a view event to its handler. */
         fn deliver(ev: Event) -> Nothing
         {
+            for observer in this.observers
+            {
+                try { observer(ev) }
+                catch (error: String) { this.events.fail("view observer failed: " + error) }
+            }
             if (ev.type == "editor.cursorMoved")
             {
                 this.cursorHandler(Position::parse(ev.field("position")))
@@ -91,6 +99,12 @@ namespace tinox.ide.ui
                     this.showTooltip(position, markup)
                 }
             }
+        }
+
+        /** Adds a view-event observer without replacing the built-in handlers. */
+        fn onEvent(handler: fnc(Event) -> Nothing) -> Nothing
+        {
+            this.observers.push(handler)
         }
 
         // ---- handlers

@@ -1,0 +1,83 @@
+import tinox.core.json
+import tinox.core.process.Process
+import tinox.ide.IdeApp
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.App
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Position
+
+class Main
+{
+    fnc main() -> Int32
+    {
+        return App::run("tinoxide", "Tinox Navigation Smoke", (events: EventLoop) => Main::logic(events))
+    }
+
+    fnc logic(events: EventLoop) -> Int32
+    {
+        var results: List<Bool> = []
+        events.onType("core.ready", (event: Event) => Main::check(events, results))
+        events.run()
+        if (results.len() != 1 || !results[0]) { return 1 }
+        return 0
+    }
+
+    fnc expect(condition: Bool, message: String) -> Nothing
+    {
+        if (!condition) { throw message }
+    }
+
+    fnc wait(app: IdeApp, predicate: fnc(IdeApp) -> Bool) -> Bool
+    {
+        const start: Int64 = Bridge::nowNs()
+        while (!predicate(app) && (Bridge::nowNs() - start) / 1000000 < 10000) { app.events.pump(10) }
+        return predicate(app)
+    }
+
+    fnc check(events: EventLoop, results: List<Bool>) -> Nothing
+    {
+        const app: IdeApp = IdeApp::start(events)
+        try
+        {
+            const root: String = Process::env("TINOX_NAVIGATION_ROOT")
+            app.store.set("workspace.path", root)
+            const widget: OpenFile = app.documents.open(root + "/Widget.tnx")
+            const caller: OpenFile = app.documents.open(root + "/Caller.tnx")
+            const originalWidget: String = widget.doc.text()
+            const originalCaller: String = caller.doc.text()
+            app.language.start()
+            Main::expect(Main::wait(app, (a: IdeApp) => a.language.connected && a.language.client.state == "ready" && a.codeNavigation.symbols.len() > 0), "server/outline not ready: " + app.store.get("status.message") + "; state=" + app.language.client.state + "; lastError=" + app.language.client.lastError + "; caps=" + Json::stringify(app.language.client.capabilities) + "; reports=" + app.language.reports.toString() + "; requests=" + app.codeNavigation.requests.len().toString() + "; outlineKey=" + app.codeNavigation.outlineKey + "; failures=" + events.failureCount().toString())
+            app.documents.activate(app.documents.indexOf(caller.path))
+            app.events.pump(0)
+            app.documents.activate(app.documents.indexOf(caller.path))
+            app.window.render()
+            app.events.pump(0)
+            caller.views[0].setCursor(Position::create(4, 24))
+            app.codeNavigation.requestAt("definition", caller, Position::create(4, 24), "")
+            Main::expect(Main::wait(app, (a: IdeApp) => a.documents.current().path.endsWith("/Widget.tnx")), "definition did not cross files")
+            app.codeNavigation.step(-1)
+            Main::expect(caller.views[0].cursor().line == 4 && caller.views[0].cursor().character == 24, "history did not restore cursor")
+            app.codeNavigation.requestAt("references", caller, Position::create(4, 24), "")
+            Main::expect(Main::wait(app, (a: IdeApp) => a.codeNavigation.locations.len() >= 2), "references missing declaration or use: " + app.store.get("status.message") + "; results=" + app.codeNavigation.locations.len().toString())
+            app.codeNavigation.requestAt("rename", caller, Position::create(4, 24), "answer")
+            Main::expect(Main::wait(app, (a: IdeApp) => a.codeNavigation.previewing), "rename preview did not arrive: " + app.store.get("status.message"))
+            Main::expect(app.codeNavigation.preview.len() == 2, "rename did not include both files")
+            Main::expect(widget.doc.text() == originalWidget && caller.doc.text() == originalCaller, "preview mutated text")
+            app.codeNavigation.applyPreview()
+            Main::expect(widget.doc.text().contains("answer") && caller.doc.text().contains("answer"), "rename not applied across buffers")
+            app.codeNavigation.undoRename()
+            Main::expect(widget.doc.text() == originalWidget && caller.doc.text() == originalCaller, "workspace undo did not restore both originals")
+            app.codeNavigation.openSymbols()
+            Main::expect(Main::wait(app, (a: IdeApp) => a.codeNavigation.workspaceSymbols.len() >= 2), "workspace symbol palette empty")
+            app.codeNavigation.picker.close()
+            Main::expect(events.failureCount() == 0, "event handler failed")
+            println("navigation: definition, precise history, references, outline, workspace palette, multi-file preview/apply/undo passed")
+            results.push(true)
+        }
+        catch (error: String) { printStderr("navigation smoke failed: " + error)
+            results.push(false) }
+        app.quit()
+    }
+}

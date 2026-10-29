@@ -269,9 +269,15 @@ namespace tinox.ide.lsp
             this.retire()
         }
 
-        /** Accepts only current open-buffer reports and commits one validated batch to both views. */
+        /** Shows server messages and commits only current open-buffer diagnostics to both views. */
         fn notification(method: String, params: JsonValue) -> Nothing
         {
+            if (method == "window/showMessage")
+            {
+                const message: String = params.getField("message").getString()
+                if (message != "") { this.window.store.set("status.message", message) }
+                return
+            }
             if (method != "textDocument/publishDiagnostics" || !this.connected || this.client.state != "ready") { return }
             const uri: String = params.getField("uri").getString()
             if (!this.paths.contains(uri) || !this.client.documents.contains(uri)) { return }

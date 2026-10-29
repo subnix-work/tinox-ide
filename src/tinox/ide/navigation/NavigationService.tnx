@@ -1,0 +1,655 @@
+module tinox.ide.navigation
+
+import tinox.core.json
+import tinox.core.bytes.Bytes
+import tinox.ide.app.BusMessage
+import tinox.ide.app.CommandContext
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.Store
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.lsp.LanguageService
+import tinox.ide.search.Picker
+import tinox.ide.search.PickItem
+import tinox.ide.ui.EditorView
+import tinox.ide.ui.Js
+import tinox.ide.ui.Model
+import tinox.ide.ui.Node
+import tinox.ide.ui.Position
+import tinox.ide.ui.Range
+import tinox.ide.ui.Row
+import tinox.ide.ui.TextEdit
+import tinox.ide.ui.Ui
+import tinox.ide.ui.Utf16
+
+namespace tinox.ide.navigation
+{
+    /** Poll-driven navigation, symbol browsing and previewed atomic rename. No request blocks the event loop. */
+    class NavigationService
+    {
+        /** Shared server owner, documents, commands and window. */
+        var language: LanguageService
+        /** Reference/definition/rename preview rows. */
+        var results: Model
+        /** Outline rows. */
+        var outline: Model
+        /** Workspace symbol palette. */
+        var picker: Picker
+        /** Outstanding requests. */
+        var requests: List<NavigationRequest>
+        /** Locations behind the results panel. */
+        var locations: List<Location>
+        /** Flattened current outline, in nesting order. */
+        var symbols: List<Location>
+        /** Workspace symbol results. */
+        var workspaceSymbols: List<Location>
+        /** Browser history, including exact cursor positions. */
+        var history: List<Location>
+        /** Current history entry. */
+        var historyIndex: Int64
+        /** Views already observed. */
+        var views: Map<String, Bool>
+        /** Last focused editor view per file, including split panes. */
+        var focused: Map<String, Int64>
+        /** Prepared workspace rename. */
+        var preview: List<WorkspaceChange>
+        /** Inverse transaction, available through Undo Rename. */
+        var inverse: List<WorkspaceChange>
+        /** Whether the preview is waiting for a decision. */
+        var previewing: Bool
+        /** Current document outline key (URI/version). */
+        var outlineKey: String
+        /** Last accepted analysis report, used to refresh the parser-backed outline after analysis. */
+        var reports: Int64
+        /** Symbol palette request generation. */
+        var generation: Int64
+        /** Symbol palette current query. */
+        var query: String
+        /** Bottom panel tab index. */
+        var tab: Int64
+
+        /** Installs feature commands and a result panel before the window is mounted. */
+        fnc create(language: LanguageService) -> NavigationService
+        {
+            const service: NavigationService = NavigationService { language: language, results: Model::create(language.window.events, ["Symbol / Edit", "File", "Position"], false), outline: Model::create(language.window.events, ["Symbol"], false), picker: Picker::create(language.window.events), requests: [], locations: [], symbols: [], workspaceSymbols: [], history: [], historyIndex: -1, views: Map::new(), focused: Map::new(), preview: [], inverse: [], previewing: false, outlineKey: "", reports: language.reports, generation: 0, query: "", tab: 2 + language.window.bottomPanels.len() }
+            const has: fnc(Store) -> Bool = (s: Store) => s.getBool("editor.hasActive")
+            language.window.registry.registerAll([
+                IdeCommand::create("lsp.definition", "Go to &Definition").shortcut("F12").category("Go").enabledWhen(has).run((c: CommandContext) => service.atCursor("definition")),
+                IdeCommand::create("lsp.references", "Find &References").shortcut("Shift+F12").category("Go").enabledWhen(has).run((c: CommandContext) => service.atCursor("references")),
+                IdeCommand::create("lsp.rename", "&Rename Symbol…").shortcut("Ctrl+F2").category("Edit").enabledWhen(has).run((c: CommandContext) => service.askRename()),
+                IdeCommand::create("lsp.renameApply", "Apply Rename").category("Edit").enabledWhen((s: Store) => s.getBool("navigation.preview")).run((c: CommandContext) => service.applyPreview()),
+                IdeCommand::create("lsp.renameCancel", "Cancel Rename").category("Edit").enabledWhen((s: Store) => s.getBool("navigation.preview")).run((c: CommandContext) => service.cancelPreview()),
+                IdeCommand::create("lsp.renameUndo", "Undo Rename Across Files").shortcut("Ctrl+Alt+Z").category("Edit").enabledWhen((s: Store) => s.getBool("navigation.undo")).run((c: CommandContext) => service.undoRename()),
+                IdeCommand::create("lsp.back", "Navigate &Back").shortcut("Alt+Left").category("Go").enabledWhen((s: Store) => s.getBool("navigation.back")).run((c: CommandContext) => service.step(-1)),
+                IdeCommand::create("lsp.forward", "Navigate &Forward").shortcut("Alt+Right").category("Go").enabledWhen((s: Store) => s.getBool("navigation.forward")).run((c: CommandContext) => service.step(1)),
+                IdeCommand::create("lsp.workspaceSymbols", "Go to Workspace &Symbol…").shortcut("Ctrl+T").category("Go").run((c: CommandContext) => service.openSymbols())
+            ])
+            language.window.registry.register(IdeCommand::create("lsp.outline", "Show &Outline").category("View").run((c: CommandContext) => service.toggleOutline()))
+            language.window.addViewMenu(["lsp.outline"])
+            language.window.store.setBool("ui.outlineVisible", true)
+            language.window.redrawOn("ui.outlineVisible")
+            language.window.addBottomPanel((s: Store) => service.panel())
+            language.window.events.onPoll((events: EventLoop) => service.poll())
+            language.window.bus.subscribe("editor.changed", (m: BusMessage) => service.invalidated(m.str("path")))
+            language.window.bus.subscribe("editor.closing", (m: BusMessage) => service.invalidated(m.str("path")))
+            language.window.store.watch("lsp.state", (state: String) => service.serverState(state))
+            return service
+        }
+
+        /** Restores or hides the outline dock after it was closed. */
+        fn toggleOutline() -> Nothing
+        {
+            this.language.window.store.setBool("ui.outlineVisible", !this.language.window.store.getBool("ui.outlineVisible"))
+        }
+
+        /** Entries appended to the existing Go menu. */
+        fn menuItems() -> List<String>
+        {
+            return ["lsp.definition", "lsp.references", "lsp.rename", "lsp.workspaceSymbols", "lsp.back", "lsp.forward", "lsp.renameUndo"]
+        }
+
+        /** Reference and rename result panel. */
+        fn panel() -> Node
+        {
+            return Ui::column("navigationPanel").add(Ui::label("navigationHeading", this.language.window.store.get("navigation.heading"))).add(Ui::row("renameButtons").visible(this.previewing).add(Ui::button("renameApply", "Apply Rename")).add(Ui::button("renameCancel", "Cancel"))).add(Ui::treeView("navigationResults").bool("uniformRowHeights", true)).inTab("References / Rename", "edit-find")
+        }
+
+        /** Attaches models and UI events after mounting. */
+        fn bind() -> Nothing
+        {
+            const window = this.language.window
+            this.results.attach(window.mount.idOf("navigationResults"))
+            this.outline.attach(window.mount.idOf("outlineTree"))
+            window.mount.onActivated("navigationResults", (id: String) => this.selectResult(id))
+            window.mount.onActivated("outlineTree", (id: String) => this.selectOutline(id))
+            window.mount.onClick("renameApply", (ev: Event) => this.applyPreview())
+            window.mount.onClick("renameCancel", (ev: Event) => this.cancelPreview())
+            window.mount.onDockVisible("outlineDock", (visible: Bool) => window.store.setBool("ui.outlineVisible", visible))
+            window.mount.onClick("breadcrumbs", (ev: Event) => this.outlinePalette())
+            window.redrawOn("navigation.heading")
+            window.redrawOn("navigation.breadcrumb")
+        }
+
+        /** Adds observers to new and split views, settles futures and refreshes the active outline. */
+        fn poll() -> Nothing
+        {
+            if (!this.language.enabled) { return }
+            for file in this.language.documents.files
+            {
+                for view in file.views
+                {
+                    const key: String = view.id().toString()
+                    if (!this.views.contains(key))
+                    {
+                        this.views.set(key, true)
+                        view.onEvent((event: Event) => this.viewEvent(file, event))
+                    }
+                }
+            }
+            const pending: List<NavigationRequest> = this.requests
+            this.requests = []
+            for request in pending
+            {
+                if (!request.future.done) { this.requests.push(request) }
+                else
+                {
+                    try { this.complete(request) }
+                    catch (error: String) { this.language.window.store.set("status.message", error) }
+                }
+            }
+            if (this.reports != this.language.reports) { this.reports = this.language.reports
+                this.outlineKey = "" }
+            this.refreshOutline()
+        }
+
+        /** Ctrl+click uses the clicked position; cursor movement refreshes breadcrumbs only. */
+        fn viewEvent(file: OpenFile, event: Event) -> Nothing
+        {
+            if (event.type == "editor.focusChanged" && event.bool("focused")) { this.focused.set(file.path, event.target) }
+            if (event.type == "editor.definitionRequested") { this.requestAt("definition", file, Position::parse(event.field("position")), "") }
+            if (event.type == "editor.cursorMoved") { this.breadcrumb(Position::parse(event.field("position"))) }
+        }
+
+        /** Resolves the focused split pane, falling back to the primary view after close/unsplit. */
+        fn activeView(file: OpenFile) -> EditorView
+        {
+            if (this.focused.contains(file.path))
+            {
+                for view in file.views { if (view.id() == this.focused.get(file.path)) { return view } }
+            }
+            return file.views[0]
+        }
+
+        /** Sends a command for the active editor cursor. */
+        fn atCursor(kind: String) -> Nothing
+        {
+            const file: OpenFile = this.language.documents.current()
+            this.requestAt(kind, file, this.activeView(file).cursor(), "")
+        }
+
+        /** Capability values may be true or an options object; false/null decline a feature. */
+        fn supported(kind: String) -> Bool
+        {
+            const capability: JsonValue = this.language.client.capabilities.getField(kind + "Provider")
+            return capability.isObject() || (capability.isBool() && capability.getBool())
+        }
+
+        /** Builds a version-pinned request and checks the advertised server capability. */
+        fn requestAt(kind: String, file: OpenFile, position: Position, name: String) -> Nothing
+        {
+            this.language.opened(file.path)
+            if (!this.language.connected || this.language.client.state != "ready") { throw "Language server is not ready" }
+            if (!this.supported(kind)) { throw "Language server does not support " + kind }
+            const uri: String = Utf16::uri(file.path)
+            const snapshot: JsonValue = file.doc.snapshot()
+            if (!this.language.client.documents.contains(uri) || snapshot.getField("version").getInt() != this.language.client.documents.get(uri).version) { throw "Buffer synchronization is pending; try again" }
+            var fields: List<String> = [Js::field("textDocument", Js::object([Js::strField("uri", uri)]))]
+            var method: String = "textDocument/" + kind
+            if (kind != "documentSymbol") { fields.push(Js::field("position", position.toJson())) }
+            if (kind == "references") { fields.push(Js::field("context", "{\"includeDeclaration\":true}")) }
+            if (kind == "rename") { fields.push(Js::strField("newName", name)) }
+            if (kind == "rename") { this.cancelPreview() }
+            const future = this.language.client.request(method, Js::object(fields), 10000)
+            this.requests.push(NavigationRequest { kind: kind, uri: uri, position: position, token: "", owner: "", version: snapshot.getField("version").getInt(), client: this.language.client, future: future, versions: this.bufferVersions(), generation: this.generation })
+        }
+
+        /** Captures every open LSP buffer so multi-file rename never applies to a newer target. */
+        fn bufferVersions() -> Map<String, Int64>
+        {
+            var versions: Map<String, Int64> = Map::new()
+            for uri in this.language.client.documents.keys() { versions.set(uri, this.language.client.documents.get(uri).version) }
+            return versions
+        }
+
+        /** Discards replies for changed buffers, closed files or replaced sessions. */
+        fn complete(request: NavigationRequest) -> Nothing
+        {
+            if (!this.language.connected || request.client != this.language.client || this.language.client.state != "ready") { return }
+            if (request.kind != "workspace/symbol")
+            {
+                const path: String = Location::path(request.uri)
+                if (!this.language.documents.isOpen(path) || this.language.documents.file(path).doc.version() != request.version) { return }
+            }
+            const value: JsonValue = request.future.value()
+            if (request.kind == "definition" && value.isNull()) { this.definitionSymbols(request)
+                return }
+            if (request.kind == "rename") {
+                for uri in request.versions.keys() {
+                    if (!this.language.client.documents.contains(uri) || this.language.client.documents.get(uri).version != request.versions.get(uri) || !this.language.documents.isOpen(Location::path(uri)) || this.language.documents.file(Location::path(uri)).doc.version() != request.versions.get(uri)) { throw "A buffer changed while rename was running; start again" }
+                }
+                this.prepare(value)
+                return }
+            if (request.kind == "documentSymbol")
+            {
+                if (this.language.documents.current().path != Location::path(request.uri)) { return }
+                const previous: List<Location> = this.symbols
+                this.symbols = []
+                try { this.outline.reset(this.symbolRows(value.asList(), Location::path(request.uri))) }
+                catch (error: String) { this.symbols = previous
+                    throw error }
+                this.breadcrumb(this.activeView(this.language.documents.current()).cursor())
+                return
+            }
+            var locations: List<Location> = []
+            var items: List<JsonValue> = value.asList()
+            if (value.isObject()) { items = [value] }
+            for item in items
+            {
+                var location: Location = Location { path: "", range: Range::create(0, 0, 0, 0), extent: Range::create(0, 0, 0, 0), name: "" }
+                if (request.kind == "workspace/symbol" || request.kind == "definitionSymbols") { location = Location::parse(item.getField("location")) }
+                else { location = Location::parse(item) }
+                location.name = item.getField("name").getString()
+                if (request.kind != "definitionSymbols" || (location.name == request.token && (request.owner == "" || item.getField("containerName").getString() == request.owner))) { locations.push(location) }
+            }
+            if (request.kind == "workspace/symbol")
+            {
+                if (request.generation != this.generation || !this.picker.visible) { return }
+                this.workspaceSymbols = locations
+                this.picker.refill(this.query)
+            }
+            else if ((request.kind == "definition" || request.kind == "definitionSymbols") && locations.len() == 1) { this.go(locations[0]) }
+            else { this.cancelPreview()
+                this.showResults(locations, "Locations: " + locations.len().toString()) }
+        }
+
+        /** Workspace declaration fallback for tinox#578: exact identifier, qualified owner and explicit ambiguity chooser. */
+        fn definitionSymbols(request: NavigationRequest) -> Nothing
+        {
+            if (!this.supported("workspaceSymbol")) { throw "No definition found; this server has no workspace symbol support" }
+            const text: String = this.language.client.documents.get(request.uri).text
+            const bytes: Bytes = Bytes::fromText(text)
+            var start: Int64 = Utf16::offset(text, request.position)
+            var end: Int64 = start
+            while (start > 0 && NavigationService::identifier(bytes.get(start - 1))) { start = start - 1 }
+            while (end < bytes.len() && NavigationService::identifier(bytes.get(end))) { end = end + 1 }
+            if (start == end) { throw "No identifier at the cursor" }
+            const token: String = bytes.slice(start, end).toText()
+            var owner: String = ""
+            if (start >= 2 && bytes.get(start - 1) == 58 && bytes.get(start - 2) == 58)
+            {
+                var begin: Int64 = start - 2
+                while (begin > 0 && NavigationService::identifier(bytes.get(begin - 1))) { begin = begin - 1 }
+                owner = bytes.slice(begin, start - 2).toText()
+            }
+            const future = this.language.client.request("workspace/symbol", Js::object([Js::strField("query", token)]), 10000)
+            this.requests.push(NavigationRequest { kind: "definitionSymbols", uri: request.uri, position: request.position, token: token, owner: owner, version: request.version, client: request.client, future: future, versions: request.versions, generation: request.generation })
+        }
+
+        /** Identifier byte for the symbol fallback; preserves UTF-8 bytes and excludes punctuation. */
+        fnc identifier(byte: Int64) -> Bool
+        {
+            return byte >= 128 || (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) || (byte >= 48 && byte <= 57) || byte == 95
+        }
+
+        /** Rebuilds a nested document outline, accepting both DocumentSymbol and SymbolInformation. */
+        fn symbolRows(items: List<JsonValue>, path: String) -> List<Row>
+        {
+            const text: String = this.language.documents.textOf(path)
+            return this.symbolRowsWithin(items, path, Utf16::position(text, Bytes::fromText(text).len()), text)
+        }
+
+        /** Uses sibling/enclosing extents for zero-width server ranges (tinox#577), preserving genuine full ranges. */
+        fn symbolRowsWithin(items: List<JsonValue>, path: String, bound: Position, text: String) -> List<Row>
+        {
+            var rows: List<Row> = []
+            var index: Int64 = 0
+            for item in items
+            {
+                var location: Location = Location { path: path, range: Range::create(0, 0, 0, 0), extent: Range::create(0, 0, 0, 0), name: item.getField("name").getString() }
+                if (item.getField("location").isObject()) { location = Location::parse(item.getField("location"))
+                    location.name = item.getField("name").getString() }
+                else { location.range = Location::span(item.getField("selectionRange"))
+                    location.extent = Location::span(item.getField("range")) }
+                if (location.extent.isEmpty())
+                {
+                    var end: Position = bound
+                    if (index + 1 < items.len())
+                    {
+                        var next: JsonValue = items[index + 1].getField("range")
+                        if (items[index + 1].getField("location").isObject()) { next = items[index + 1].getField("location").getField("range") }
+                        end = Location::span(next).start
+                    }
+                    location.extent = Range { start: location.extent.start, end: end }
+                }
+                if (location.range.isEmpty() && location.path == path)
+                {
+                    const bytes: Bytes = Bytes::fromText(text)
+                    const start: Int64 = Utf16::offset(text, location.range.start)
+                    var end: Int64 = start
+                    while (end < bytes.len() && bytes.get(end) != 10 && bytes.get(end) != 13) { end = end + 1 }
+                    const found: Int64 = bytes.slice(start, end).toText().indexOf(location.name)
+                    if (found >= 0) { location.range = Range { start: Utf16::position(text, start + found), end: Utf16::position(text, start + found + Bytes::fromText(location.name).len()) } }
+                }
+                const id: String = this.symbols.len().toString()
+                this.symbols.push(location)
+                const children: List<Row> = this.symbolRowsWithin(item.getField("children").asList(), path, location.extent.end, text)
+                rows.push(Row::create(id, location.name).icon("code-class").children(children))
+                index = index + 1
+            }
+            return rows
+        }
+
+        /** Requests the active outline once per synchronized native buffer version. */
+        fn refreshOutline() -> Nothing
+        {
+            if (!this.language.connected || this.language.client.state != "ready" || this.language.documents.active < 0) { return }
+            if (!this.supported("documentSymbol")) { return }
+            const file: OpenFile = this.language.documents.current()
+            const uri: String = Utf16::uri(file.path)
+            if (!this.language.client.documents.contains(uri)) { return }
+            const key: String = uri + ":" + this.language.client.documents.get(uri).version.toString()
+            if (key == this.outlineKey) { return }
+            this.outlineKey = key
+            this.symbols = []
+            this.outline.reset([])
+            try { this.requestAt("documentSymbol", file, Position::create(0, 0), "") }
+            catch (error: String)
+            {
+                // Native edits can precede delivery of their queued change events.
+                // Leave the key retryable until the shared client catches up.
+                this.outlineKey = ""
+                if (error != "Buffer synchronization is pending; try again") { this.language.window.store.set("status.message", error) }
+            }
+        }
+
+        /** Shows the containing symbol hierarchy as a clickable breadcrumb bar. */
+        fn breadcrumb(position: Position) -> Nothing
+        {
+            var names: List<String> = []
+            for symbol in this.symbols { if (symbol.encloses(position)) { names.push(symbol.name) } }
+            this.language.window.store.set("navigation.breadcrumb", Js::join(names, " › "))
+        }
+
+        /** Opens the outline as a searchable picker from the breadcrumb bar. */
+        fn outlinePalette() -> Nothing
+        {
+            this.picker.open("Go to document symbol…", (query: String) => this.symbolItems(this.symbols, query), (item: PickItem) => this.selectOutline(item.id))
+        }
+
+        /** Turns symbols into searchable picker entries. */
+        fn symbolItems(symbols: List<Location>, query: String) -> List<PickItem>
+        {
+            var items: List<PickItem> = []
+            var i: Int64 = 0
+            for symbol in symbols
+            {
+                if (symbol.name.toLower().contains(query.toLower())) { items.push(PickItem::create(i.toString(), symbol.name, symbol.path, "code-class")) }
+                i = i + 1
+            }
+            return items
+        }
+
+        /** Opens the workspace symbol palette and requests the initial set. */
+        fn openSymbols() -> Nothing
+        {
+            if (!this.language.connected || this.language.client.state != "ready") { throw "Open a Tinox file and wait for the language server" }
+            if (!this.supported("workspaceSymbol")) { throw "Language server does not support workspace symbols" }
+            this.query = "\n"
+            this.workspaceSymbols = []
+            this.picker.open("Go to workspace symbol…", (query: String) => this.workspaceItems(query), (item: PickItem) => this.selectWorkspace(item.id))
+        }
+
+        /** Requests symbols asynchronously as the palette query changes. */
+        fn workspaceItems(query: String) -> List<PickItem>
+        {
+            if (this.query != query)
+            {
+                this.query = query
+                this.workspaceSymbols = []
+                this.generation = this.generation + 1
+                const future = this.language.client.request("workspace/symbol", Js::object([Js::strField("query", query)]), 10000)
+                this.requests.push(NavigationRequest { kind: "workspace/symbol", uri: "", position: Position::create(0, 0), token: "", owner: "", version: -1, client: this.language.client, future: future, versions: this.bufferVersions(), generation: this.generation })
+            }
+            return this.symbolItems(this.workspaceSymbols, "")
+        }
+
+        /** Activates a workspace palette row. */
+        fn selectWorkspace(id: String) -> Nothing { const i: Int64 = id.toInt()
+            if (i >= 0 && i < this.workspaceSymbols.len()) { this.go(this.workspaceSymbols[i]) } }
+
+        /** Activates an outline row. */
+        fn selectOutline(id: String) -> Nothing { const i: Int64 = id.toInt()
+            if (i >= 0 && i < this.symbols.len()) { this.go(this.symbols[i]) } }
+
+        /** Populates reference/definition results and raises their panel. */
+        fn showResults(locations: List<Location>, heading: String) -> Nothing
+        {
+            this.locations = locations
+            var rows: List<Row> = []
+            var i: Int64 = 0
+            for location in locations
+            {
+                var label: String = location.name
+                if (label == "") { label = "Reference" }
+                rows.push(Row::create(i.toString(), label).cell(location.path).cell((location.range.start.line + 1).toString() + ":" + (location.range.start.character + 1).toString()))
+                i = i + 1
+            }
+            this.results.reset(rows)
+            this.language.window.store.set("navigation.heading", heading)
+            this.language.window.showBottomTab(this.tab)
+        }
+
+        /** Activates a reference row. */
+        fn selectResult(id: String) -> Nothing { const i: Int64 = id.toInt()
+            if (i >= 0 && i < this.locations.len()) { this.go(this.locations[i]) } }
+
+        /** Captures the current editor's actual cursor before a jump. */
+        fn currentLocation() -> Location
+        {
+            const file: OpenFile = this.language.documents.current()
+            const position: Position = this.activeView(file).cursor()
+            const range: Range = Range { start: position, end: position }
+            return Location { path: file.path, range: range, extent: range, name: "" }
+        }
+
+        /** Navigates and truncates forward history when branching from an earlier position. */
+        fn go(location: Location) -> Nothing
+        {
+            var history: List<Location> = []
+            var i: Int64 = 0
+            while (i <= this.historyIndex && i < this.history.len()) { history.push(this.history[i])
+                i = i + 1 }
+            if (this.language.documents.active >= 0)
+            {
+                const source: Location = this.currentLocation()
+                if (history.len() == 0) { history.push(source) }
+                else { history[history.len() - 1] = source }
+            }
+            history.push(location)
+            this.history = history
+            this.historyIndex = history.len() - 1
+            this.jump(location)
+            this.historyState()
+        }
+
+        /** Opens a location without recording an extra entry. */
+        fn jump(location: Location) -> Nothing
+        {
+            const file: OpenFile = this.language.documents.open(location.path)
+            this.activeView(file).setCursor(location.range.start)
+            file.line = location.range.start.line
+            file.character = location.range.start.character
+        }
+
+        /** Back/forward snapshots the cursor of the position being left. */
+        fn step(offset: Int64) -> Nothing
+        {
+            const index: Int64 = this.historyIndex + offset
+            if (index < 0 || index >= this.history.len()) { return }
+            var before: Location = this.history[this.historyIndex]
+            if (this.language.documents.active >= 0) { before = this.currentLocation() }
+            this.jump(this.history[index])
+            this.history[this.historyIndex] = before
+            this.historyIndex = index
+            this.historyState()
+        }
+
+        /** Updates action availability. */
+        fn historyState() -> Nothing
+        {
+            this.language.window.store.setBool("navigation.back", this.historyIndex > 0)
+            this.language.window.store.setBool("navigation.forward", this.historyIndex + 1 < this.history.len())
+            this.language.window.registry.refresh()
+        }
+
+        /** Captures the source before the asynchronous name dialog. */
+        fn askRename() -> Nothing
+        {
+            const file: OpenFile = this.language.documents.current()
+            const position: Position = this.activeView(file).cursor()
+            const version: Int64 = file.doc.version()
+            this.language.documents.dialogs.askText("Rename Symbol", "New name:", "", (accepted: Bool, name: String) => this.renameAnswer(file, position, version, accepted, name))
+        }
+
+        /** Refuses to rename a changed or closed source after answering the dialog. */
+        fn renameAnswer(file: OpenFile, position: Position, version: Int64, accepted: Bool, name: String) -> Nothing
+        {
+            if (!accepted || name == "") { return }
+            if (!this.language.documents.isOpen(file.path) || file.doc.version() != version) { throw "Rename source changed; start again" }
+            this.requestAt("rename", file, position, name)
+        }
+
+        /** Parses both WorkspaceEdit forms; file resource operations are explicitly rejected. */
+        fn prepare(value: JsonValue) -> Nothing
+        {
+            var edits: Map<String, JsonValue> = value.getField("changes").asTable()
+            var versions: Map<String, Int64> = Map::new()
+            for change in value.getField("documentChanges").asList()
+            {
+                if (!change.getField("kind").isNull()) { throw "Rename resource operations are not supported" }
+                const uri: String = change.getField("textDocument").getField("uri").getString()
+                if (uri == "" || edits.contains(uri)) { throw "Duplicate or missing WorkspaceEdit URI" }
+                edits.set(uri, change.getField("edits"))
+                if (!change.getField("textDocument").getField("version").isNull()) {
+                    if (!change.getField("textDocument").getField("version").isInt()) { throw "WorkspaceEdit version must be an integer or null" }
+                    versions.set(uri, change.getField("textDocument").getField("version").getInt()) }
+            }
+            var preview: List<WorkspaceChange> = []
+            var locations: List<Location> = []
+            for uri in edits.keys()
+            {
+                const path: String = Location::path(uri)
+                const file: OpenFile = this.language.documents.open(path)
+                const snapshot: JsonValue = file.doc.snapshot()
+                const version: Int64 = snapshot.getField("version").getInt()
+                if (versions.contains(uri) && versions.get(uri) != version) { throw "Rename result is stale" }
+                var replacements: List<TextEdit> = []
+                if (!edits.get(uri).isArray()) { throw "WorkspaceEdit edits must be an array" }
+                for edit in edits.get(uri).asList()
+                {
+                    const range: Range = Location::span(edit.getField("range"))
+                    if (!edit.getField("newText").isString()) { throw "WorkspaceEdit has no replacement text" }
+                    Utf16::offset(snapshot.getField("text").getString(), range.start)
+                    Utf16::offset(snapshot.getField("text").getString(), range.end)
+                    replacements.push(TextEdit::replace(range, edit.getField("newText").getString()))
+                    locations.push(Location { path: path, range: range, extent: range, name: file.doc.textIn(range) + " → " + edit.getField("newText").getString() })
+                }
+                preview.push(WorkspaceChange { file: file, version: version, text: snapshot.getField("text").getString(), edits: replacements })
+            }
+            this.preview = preview
+            this.previewing = preview.len() > 0
+            this.language.window.store.setBool("navigation.preview", this.previewing)
+            this.showResults(locations, "Rename preview: " + locations.len().toString() + " edits in " + preview.len().toString() + " files")
+            this.language.window.registry.refresh()
+        }
+
+        /** Sends a single native all-or-none edit command, then retains the inverse batch. */
+        fn applyPreview() -> Nothing
+        {
+            if (!this.previewing) { return }
+            var commands: List<String> = []
+            for change in this.preview { commands.push(change.toJson()) }
+            const reply: JsonValue = Bridge::query(Command::named("editor.workspaceEdit").raw("documents", Js::array(commands)).build())
+            var inverse: List<WorkspaceChange> = []
+            for entry in reply.getField("inverse").asList()
+            {
+                for change in this.preview
+                {
+                    if (entry.getField("target").getInt() == change.file.doc.id())
+                    {
+                        var edits: List<TextEdit> = []
+                        for edit in entry.getField("edits").asList() { edits.push(TextEdit::replace(Location::span(edit.getField("range")), edit.getField("newText").getString())) }
+                        inverse.push(WorkspaceChange { file: change.file, version: entry.getField("version").getInt(), text: "", edits: edits })
+                    }
+                }
+            }
+            this.inverse = inverse
+            this.language.window.store.setBool("navigation.undo", inverse.len() > 0)
+            this.cancelPreview()
+            this.language.window.store.set("status.message", "Rename applied to buffers; save when ready. Undo Rename Across Files: Ctrl+Alt+Z")
+        }
+
+        /** Undoes every renamed buffer atomically, refusing intervening edits or closed files. */
+        fn undoRename() -> Nothing
+        {
+            var commands: List<String> = []
+            for change in this.inverse
+            {
+                if (!this.language.documents.isOpen(change.file.path)) { throw "A renamed document was closed; workspace undo is no longer available" }
+                commands.push(change.toJson())
+            }
+            Bridge::query(Command::named("editor.workspaceEdit").raw("documents", Js::array(commands)).build())
+            this.inverse = []
+            this.language.window.store.setBool("navigation.undo", false)
+            this.language.window.registry.refresh()
+        }
+
+        /** Cancels a preview without changing any text. */
+        fn cancelPreview() -> Nothing
+        {
+            this.preview = []
+            this.previewing = false
+            this.language.window.store.setBool("navigation.preview", false)
+            this.language.window.store.set("navigation.heading", "Rename preview closed")
+            this.language.window.registry.refresh()
+        }
+
+        /** Invalidates an outline immediately and cancels a preview if an edited file participates. */
+        fn invalidated(path: String) -> Nothing
+        {
+            this.outlineKey = ""
+            this.symbols = []
+            this.language.window.store.set("navigation.breadcrumb", "")
+            for change in this.preview { if (change.file.path == path) { this.cancelPreview()
+                return } }
+        }
+
+        /** Clears navigation results belonging to a dead server generation. */
+        fn serverState(state: String) -> Nothing
+        {
+            if (state == "ready") { this.outlineKey = ""
+                return }
+            this.requests = []
+            this.outlineKey = ""
+            this.symbols = []
+            this.workspaceSymbols = []
+            this.cancelPreview()
+            this.results.reset([])
+            this.outline.reset([])
+            this.language.window.store.set("navigation.breadcrumb", "")
+        }
+    }
+}

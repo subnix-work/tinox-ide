@@ -115,3 +115,8 @@ A new namespace gets: a `*_test.cpp` driven through the ABI (copy the smallest o
 shows the `QAbstractItemModelTester` pattern, `action_test` the QTest one), a line in the
 `CMakeLists.txt`, seeds and dictionary entries for the fuzzer, and a check that the registry is back
 to its baseline at the end.
+
+The real navigation smoke (`scripts/test-navigation.sh`, part of `make test`)
+creates two Tinox files in a temporary project and drives the IDE through
+cross-file definition, history, references, outline, workspace symbol palette and
+previewed multi-file rename/apply/undo against the real language server.

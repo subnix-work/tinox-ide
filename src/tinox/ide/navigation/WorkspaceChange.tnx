@@ -1,0 +1,24 @@
+module tinox.ide.navigation
+import tinox.ide.editor.OpenFile
+import tinox.ide.ui.TextEdit
+import tinox.ide.ui.Js
+namespace tinox.ide.navigation
+{
+    /** One version-pinned document in a rename preview, including the original text for undo. */
+    class WorkspaceChange
+    {
+        /** Open native buffer (closed files are opened before preview). */
+        var file: OpenFile
+        /** Native version used for atomic commit validation. */
+        var version: Int64
+        /** Original buffer text. */
+        var text: String
+        /** Complete server edit list for this buffer. */
+        var edits: List<TextEdit>
+        /** Serializes the native workspace transaction entry. */
+        fn toJson() -> String
+        {
+            return Js::object([Js::intField("target", this.file.doc.id()), Js::intField("version", this.version), Js::field("edits", TextEdit::array(this.edits))])
+        }
+    }
+}

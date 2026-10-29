@@ -1,0 +1,174 @@
+import DiagnosticsHarness
+import MockBridge
+import TempProject
+import tinox.core.json
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.Event
+import tinox.ide.navigation.Location
+import tinox.ide.navigation.NavigationService
+import tinox.ide.ui.Js
+import tinox.ide.ui.Position
+import tinox.ide.ui.Range
+import tinox.ide.ui.Utf16
+
+class NavigationTest
+{
+    fnc location(path: String, line: Int64, column: Int64) -> Location
+    {
+        return Location { path: path, name: "", range: Range::create(line, column, line, column), extent: Range::create(line, column, line, column) }
+    }
+
+    @Test("file URI decoding preserves Unicode and escaped filename characters and rejects remote/malformed URIs")
+    fn testLocations() -> Bool
+    {
+        const path: String = "/tmp/α #?.tnx"
+        const decoded: Bool = Location::path(Utf16::uri(path)) == path
+        var rejected: Int64 = 0
+        for uri in ["https://host/a", "file://host/a", "file:///a%", "file:///a%GG", "file:///a%00", "file:///a#fragment"]
+        {
+            try { Location::path(uri) }
+            catch (error: String) { rejected = rejected + 1 }
+        }
+        const symbol: Location = NavigationTest::location(path, 3, 2)
+        const extent: Location = NavigationTest::location(path, 0, 0)
+        extent.extent = Range::create(0, 0, 0, 2)
+        return decoded && rejected == 6 && extent.encloses(Position::create(0, 1)) && !extent.encloses(Position::create(0, 2)) && symbol.encloses(Position::create(3, 2)) && !symbol.encloses(Position::create(3, 3))
+    }
+
+    @Test("history restores precise cursor positions across files, captures moved cursors and truncates forward history")
+    fn testHistoryAndRequests() -> Bool
+    {
+        const app = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "A.tnx", "abc")
+        const b: String = TempProject::file(root, "B.tnx", "abc")
+        const first = DiagnosticsHarness::open(app, a, "abc")
+        const second = DiagnosticsHarness::open(app, b, "abc")
+        const service: NavigationService = app.codeNavigation
+        MockBridge::onCommand("editor.getCursor", "{\"position\":{\"line\":0,\"character\":2}}", "")
+        app.documents.activate(app.documents.indexOf(a))
+        service.go(NavigationTest::location(b, 0, 1))
+        service.step(-1)
+        const restored: Bool = app.documents.current().path == a && first.character == 2
+        service.step(1)
+        const forward: Bool = app.documents.current().path == b && second.character == 2
+        service.step(-1)
+        service.go(NavigationTest::location(b, 0, 0))
+        const branched: Bool = service.history.len() == 2 && !app.store.getBool("navigation.forward")
+        app.documents.active = -1
+        service.step(-1)
+        const withoutActive: Bool = app.documents.current().path == a && service.historyIndex == 0
+        service.step(1)
+        app.language.client.capabilities = Json::parse("{\"definitionProvider\":true}")
+        service.requestAt("definition", second, Position::create(0, 1), "")
+        const request = service.requests[0]
+        request.future.resolve(Json::parse(Js::object([Js::strField("uri", Utf16::uri(a)), Js::field("range", Range::create(0, 1, 0, 2).toJson())])), 0, "")
+        MockBridge::onCommand("editor.info", "{\"version\":1}", "")
+        service.complete(request)
+        const stale: Bool = app.documents.current().path == b
+        MockBridge::onCommand("editor.info", "{\"version\":0}", "")
+        service.complete(request)
+        const navigated: Bool = app.documents.current().path == a && first.character == 1
+        app.language.shutdown()
+        TempProject::remove(root)
+        return restored && forward && branched && withoutActive && stale && navigated
+    }
+
+    @Test("rename previews every edit across files, sends one native transaction, cancels on changes and records atomic inverse")
+    fn testRenameAndOutline() -> Bool
+    {
+        const app = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "A.tnx", "abc")
+        const b: String = TempProject::file(root, "B.tnx", "abc")
+        const first = DiagnosticsHarness::open(app, a, "abc")
+        const second = DiagnosticsHarness::open(app, b, "abc")
+        const service = app.codeNavigation
+        MockBridge::onCommand("editor.getText", "{\"text\":\"abc\",\"version\":0}", "")
+        const edit: String = "[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}},\"newText\":\"z\"}]"
+        const workspace: String = "{\"changes\":{" + Js::field(Utf16::uri(a), edit) + "," + Js::field(Utf16::uri(b), edit) + "}}"
+        service.prepare(Json::parse(workspace))
+        const preview: Bool = service.preview.len() == 2 && service.locations.len() == 2 && app.store.getBool("navigation.preview")
+        const inverse: String = "{\"inverse\":[{\"target\":" + first.doc.id().toString() + ",\"version\":1,\"edits\":" + edit + "},{\"target\":" + second.doc.id().toString() + ",\"version\":1,\"edits\":" + edit + "}]}"
+        MockBridge::onCommand("editor.workspaceEdit", inverse, "")
+        DiagnosticsHarness::drain()
+        service.applyPreview()
+        const applied: String = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.workspaceEdit")
+        const atomic: Bool = applied.contains("\"target\":" + first.doc.id().toString()) && applied.contains("\"target\":" + second.doc.id().toString()) && service.inverse.len() == 2 && !service.previewing
+        service.undoRename()
+        const undone: Bool = !app.store.getBool("navigation.undo")
+        service.prepare(Json::parse(workspace))
+        service.invalidated(a)
+        const cancelled: Bool = !service.previewing
+        const versioned: String = "{\"documentChanges\":[{\"textDocument\":{\"uri\":" + Js::str(Utf16::uri(a)) + ",\"version\":0},\"edits\":" + edit + "}]}"
+        service.prepare(Json::parse(versioned))
+        const documentChanges: Bool = service.preview.len() == 1 && service.preview[0].version == 0
+        var rejected: Int64 = 0
+        for unsupported in ["{\"documentChanges\":[{\"kind\":\"rename\",\"oldUri\":\"file:///a\",\"newUri\":\"file:///b\"}]}", versioned.replace("\"version\":0", "\"version\":\"bad\"")]
+        {
+            try { service.prepare(Json::parse(unsupported)) }
+            catch (error: String) { rejected = rejected + 1 }
+        }
+        service.cancelPreview()
+        service.symbols = []
+        const rows = service.symbolRows(Json::parse("[{\"name\":\"A\",\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":3}},\"selectionRange\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}},\"children\":[{\"name\":\"member\",\"range\":{\"start\":{\"line\":0,\"character\":1},\"end\":{\"line\":0,\"character\":2}},\"selectionRange\":{\"start\":{\"line\":0,\"character\":1},\"end\":{\"line\":0,\"character\":2}}}]}]").asList(), a)
+        service.breadcrumb(Position::create(0, 1))
+        const outline: Bool = rows.len() == 1 && service.symbols.len() == 2 && app.store.get("navigation.breadcrumb") == "A › member"
+        app.language.shutdown()
+        TempProject::remove(root)
+        return preview && atomic && undone && cancelled && documentChanges && rejected == 2 && outline
+    }
+    @Test("cross-file definition fallback filters exact names and owners, and zero-width outlines infer enclosing spans")
+    fn testUpstreamCompatibility() -> Bool
+    {
+        const app = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const a: String = TempProject::file(root, "Widget.tnx", "Widget::readNumber()")
+        const b: String = TempProject::file(root, "Caller.tnx", "Widget::readNumber()")
+        const first = DiagnosticsHarness::open(app, a, "Widget::readNumber()")
+        const second = DiagnosticsHarness::open(app, b, "Widget::readNumber()")
+        const service = app.codeNavigation
+        app.language.client.capabilities = Json::parse("{\"definitionProvider\":true,\"workspaceSymbolProvider\":true}")
+        MockBridge::onCommand("editor.getCursor", "{\"position\":{\"line\":0,\"character\":9}}", "")
+        service.requestAt("definition", second, Position::create(0, 9), "")
+        const original = service.requests[0]
+        original.future.resolve(Json::parse("null"), 0, "")
+        service.requests = []
+        service.complete(original)
+        const fallback = service.requests[0]
+        const exact: Bool = fallback.token == "readNumber" && fallback.owner == "Widget"
+        const location: String = Js::object([Js::strField("uri", Utf16::uri(a)), Js::field("range", Range::create(0, 0, 0, 1).toJson())])
+        fallback.future.resolve(Json::parse("[{\"name\":\"readNumber\",\"containerName\":\"Other\",\"location\":" + location + "},{\"name\":\"readNumber\",\"containerName\":\"Widget\",\"location\":" + location + "}]"), 0, "")
+        service.complete(fallback)
+        const crossFile: Bool = app.documents.current().path == a
+        const text: String = "class Widget\n{\n    fnc readNumber() -> Int64\n    {\n        return 1\n    }\n}\n"
+        service.symbols = []
+        const rows = service.symbolRowsWithin(Json::parse("[{\"name\":\"Widget\",\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"selectionRange\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"children\":[{\"name\":\"readNumber\",\"range\":{\"start\":{\"line\":2,\"character\":4},\"end\":{\"line\":2,\"character\":4}},\"selectionRange\":{\"start\":{\"line\":2,\"character\":4},\"end\":{\"line\":2,\"character\":4}}}]}]").asList(), a, Position::create(7, 0), text)
+        service.breadcrumb(Position::create(4, 10))
+        const inferred: Bool = rows.len() == 1 && app.store.get("navigation.breadcrumb") == "Widget › readNumber" && service.symbols[1].range.start.character == 8
+        app.language.shutdown()
+        TempProject::remove(root)
+        return exact && crossFile && inferred
+    }
+
+    @Test("navigation uses the focused split pane and symbol rename does not steal the file rename shortcut")
+    fn testFocusedSplit() -> Bool
+    {
+        const app = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Main.tnx", "abc")
+        const file = DiagnosticsHarness::open(app, path, "abc")
+        const second: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.createView", "{\"id\":" + second.toString() + "}", "")
+        app.documents.split(false)
+        app.codeNavigation.viewEvent(file, Event::parse("{\"type\":\"editor.focusChanged\",\"target\":" + second.toString() + ",\"focused\":true}"))
+        const focused: Bool = app.codeNavigation.activeView(file).id() == second
+        app.documents.unsplit()
+        const fallback: Bool = app.codeNavigation.activeView(file).id() == file.views[0].id()
+        const shortcuts: Bool = app.registry.find("lsp.rename").shortcutText == "Ctrl+F2" && app.registry.find("workspace.rename").shortcutText == "F2"
+        app.language.shutdown()
+        TempProject::remove(root)
+        return focused && fallback && shortcuts && app.events.failureCount() == 0
+    }
+
+}

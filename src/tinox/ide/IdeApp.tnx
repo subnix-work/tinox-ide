@@ -8,6 +8,7 @@ import tinox.ide.app.IdeCommand
 import tinox.ide.app.Logger
 import tinox.ide.app.MainWindow
 import tinox.ide.app.Store
+import tinox.ide.navigation.NavigationService
 import tinox.ide.lsp.LanguageService
 import tinox.ide.kde.App
 import tinox.ide.kde.Bridge
@@ -70,6 +71,8 @@ namespace tinox.ide
         var search: FindInFiles
         /** Language-server lifecycle and the shared problems/editor diagnostics. */
         var language: LanguageService
+        /** LSP navigation and rename. */
+        var codeNavigation: NavigationService
         /** The integrated terminal. */
         var terminal: TerminalPanel
         /** The preferences with their defaults and checks. */
@@ -109,7 +112,8 @@ namespace tinox.ide
             search.install()
             const terminal: TerminalPanel = TerminalPanel::install(window)
             const language: LanguageService = LanguageService::create(window, documents, preferences)
-            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, language: language, terminal: terminal, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
+            const codeNavigation: NavigationService = NavigationService::create(language)
+            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, language: language, codeNavigation: codeNavigation, terminal: terminal, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
             app.loadSettings()
             app.registerCommands()
             workspace.registerCommands()
@@ -119,6 +123,7 @@ namespace tinox.ide
             window.addViewMenu(documents.viewItems())
             navigation.registerCommands()
             var go: List<String> = navigation.menuItems()
+            for item in codeNavigation.menuItems() { go.push(item) }
             go.push("problems.next")
             go.push("problems.previous")
             window.addGoMenu(go, search.menuItems())
@@ -130,6 +135,7 @@ namespace tinox.ide
             navigation.bind()
             search.bind()
             language.problems.bind()
+            codeNavigation.bind()
             logger.info("Tinox IDE started")
             return app
         }

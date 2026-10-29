@@ -89,7 +89,7 @@ class PreferencesTest
     {
         const events: EventLoop = EventLoop::create()
         const app: IdeApp = PreferencesTest::start(events)
-        const nodes: String = "\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"openFolder\":63,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"welcome\":61,\"status\":62,\"prefs\":80,\"prefPages\":81,\"prefsClose\":82,\"pref:Editor.autosave\":83,\"pref:Tools.lspPath\":84,\"prefStack\":85}"
+        const nodes: String = "\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"openFolder\":63,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"outlineDock\":95,\"outlineTree\":90,\"navigationResults\":91,\"renameApply\":92,\"renameCancel\":93,\"breadcrumbs\":94,\"welcome\":61,\"status\":62,\"prefs\":80,\"prefPages\":81,\"prefsClose\":82,\"pref:Editor.autosave\":83,\"pref:Tools.lspPath\":84,\"prefStack\":85}"
         MockBridge::onCommand("widget.mount", "{\"id\":" + MockBridge::createObject().toString() + ",\"root\":80," + nodes + "}", "")
         MockBridge::onCommand("widget.update", "{\"root\":50," + nodes + "}", "")
         MockBridge::onCommand("model.select", "", "")

@@ -16,7 +16,7 @@ class DiagnosticsHarness
         Bridge::init("diagnostics-test", "Diagnostics Test")
         const mount: Int64 = MockBridge::createObject()
         const model: Int64 = MockBridge::createObject()
-        const nodes: String = "{\"main\":50,\"tools\":51,\"project\":52,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"status\":62,\"searchResults\":71}"
+        const nodes: String = "{\"main\":50,\"tools\":51,\"project\":52,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"outlineDock\":95,\"outlineTree\":90,\"navigationResults\":91,\"renameApply\":92,\"renameCancel\":93,\"breadcrumbs\":94,\"status\":62,\"searchResults\":71}"
         MockBridge::onCommand("widget.mount", "{\"id\":" + mount.toString() + ",\"root\":50,\"nodes\":" + nodes + "}", "")
         MockBridge::onCommand("widget.update", "{\"root\":50,\"nodes\":" + nodes + "}", "")
         MockBridge::onCommand("model.create", "{\"id\":" + model.toString() + "}", "")

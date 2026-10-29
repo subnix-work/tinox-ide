@@ -301,4 +301,26 @@ class EditorTest
         events.pump(1000)
         return seen.len() == 0
     }
+    fnc observerFailure(event: Event) -> Nothing
+    {
+        throw "observer exploded"
+    }
+
+    @Test("a failing view observer cannot starve other observers or the built-in cursor handler")
+    fn testObserverIsolation() -> Bool
+    {
+        Bridge::init("test", "Test")
+        const events = EventLoop::create()
+        const doc = EditorTest::newDocument(events)
+        const id: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.createView", "{\"id\":" + id.toString() + "}", "")
+        const view = EditorView::create(events, doc)
+        const calls: List<String> = []
+        view.onEvent((event: Event) => EditorTest::observerFailure(event))
+        view.onEvent((event: Event) => calls.push(event.type))
+        view.onCursorMoved((position: Position) => calls.push(position.character.toString()))
+        events.handle("{\"type\":\"editor.cursorMoved\",\"target\":" + id.toString() + ",\"position\":{\"line\":0,\"character\":2}}")
+        return calls.len() == 2 && calls[0] == "editor.cursorMoved" && calls[1] == "2" && events.failureCount() == 1
+    }
+
 }
