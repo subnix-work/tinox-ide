@@ -12,6 +12,7 @@ its line and column.
 | Run | F5 | builds like Build, then starts the produced executable with the run configuration |
 | Stop | Shift+F5 | SIGTERM to the whole process group, SIGKILL after one second |
 | Select Run Configuration… / Edit Run Configurations… | | see below |
+| Start Debugging and the other Debug entries | Alt+F5 | build with `--debug`, then debug; see [debugging.md](debugging.md) |
 | Run All Tests | Ctrl+F5 | `tinox test --format json` |
 | Run Tests in Selected File | | `tinox test <file> --format json` for the file of the selected tree row |
 | Run Failed Tests | | the files that contain failed tests |

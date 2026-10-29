@@ -96,6 +96,7 @@ namespace tinox.ide.build
             window.bus.subscribe("workspace.opened", (m: BusMessage) => service.workspaceChanged(m.str("path")))
             window.bus.subscribe("workspace.closed", (m: BusMessage) => service.workspaceChanged(""))
             window.bus.subscribe("editor.saved", (m: BusMessage) => service.saved(m.str("path")))
+            window.bus.subscribe("debug.requested", (m: BusMessage) => service.debugProgram())
             window.store.set("build.activity", "")
             return service
         }
@@ -170,10 +171,17 @@ namespace tinox.ide.build
         /** The step that compiles the current configuration. */
         fn buildStep(kind: String) -> TaskStep
         {
+            return this.buildStepWith(kind, false)
+        }
+
+        /** The step that compiles the current configuration; `debug` keeps the debug information the debugger needs. */
+        fn buildStepWith(kind: String, debug: Bool) -> TaskStep
+        {
             var argv: List<String> = [this.tinox(), kind]
             const file: String = this.configs.current().file
             if (file != "") { argv.push(this.absolute(file)) }
             for extra in Arguments::parse(this.window.store.get("pref.Build.args")) { argv.push(extra) }
+            if (debug) { argv.push("--debug") }
             argv.push("--message-format=json")
             return TaskStep::events(kind, argv)
         }
@@ -183,6 +191,13 @@ namespace tinox.ide.build
         {
             const config: RunConfig = this.configs.current()
             this.start(true, [this.buildStep("build"), TaskStep::program(config, Arguments::parse(config.args))])
+        }
+
+        /** Builds with debug information, then starts a debug session with the selected configuration. */
+        fn debugProgram() -> Nothing
+        {
+            const config: RunConfig = this.configs.current()
+            this.start(true, [this.buildStepWith("build", true), TaskStep::debug(config, Arguments::parse(config.args))])
         }
 
         /** Runs the tests of these files, all tests for an empty list. */
@@ -275,6 +290,11 @@ namespace tinox.ide.build
             var argv: List<String> = step.argv
             var directory: String = this.root()
             if (step.cwd != "") { directory = this.absolute(step.cwd) }
+            if (step.kind == "debug")
+            {
+                this.handOver(step, directory)
+                return
+            }
             if (step.kind == "run")
             {
                 argv = [this.artifact]
@@ -290,6 +310,15 @@ namespace tinox.ide.build
             // Host environment overrides belong to the command, not the DBus launcher.
             if (host) { childEnv = [] }
             this.run = TaskRun::start(argv, directory, childEnv)
+        }
+
+        /** The last step of a debug task: the debugger takes the program; this task is done. */
+        fn handOver(step: TaskStep, directory: String) -> Nothing
+        {
+            this.write("\x1b[1mStarting the debugger for " + this.artifact + "\x1b[0m\n")
+            const payload: String = Js::object([Js::strField("adapter", this.tinox()), Js::strField("program", this.artifact), Js::field("args", Js::strings(step.argv)), Js::field("env", Js::strings(step.env)), Js::strField("cwd", directory)])
+            this.finish("debug", 0)
+            this.window.bus.publish("debug.launch", payload)
         }
 
         /** Stops the running task, including every process the step started. */
@@ -462,7 +491,7 @@ namespace tinox.ide.build
             const step: TaskStep = this.steps[this.index]
             if (this.run.error() != "") { this.write("\x1b[31m" + this.run.error() + "\x1b[0m\n") }
             const failed: Bool = status != 0
-            if (!this.cancelled && !failed && this.index + 1 < this.steps.len() && (this.steps[this.index + 1].kind != "run" || this.artifact != ""))
+            if (!this.cancelled && !failed && this.index + 1 < this.steps.len() && ((this.steps[this.index + 1].kind != "run" && this.steps[this.index + 1].kind != "debug") || this.artifact != ""))
             {
                 this.index = this.index + 1
                 this.begin()
@@ -495,6 +524,7 @@ namespace tinox.ide.build
             var message: String = ""
             if (this.cancelled) { message = this.title + " stopped" }
             else if (kind == "run") { message = "Program exited with status " + status.toString() }
+            else if (kind == "debug") { message = "Debugger started" }
             else if (kind == "list") { message = this.tests.cases.len().toString() + " tests found" }
             else if (kind == "test") { message = this.tests.summary() }
             else if (failed) { message = this.title + " failed: " + errors.toString() + " errors" }
@@ -515,7 +545,7 @@ namespace tinox.ide.build
                 event = "testsFinished"
                 if (failed) { event = "testsFailed" }
             }
-            else if (failed && kind != "run") { event = "buildFailed" }
+            else if (failed && kind != "run" && kind != "debug") { event = "buildFailed" }
             Bridge::post(Command::named("notify.send").str("event", event).str("title", "Tinox IDE: " + this.title).str("text", message).build())
         }
 

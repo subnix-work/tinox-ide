@@ -1,0 +1,61 @@
+import tinox.core.json
+import tinox.ide.debug.DapClient
+import tinox.ide.debug.DapEvent
+import tinox.ide.lsp.RpcFuture
+
+class DapClientTest
+{
+    @Test("requests carry increasing seq numbers and responses settle the right future, out of order")
+    fn testRequestsCorrelate() -> Bool
+    {
+        var sent: List<String> = []
+        const client: DapClient = DapClient::create((json: String) => sent.push(json))
+        const one: RpcFuture = client.request("threads", "{}", 1000)
+        const two: RpcFuture = client.request("stackTrace", "{\"threadId\":1}", 1000)
+        client.receive("{\"seq\":9,\"type\":\"response\",\"request_seq\":" + two.id.toString() + ",\"success\":true,\"command\":\"stackTrace\",\"body\":{\"totalFrames\":3}}")
+        const early: Bool = !one.done && two.done
+        client.receive("{\"seq\":10,\"type\":\"response\",\"request_seq\":" + one.id.toString() + ",\"success\":true,\"command\":\"threads\",\"body\":{\"threads\":[]}}")
+        const first: JsonValue = Json::parse(sent[0])
+        return early && two.value().getField("totalFrames").getInt() == 3 && one.done && one.id == 1 && two.id == 2 && first.getField("type").getString() == "request" && first.getField("command").getString() == "threads" && Json::parse(sent[1]).getField("arguments").getField("threadId").getInt() == 1
+    }
+
+    @Test("a failed response carries the adapter's message; an answer to a settled request is ignored")
+    fn testFailureAndLateAnswer() -> Bool
+    {
+        var sent: List<String> = []
+        const client: DapClient = DapClient::create((json: String) => sent.push(json))
+        const bad: RpcFuture = client.request("evaluate", "{\"expression\":\"x\"}", 1000)
+        client.receive("{\"seq\":2,\"type\":\"response\",\"request_seq\":" + bad.id.toString() + ",\"success\":false,\"command\":\"evaluate\",\"message\":\"No symbol \\\"x\\\" in current context.\"}")
+        const late: RpcFuture = client.request("threads", "{}", 10)
+        client.pollAt(client.clock + 11)
+        client.receive("{\"seq\":3,\"type\":\"response\",\"request_seq\":" + late.id.toString() + ",\"success\":true,\"command\":\"threads\",\"body\":{}}")
+        var thrown: String = ""
+        try { bad.value() }
+        catch (e: String) { thrown = e }
+        return bad.code == -1 && thrown.contains("No symbol") && late.code == -2 && late.message.contains("in time") && client.pending.len() == 0
+    }
+
+    @Test("events queue in order with their body; the adapter's own requests are refused")
+    fn testEventsAndReverseRequests() -> Bool
+    {
+        var sent: List<String> = []
+        const client: DapClient = DapClient::create((json: String) => sent.push(json))
+        client.receive("{\"seq\":1,\"type\":\"event\",\"event\":\"initialized\"}")
+        client.receive("{\"seq\":2,\"type\":\"event\",\"event\":\"stopped\",\"body\":{\"reason\":\"breakpoint\",\"threadId\":7}}")
+        client.receive("{\"seq\":3,\"type\":\"request\",\"command\":\"runInTerminal\",\"arguments\":{}}")
+        const events: List<DapEvent> = client.takeEvents()
+        const refusal: JsonValue = Json::parse(sent[0])
+        return events.len() == 2 && events[0].name == "initialized" && events[1].str("reason") == "breakpoint" && events[1].int("threadId", -1) == 7 && events[1].int("missing", -1) == -1 && client.takeEvents().len() == 0 && !refusal.getField("success").getBool() && refusal.getField("request_seq").getInt() == 3
+    }
+
+    @Test("stopping fails what is outstanding once and later requests fail at once")
+    fn testStop() -> Bool
+    {
+        var sent: List<String> = []
+        const client: DapClient = DapClient::create((json: String) => sent.push(json))
+        const waiting: RpcFuture = client.request("continue", "{}", 1000)
+        client.stop()
+        const after: RpcFuture = client.request("threads", "{}", 1000)
+        return client.closed() && waiting.done && waiting.code == -1 && after.done && after.code == -1 && sent.len() == 1
+    }
+}

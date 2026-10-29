@@ -1,0 +1,147 @@
+import DiagnosticsHarness
+import MockBridge
+import TempProject
+import tinox.core.json
+import tinox.ide.IdeApp
+import tinox.ide.app.BusMessage
+import tinox.ide.debug.DapClient
+
+class DebugServiceTest
+{
+    /** The index of the last request with this command in what was sent, -1 for none. */
+    fnc find(sent: List<String>, command: String) -> Int64
+    {
+        var found: Int64 = -1
+        var i: Int64 = 0
+        while (i < sent.len())
+        {
+            if (sent[i].contains("\"command\":\"" + command + "\"")) { found = i }
+            i = i + 1
+        }
+        return found
+    }
+
+    /** Answers the last request with this command. */
+    fnc reply(app: IdeApp, sent: List<String>, command: String, body: String) -> Bool
+    {
+        const index: Int64 = DebugServiceTest::find(sent, command)
+        if (index < 0) { return false }
+        const seq: Int64 = Json::parse(sent[index]).getField("seq").getInt()
+        app.debug.client.receive("{\"seq\":99,\"type\":\"response\",\"request_seq\":" + seq.toString() + ",\"success\":true,\"command\":\"" + command + "\",\"body\":" + body + "}")
+        return true
+    }
+
+    fnc event(app: IdeApp, name: String, body: String) -> Nothing
+    {
+        app.debug.client.receive("{\"seq\":98,\"type\":\"event\",\"event\":\"" + name + "\",\"body\":" + body + "}")
+    }
+
+    @Test("a session walks the protocol: initialize, launch, breakpoints, configurationDone, stop, stack, scopes, variables, step and end")
+    fn testSession() -> Bool
+    {
+        const app: IdeApp = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Main.tnx", "a\nb\nc\n")
+        DiagnosticsHarness::open(app, path, "a\nb\nc\n")
+        for name in ["editor.watchBreakpoints", "editor.setBreakpoints", "editor.setExecutionLine", "model.setChildren"] { MockBridge::onCommand(name, "", "") }
+        MockBridge::onCommand("editor.getBreakpoints", "{\"lines\":[1]}", "")
+        var sent: List<String> = []
+        app.debug.factory = (argv: List<String>, directory: String) => DapClient::create((json: String) => sent.push(json))
+        app.store.set("workspace.path", root)
+        app.debug.launch(BusMessage::create("debug.launch", Json::parse("{\"adapter\":\"tinox\",\"program\":\"/tmp/app\",\"args\":[\"one\"],\"env\":[\"A=b\"],\"cwd\":\"" + root + "\"}")))
+        const started: Bool = app.debug.live && DebugServiceTest::find(sent, "initialize") == 0
+        DebugServiceTest::reply(app, sent, "initialize", "{}")
+        app.debug.poll()
+        const launch: JsonValue = Json::parse(sent[DebugServiceTest::find(sent, "launch")])
+        const launched: Bool = launch.getField("arguments").getField("program").getString() == "/tmp/app" && launch.getField("arguments").getField("args").asList()[0].getString() == "one" && launch.getField("arguments").getField("env").getField("A").getString() == "b"
+
+        DebugServiceTest::event(app, "initialized", "{}")
+        app.debug.poll()
+        const breakpoints: JsonValue = Json::parse(sent[DebugServiceTest::find(sent, "setBreakpoints")])
+        const configured: Bool = breakpoints.getField("arguments").getField("source").getField("path").getString() == path && breakpoints.getField("arguments").getField("breakpoints").asList()[0].getField("line").getInt() == 2 && DebugServiceTest::find(sent, "configurationDone") > 0
+
+        DebugServiceTest::event(app, "stopped", "{\"reason\":\"breakpoint\",\"threadId\":4}")
+        app.debug.poll()
+        const asked: Bool = DebugServiceTest::find(sent, "threads") > 0 && Json::parse(sent[DebugServiceTest::find(sent, "stackTrace")]).getField("arguments").getField("threadId").getInt() == 4
+        DebugServiceTest::reply(app, sent, "threads", "{\"threads\":[{\"id\":4,\"name\":\"main\"}]}")
+        DebugServiceTest::reply(app, sent, "stackTrace", "{\"stackFrames\":[{\"id\":1000,\"name\":\"Main.square\",\"line\":2,\"column\":1,\"source\":{\"path\":" + Js::str(path) + "}}]}")
+        app.debug.poll()
+        DebugServiceTest::reply(app, sent, "scopes", "{\"scopes\":[{\"name\":\"Arguments\",\"presentationHint\":\"arguments\",\"variablesReference\":5,\"expensive\":false},{\"name\":\"Locals\",\"presentationHint\":\"locals\",\"variablesReference\":6,\"expensive\":false},{\"name\":\"Registers\",\"presentationHint\":\"registers\",\"variablesReference\":7,\"expensive\":false}]}")
+        app.debug.poll()
+        DebugServiceTest::reply(app, sent, "variables", "{\"variables\":[{\"name\":\"n\",\"value\":\"7\",\"type\":\"Int64\",\"variablesReference\":0}]}")
+        app.debug.poll()
+        DebugServiceTest::reply(app, sent, "variables", "{\"variables\":[{\"name\":\"result\",\"value\":\"49\",\"variablesReference\":0}]}")
+        app.debug.poll()
+        const stopped: Bool = app.store.getBool("debug.stopped") && app.debug.drawn && app.debug.shown.len() == 2 && app.debug.shown[0] == "n = 7" && app.debug.shown[1] == "result = 49" && app.debug.markedPath == path && app.debug.frames.len() == 1 && app.debug.threadId == 4
+
+        app.registry.execute("debug.stepOver")
+        const step: JsonValue = Json::parse(sent[DebugServiceTest::find(sent, "next")])
+        const stepped: Bool = step.getField("arguments").getField("threadId").getInt() == 4 && !app.store.getBool("debug.stopped") && app.debug.markedPath == ""
+        DebugServiceTest::reply(app, sent, "next", "{}")
+        app.debug.poll()
+
+        DebugServiceTest::event(app, "terminated", "{}")
+        app.debug.poll()
+        const ending: Bool = DebugServiceTest::find(sent, "disconnect") > 0
+        DebugServiceTest::reply(app, sent, "disconnect", "{}")
+        app.debug.poll()
+        const ended: Bool = !app.debug.live && !app.store.getBool("debug.active") && app.debug.client.closed()
+        return started && launched && configured && asked && stopped && stepped && ending && ended
+    }
+
+    @Test("a failing launch ends the session and says why; a second launch while one runs is refused")
+    fn testFailures() -> Bool
+    {
+        const app: IdeApp = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        var sent: List<String> = []
+        app.debug.factory = (argv: List<String>, directory: String) => DapClient::create((json: String) => sent.push(json))
+        app.store.set("workspace.path", root)
+        const message: BusMessage = BusMessage::create("debug.launch", Json::parse("{\"adapter\":\"tinox\",\"program\":\"/tmp/missing\",\"args\":[],\"env\":[],\"cwd\":\"\"}"))
+        app.debug.launch(message)
+        const generation: Int64 = app.debug.generation
+        app.debug.launch(message)
+        const refused: Bool = app.debug.generation == generation && sent.len() == 1
+        DebugServiceTest::reply(app, sent, "initialize", "{}")
+        app.debug.poll()
+        const seq: Int64 = Json::parse(sent[DebugServiceTest::find(sent, "launch")]).getField("seq").getInt()
+        app.debug.client.receive("{\"seq\":9,\"type\":\"response\",\"request_seq\":" + seq.toString() + ",\"success\":false,\"command\":\"launch\",\"message\":\"/tmp/missing: No such file or directory.\"}")
+        app.debug.poll()
+        DebugServiceTest::reply(app, sent, "disconnect", "{}")
+        app.debug.poll()
+        return refused && !app.debug.live && app.debug.transcript.contains("No such file") && !app.store.getBool("debug.active")
+    }
+
+    @Test("the breakpoint moves with the editor; stopping with run to cursor adds a temporary line and takes it away at the next stop")
+    fn testRunToCursor() -> Bool
+    {
+        const app: IdeApp = DiagnosticsHarness::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Main.tnx", "a\nb\nc\nd\n")
+        const file = DiagnosticsHarness::open(app, path, "a\nb\nc\nd\n")
+        for name in ["editor.watchBreakpoints", "editor.setBreakpoints", "editor.setExecutionLine", "model.setChildren"] { MockBridge::onCommand(name, "", "") }
+        MockBridge::onCommand("editor.getBreakpoints", "{\"lines\":[3]}", "")
+        MockBridge::onCommand("editor.getCursor", "{\"position\":{\"line\":2,\"character\":0}}", "")
+        var sent: List<String> = []
+        app.debug.factory = (argv: List<String>, directory: String) => DapClient::create((json: String) => sent.push(json))
+        app.store.set("workspace.path", root)
+        app.debug.launch(BusMessage::create("debug.launch", Json::parse("{\"adapter\":\"tinox\",\"program\":\"/tmp/app\",\"args\":[],\"env\":[],\"cwd\":\"\"}")))
+        const moved: Bool = app.debug.breakpoints.lines(path).len() == 1 && app.debug.breakpoints.lines(path)[0] == 3
+        DebugServiceTest::reply(app, sent, "initialize", "{}")
+        app.debug.poll()
+        DebugServiceTest::event(app, "stopped", "{\"reason\":\"entry\",\"threadId\":1}")
+        app.debug.poll()
+        const before: Int64 = sent.len()
+        app.debug.runToCursor()
+        const temporary: JsonValue = Json::parse(sent[DebugServiceTest::find(sent, "setBreakpoints")])
+        const lines: List<JsonValue> = temporary.getField("arguments").getField("breakpoints").asList()
+        // the breakpoint on 0-based line 3 and the cursor on line 2, as DAP lines (1-based)
+        var added: Bool = false
+        if (lines.len() == 2) { added = lines[0].getField("line").getInt() == 4 && lines[1].getField("line").getInt() == 3 && DebugServiceTest::find(sent, "continue") > DebugServiceTest::find(sent, "setBreakpoints") }
+        DebugServiceTest::event(app, "stopped", "{\"reason\":\"breakpoint\",\"threadId\":1}")
+        app.debug.poll()
+        const restored: JsonValue = Json::parse(sent[DebugServiceTest::find(sent, "setBreakpoints")])
+        const removed: Bool = restored.getField("arguments").getField("breakpoints").asList().len() == 1 && app.debug.cursorPath == "" && sent.len() > before
+        return moved && added && removed
+    }
+}

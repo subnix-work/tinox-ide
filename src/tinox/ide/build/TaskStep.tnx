@@ -5,7 +5,7 @@ namespace tinox.ide.build
     /** One process of a task: a build, then perhaps the program it produced. */
     class TaskStep
     {
-        /** What it does: "build", "check", "list", "test" or "run". */
+        /** What it does: "build", "check", "list", "test", "run" or "debug". */
         var kind: String
         /** The program and its arguments; a "run" step gets the built artifact in front. */
         var argv: List<String>
@@ -20,6 +20,12 @@ namespace tinox.ide.build
         fnc events(kind: String, argv: List<String>) -> TaskStep
         {
             return TaskStep { kind: kind, argv: argv, json: true, cwd: "", env: [] }
+        }
+
+        /** The step that hands the program built by the previous step to the debugger. */
+        fnc debug(config: RunConfig, args: List<String>) -> TaskStep
+        {
+            return TaskStep { kind: "debug", argv: args, json: false, cwd: config.cwd, env: config.env }
         }
 
         /** The step that starts the program built by the previous step. */

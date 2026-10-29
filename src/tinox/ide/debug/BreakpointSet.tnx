@@ -1,0 +1,123 @@
+module tinox.ide.debug
+
+import tinox.ide.app.FileSystem
+
+namespace tinox.ide.debug
+{
+    /** The breakpoints of the workspace: per file path the zero-based lines, sorted and without duplicates. */
+    class BreakpointSet
+    {
+        /** Lines per path. */
+        var files: Map<String, List<Int64>>
+
+        /** An empty set. */
+        fnc create() -> BreakpointSet
+        {
+            return BreakpointSet { files: Map::new() }
+        }
+
+        /** The lines of a file, sorted. */
+        fn lines(path: String) -> List<Int64>
+        {
+            if (this.files.contains(path)) { return this.files.get(path) }
+            return []
+        }
+
+        /** The paths that have at least one breakpoint. */
+        fn paths() -> List<String>
+        {
+            var out: List<String> = []
+            for path in this.files.keys()
+            {
+                if (this.files.get(path).len() > 0) { out.push(path) }
+            }
+            return out
+        }
+
+        /** Replaces the lines of a file (the editor moves them with the text). */
+        fn replace(path: String, lines: List<Int64>) -> Nothing
+        {
+            var sorted: List<Int64> = []
+            for line in lines
+            {
+                // no `continue` in a for-in loop: it never advances (subnix-work/tinox#587)
+                var next: List<Int64> = sorted
+                if (line >= 0 && !sorted.contains(line))
+                {
+                    next = []
+                    var placed: Bool = false
+                    for known in sorted
+                    {
+                        if (!placed && known > line)
+                        {
+                            next.push(line)
+                            placed = true
+                        }
+                        next.push(known)
+                    }
+                    if (!placed) { next.push(line) }
+                }
+                sorted = next
+            }
+            this.files.set(path, sorted)
+        }
+
+        /** Whether this line has a breakpoint. */
+        fn has(path: String, line: Int64) -> Bool
+        {
+            return this.lines(path).contains(line)
+        }
+
+        /** Adds or removes one; returns whether the line has a breakpoint now. */
+        fn set(path: String, line: Int64, wanted: Bool) -> Bool
+        {
+            var lines: List<Int64> = []
+            for known in this.lines(path)
+            {
+                if (known != line) { lines.push(known) }
+            }
+            if (wanted) { lines.push(line) }
+            this.replace(path, lines)
+            return wanted
+        }
+
+        /** Toggles one; returns whether the line has a breakpoint now. */
+        fn toggle(path: String, line: Int64) -> Bool
+        {
+            return this.set(path, line, !this.has(path, line))
+        }
+
+        /** Moves the breakpoints of a renamed or moved file, or of every file below a renamed folder. */
+        fn rename(from: String, to: String) -> Nothing
+        {
+            var moved: List<String> = []
+            for path in this.files.keys()
+            {
+                if (FileSystem::isInside(path, from) && this.files.get(path).len() > 0) { moved.push(path) }
+            }
+            for path in moved
+            {
+                const lines: List<Int64> = this.files.get(path)
+                this.replace(path, [])
+                this.replace(to + path.substring(from.len(), path.len()), lines)
+            }
+        }
+
+        /** Drops the breakpoints of a deleted file, or of every file below a deleted folder. */
+        fn forget(path: String) -> Nothing
+        {
+            for known in this.files.keys()
+            {
+                if (FileSystem::isInside(known, path)) { this.replace(known, []) }
+            }
+        }
+
+        /** The total number of breakpoints. */
+        fn count() -> Int64
+        {
+            var n: Int64 = 0
+            for path in this.files.keys() { n = n + this.files.get(path).len() }
+            return n
+        }
+    }
+}

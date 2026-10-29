@@ -1,6 +1,7 @@
 #include "editor.h"
 
 #include "../bridge.h"
+#include "breakpoints.h"
 #include "diagnostics.h"
 #include "positions.h"
 #include "semantics.h"
@@ -236,6 +237,7 @@ Document *newDocument(Bridge &b, int64_t &idOut)
     idOut = b.registerObject(doc);
     new DocState(b, doc, idOut);
     installMarkDefaults(doc);
+    installBreakpointDefaults(doc);
     return doc;
 }
 
@@ -854,6 +856,7 @@ void registerCommands(Bridge &bridge)
     doc("editor.showConfigDialog", showConfigDialog);
     doc("editor.showViewWindow", showViewWindow);
     registerDiagnosticCommands(bridge);
+    registerBreakpointCommands(bridge);
     registerSemanticCommands(bridge);
     registerViewFeatureCommands(bridge);
     if (bridge.debugCommandsEnabled()) {
