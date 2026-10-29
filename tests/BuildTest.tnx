@@ -1,0 +1,229 @@
+import IdeAppTest
+import MockBridge
+import TempProject
+import tinox.core.json
+import tinox.ide.IdeApp
+import tinox.ide.build.BuildProblem
+import tinox.ide.build.BuildService
+import tinox.ide.build.ProblemParser
+import tinox.ide.build.RunConfig
+import tinox.ide.build.RunConfigs
+import tinox.ide.build.TaskStep
+import tinox.ide.build.TestExplorer
+
+class BuildTest
+{
+    /** Opens a temporary project as the workspace of the app. */
+    fnc workspace(app: IdeApp, main: String) -> String
+    {
+        const root: String = TempProject::create()
+        TempProject::file(root, "tinox.toml", "[package]\ncompiler = \"2.8.0\"\nname = \"p\"\nversion = \"0.1.0\"\nentry = \"src/Main.tnx\"\n")
+        TempProject::file(root, "src/Main.tnx", main)
+        app.store.set("workspace.path", root)
+        app.store.setBool("workspace.open", true)
+        app.build.workspaceChanged(root)
+        return root
+    }
+
+    /** Serves events until the task ends (at most about 60 s). */
+    fnc finish(app: IdeApp) -> Bool
+    {
+        var rounds: Int64 = 0
+        while (app.build.active && rounds < 1200)
+        {
+            app.events.pump(50)
+            rounds = rounds + 1
+        }
+        return !app.build.active
+    }
+
+    @Test("text lines are parsed with and without column and severity, ANSI is stripped, other lines are no reports")
+    fn testTextParser() -> Bool
+    {
+        const full: BuildProblem = ProblemParser::parseText("src/Main.tnx:5:26: error: expected Int32, found String", "/w")
+        const plain: BuildProblem = ProblemParser::parseText("/a/b.tnx:7: boom", "/w")
+        const warn: BuildProblem = ProblemParser::parseText("\x1b[33m/a/b.tnx:2:3: warning: unused: x\x1b[0m", "/w")
+        const none: BuildProblem = ProblemParser::parseText("   5 |         const x: Int32 = \"a\"", "/w")
+        const prose: BuildProblem = ProblemParser::parseText("Compiling the project: done", "/w")
+        return full.path == "/w/src/Main.tnx" && full.line == 5 && full.column == 26 && full.severity == "error" && full.message == "expected Int32, found String" &&
+            plain.path == "/a/b.tnx" && plain.line == 7 && plain.column == 0 && plain.severity == "error" && plain.message == "boom" &&
+            warn.severity == "warning" && warn.message == "unused: x" && warn.column == 3 &&
+            none.message == "" && prose.message == "" && ProblemParser::strip("\x1b[1;31mred\x1b[0m") == "red"
+    }
+
+    @Test("a compiler-message event gives a problem with one-based line and column and the stable code")
+    fn testJsonParser() -> Bool
+    {
+        const event: JsonValue = Json::parse("{\"diagnostic\":{\"code\":\"TINOX-TYPE\",\"file\":\"/w/src/Main.tnx\",\"message\":\"bad\",\"range\":{\"start\":{\"column\":4,\"line\":9,\"offset\":1},\"end\":{\"column\":5,\"line\":9,\"offset\":2}},\"severity\":\"error\"},\"reason\":\"compiler-message\"}")
+        const found: BuildProblem = ProblemParser::fromDiagnostic(event.getField("diagnostic"), "/w")
+        const bare: BuildProblem = ProblemParser::fromDiagnostic(Json::parse("{\"code\":\"TINOX-DRIVER\",\"file\":null,\"message\":\"no entry\",\"range\":null,\"severity\":\"error\"}"), "/w")
+        return found.path == "/w/src/Main.tnx" && found.line == 9 && found.column == 4 && found.code == "TINOX-TYPE" && found.location() == "9:4" && bare.line == 0 && bare.path == "" && bare.location() == ""
+    }
+
+    @Test("run configurations round-trip through .tinox-ide/run.json, keep the selection and fall back to a default")
+    fn testConfigs() -> Bool
+    {
+        const root: String = TempProject::create()
+        const fresh: RunConfigs = RunConfigs::load(root)
+        const defaulted: Bool = fresh.items.len() == 1 && fresh.current().file == ""
+        var extra: RunConfig = RunConfig::project("Demo")
+        extra.file = "examples/Demo.tnx"
+        extra.args = "--n 3 \"a b\""
+        extra.env = ["A=1", "B=two words"]
+        extra.cwd = "work"
+        fresh.items.push(extra)
+        const picked: Bool = fresh.pick("Demo") && !fresh.pick("Nope")
+        fresh.save(root)
+        const again: RunConfigs = RunConfigs::load(root)
+        const config: RunConfig = again.current()
+        TempProject::file(root, ".tinox-ide/run.json", "not json")
+        const damaged: RunConfigs = RunConfigs::load(root)
+        TempProject::remove(root)
+        return defaulted && picked && again.items.len() == 2 && again.selected == "Demo" && config.file == "examples/Demo.tnx" && config.args == "--n 3 \"a b\"" && config.env.len() == 2 && config.env[1] == "B=two words" && config.cwd == "work" &&
+            damaged.items.len() == 1 && damaged.selected == "Project"
+    }
+
+    fnc testEvent(reason: String, method: String, line: Int64, extra: String) -> JsonValue
+    {
+        return Json::parse("{\"reason\":\"" + reason + "\",\"class\":\"AT\",\"column\":5,\"description\":\"" + method + " works\",\"file\":\"/w/tests/AT.tnx\",\"line\":" + line.toString() + ",\"method\":\"" + method + "\"" + extra + "}")
+    }
+
+    @Test("test events build the tree: results, failed files, the failure message and its location")
+    fn testExplorer() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        const tests: TestExplorer = app.build.tests
+        tests.handle(BuildTest::testEvent("test-discovered", "testAdd", 10, ""))
+        tests.handle(BuildTest::testEvent("test-discovered", "testBreak", 20, ""))
+        const listed: Bool = tests.cases.len() == 2 && tests.cases[0].status == "idle"
+        tests.handle(BuildTest::testEvent("test-started", "testAdd", 10, ""))
+        const running: Bool = tests.cases[0].status == "running"
+        tests.handle(BuildTest::testEvent("test-passed", "testAdd", 10, ",\"duration_ms\":12"))
+        tests.handle(BuildTest::testEvent("test-started", "testBreak", 20, ""))
+        tests.handle(BuildTest::testEvent("test-failed", "testBreak", 20, ",\"duration_ms\":3,\"phase\":\"run\",\"message\":\"expected 4, found 5\\n/w/tests/AT.tnx:22:9: assertion failed\""))
+        tests.handle(Json::parse("{\"reason\":\"test-collection-error\",\"file\":\"/w/tests/Bad.tnx\",\"message\":\"cannot parse\"}"))
+        tests.flush()
+        const done: Bool = tests.cases[0].status == "passed" && tests.cases[0].millis == 12 && tests.cases[1].status == "failed" && tests.cases[1].message.contains("expected 4, found 5")
+        const files: List<String> = tests.failedFiles()
+        const summary: Bool = tests.summary() == "1 passed · 1 failed · 2 tests · 1 not collected" && app.store.get("tests.summary") == tests.summary() && app.store.getInt("tests.failed") == 1
+        const failedRow = tests.rowOf(tests.cases[1])
+        const detail: Bool = failedRow.toJson().contains("detail:/w/tests/AT.tnx#AT::testBreak@0") && failedRow.toJson().contains("assertion failed") && failedRow.toJson().contains("dialog-error")
+        const found: BuildProblem = ProblemParser::parseText("/w/tests/AT.tnx:22:9: assertion failed", "")
+        tests.clearResults()
+        return listed && running && done && files.len() == 1 && files[0] == "/w/tests/AT.tnx" && summary && detail && found.line == 22 && found.column == 9 && tests.cases[1].status == "idle" && tests.errors.len() == 0
+    }
+
+    @Test("a failing build streams its output, lists the error with line and column, and clicking it opens the file there")
+    fn testBuildError() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        const root: String = BuildTest::workspace(app, "class Main\n{\n    fnc main() -> Int32\n    {\n        const x: Int32 = \"a\"\n        return 0\n    }\n}\n")
+        IdeAppTest::commands()
+        app.registry.execute("build.build")
+        const started: Bool = app.build.active && app.store.getBool("build.active") && app.store.get("build.activity") != ""
+        const ended: Bool = BuildTest::finish(app)
+        const sent: List<String> = IdeAppTest::commands()
+        var streamed: String = ""
+        for command in sent
+        {
+            if (command.contains("\"ansi\":true")) { streamed = streamed + command }
+        }
+        const notified: Bool = IdeAppTest::firstWith(sent, "buildFailed") != ""
+        const found: BuildProblem = app.build.problems[0]
+        const rows: String = IdeAppTest::firstWith(sent, "bp:0")
+        const doc: Int64 = MockBridge::createObject()
+        const view: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.openDocument", "{\"id\":" + doc.toString() + "}", "")
+        MockBridge::onCommand("editor.createView", "{\"id\":" + view.toString() + "}", "")
+        MockBridge::onCommand("editor.getText", "{\"text\":\"x\",\"version\":0}", "")
+        MockBridge::onCommand("editor.info", "{\"version\":0}", "")
+        MockBridge::onCommand("editor.setCursor", "", "")
+        app.build.visit("bp:0")
+        const opened: Bool = app.documents.indexOf(found.path) >= 0
+        const failed: Bool = app.store.get("status.message").contains("failed") && !app.store.getBool("build.active")
+        TempProject::remove(root)
+        return started && ended && streamed.contains("$ ") && streamed.contains("expected Int32, found String") && app.build.problems.len() == 1 && found.line == 5 && found.column == 26 && found.severity == "error" && found.code == "TINOX-TYPE-MISMATCH" && rows != "" && opened && failed && notified
+    }
+
+    @Test("Run builds the program, runs it with the configured arguments and environment in its working directory")
+    fn testRun() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        const root: String = BuildTest::workspace(app, "import tinox.core.process.Process\n\nclass Main\n{\n    fnc main() -> Int32\n    {\n        println(\"hello \" + Process::env(\"GREETING\"))\n        return 3\n    }\n}\n")
+        TempProject::dir(root, "work")
+        var config: RunConfig = app.build.configs.current()
+        config.env = ["GREETING=world"]
+        config.cwd = "work"
+        IdeAppTest::commands()
+        app.registry.execute("build.run")
+        const ended: Bool = BuildTest::finish(app)
+        const sent: List<String> = IdeAppTest::commands()
+        var text: String = ""
+        for command in sent
+        {
+            if (command.contains("\"ansi\":true")) { text = text + command }
+        }
+        const ran: Bool = text.contains("hello world")
+        const status: Bool = app.store.get("status.message") == "Program exited with status 3"
+        TempProject::remove(root)
+        return ended && ran && status && app.build.problems.len() == 0
+    }
+
+    @Test("Stop ends the whole process group of a long running task and tests become idle again")
+    fn testStop() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        const root: String = BuildTest::workspace(app, "class Main\n{\n    fnc main() -> Int32\n    {\n        return 0\n    }\n}\n")
+        app.build.start(true, [TaskStep { kind: "build", argv: ["sh", "-c", "sleep 60; echo late"], json: false, cwd: "", env: [] }])
+        var rounds: Int64 = 0
+        while (rounds < 5)
+        {
+            app.events.pump(50)
+            rounds = rounds + 1
+        }
+        const running: Bool = app.build.active && app.registry.isEnabled("build.stop") && !app.registry.isEnabled("build.build")
+        app.registry.execute("build.stop")
+        const ended: Bool = BuildTest::finish(app)
+        const message: Bool = app.store.get("status.message") == "Build stopped" && app.store.get("build.activity") == ""
+        const again: Bool = app.registry.isEnabled("build.build") && !app.registry.isEnabled("build.stop")
+        TempProject::remove(root)
+        return running && ended && message && again
+    }
+
+    @Test("test discovery and runs fill the explorer from the JSON stream; failed tests can be run again")
+    fn testTestRun() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        const root: String = BuildTest::workspace(app, "class Main\n{\n    fnc main() -> Int32\n    {\n        return 0\n    }\n}\n")
+        TempProject::file(root, "tests/MathTest.tnx", "class MathTest\n{\n    @Test(\"adds\")\n    fn testAdd() -> Bool\n    {\n        return 1 + 1 == 2\n    }\n\n    @Test(\"breaks\")\n    fn testBreak() -> Bool\n    {\n        return 1 + 1 == 3\n    }\n}\n")
+        app.registry.execute("tests.discover")
+        const discovered: Bool = BuildTest::finish(app) && app.build.tests.cases.len() == 2 && app.build.tests.cases[0].line > 0
+        app.registry.execute("tests.runAll")
+        const ended: Bool = BuildTest::finish(app)
+        const tests: TestExplorer = app.build.tests
+        const results: Bool = tests.count("passed") == 1 && tests.count("failed") == 1
+        const again: Bool = app.registry.isEnabled("tests.runFailed")
+        app.registry.execute("tests.runFailed")
+        const second: Bool = BuildTest::finish(app) && tests.count("failed") == 1
+        TempProject::remove(root)
+        return discovered && ended && results && again && second && app.store.get("status.message").contains("1 failed") && app.store.getInt("tests.failed") == 1
+    }
+
+    @Test("watch mode reruns the tests when a Tinox file is saved, and only then")
+    fn testWatch() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        const root: String = BuildTest::workspace(app, "class Main\n{\n    fnc main() -> Int32\n    {\n        return 0\n    }\n}\n")
+        TempProject::file(root, "tests/OkTest.tnx", "class OkTest\n{\n    @Test(\"fine\")\n    fn testFine() -> Bool\n    {\n        return true\n    }\n}\n")
+        app.build.saved(root + "/src/Main.tnx")
+        const off: Bool = !app.build.active
+        app.store.setBool("tests.watch", true)
+        app.build.saved(root + "/notes.txt")
+        const other: Bool = !app.build.active
+        app.build.saved(root + "/src/Main.tnx")
+        const on: Bool = app.build.active
+        const ended: Bool = BuildTest::finish(app)
+        TempProject::remove(root)
+        return off && other && on && ended && app.build.tests.count("passed") == 1
+    }
+}

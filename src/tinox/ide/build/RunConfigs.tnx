@@ -1,0 +1,99 @@
+module tinox.ide.build
+
+import tinox.core.json
+import tinox.ide.app.FileSystem
+import tinox.ide.ui.Js
+
+namespace tinox.ide.build
+{
+    /** The run configurations of one workspace, stored in `.tinox-ide/run.json` below its root. */
+    class RunConfigs
+    {
+        /** The configurations in file order. */
+        var items: List<RunConfig>
+        /** The name of the selected one. */
+        var selected: String
+
+        /** The configurations of a workspace; a missing or damaged file gives the default "Project" entry. */
+        fnc load(root: String) -> RunConfigs
+        {
+            var configs: RunConfigs = RunConfigs { items: [], selected: "" }
+            const path: String = RunConfigs::path(root)
+            if (root != "" && FileSystem::exists(path))
+            {
+                try
+                {
+                    const doc: JsonValue = Json::parse(FileSystem::read(path))
+                    for item in doc.getField("configurations").asList()
+                    {
+                        const config: RunConfig = RunConfig::fromJson(item)
+                        if (config.name != "" && !configs.has(config.name)) { configs.items.push(config) }
+                    }
+                    if (doc.getField("selected").isString()) { configs.selected = doc.getField("selected").getString() }
+                }
+                catch (e: String)
+                {
+                    configs.items = []
+                }
+            }
+            if (configs.items.len() == 0) { configs.items.push(RunConfig::project("Project")) }
+            if (!configs.has(configs.selected)) { configs.selected = configs.items[0].name }
+            return configs
+        }
+
+        /** The file of a workspace. */
+        fnc path(root: String) -> String
+        {
+            return FileSystem::join(FileSystem::join(root, ".tinox-ide"), "run.json")
+        }
+
+        /** Whether a configuration with this name exists. */
+        fn has(name: String) -> Bool
+        {
+            for config in this.items
+            {
+                if (config.name == name) { return true }
+            }
+            return false
+        }
+
+        /** The configuration with this name, or the first one. */
+        fn get(name: String) -> RunConfig
+        {
+            for config in this.items
+            {
+                if (config.name == name) { return config }
+            }
+            return this.items[0]
+        }
+
+        /** The selected configuration. */
+        fn current() -> RunConfig
+        {
+            return this.get(this.selected)
+        }
+
+        /** Selects a configuration by name; false for an unknown one. */
+        fn pick(name: String) -> Bool
+        {
+            if (!this.has(name)) { return false }
+            this.selected = name
+            return true
+        }
+
+        /** The JSON text written to the file. */
+        fn toJson() -> String
+        {
+            var parts: List<String> = []
+            for config in this.items { parts.push(config.toJson()) }
+            return "{\"selected\":" + Js::str(this.selected) + ",\"configurations\":[" + Js::join(parts, ",") + "]}"
+        }
+
+        /** Writes the file, creating `.tinox-ide`; throws when the workspace is not writable. */
+        fn save(root: String) -> Nothing
+        {
+            FileSystem::makeDirectories(FileSystem::join(root, ".tinox-ide"))
+            FileSystem::write(RunConfigs::path(root), this.toJson() + "\n")
+        }
+    }
+}

@@ -1,0 +1,130 @@
+module tinox.ide.build
+
+import tinox.core.json
+import tinox.ide.app.FileSystem
+
+namespace tinox.ide.build
+{
+    /**
+     * Turns task output into problems: the `compiler-message` events of `--message-format=json`
+     * and, as the fallback for every other tool, text lines of the form
+     * `path:line:column: severity: message` (the column and the severity are optional).
+     */
+    class ProblemParser
+    {
+        /** `text` without ANSI colour/cursor sequences. */
+        fnc strip(text: String) -> String
+        {
+            var out: String = ""
+            var i: Int64 = 0
+            const n: Int64 = text.len()
+            while (i < n)
+            {
+                const c: String = text.charAt(i)
+                if (c == "\x1b" && i + 1 < n && text.charAt(i + 1) == "[")
+                {
+                    i = i + 2
+                    while (i < n && !ProblemParser::isFinal(text.charAt(i)))
+                    {
+                        i = i + 1
+                    }
+                    i = i + 1
+                }
+                else
+                {
+                    out = out + c
+                    i = i + 1
+                }
+            }
+            return out
+        }
+
+        /** Whether a character ends a CSI sequence (0x40..0x7e). */
+        fnc isFinal(c: String) -> Bool
+        {
+            return c >= "@" && c <= "~"
+        }
+
+        /** Whether the text is a non-empty run of digits. */
+        fnc digits(text: String) -> Bool
+        {
+            if (text.len() == 0) { return false }
+            var i: Int64 = 0
+            while (i < text.len())
+            {
+                const c: String = text.charAt(i)
+                if (c < "0" || c > "9") { return false }
+                i = i + 1
+            }
+            return true
+        }
+
+        /** A path made absolute against the directory the task ran in. */
+        fnc resolve(path: String, directory: String) -> String
+        {
+            if (path == "" || path.startsWith("/") || directory == "") { return path }
+            return FileSystem::join(directory, path)
+        }
+
+        /** The problem in one line of text output, or null-like (line 0, empty message) when the line is no report. */
+        fnc parseText(raw: String, directory: String) -> BuildProblem
+        {
+            const none: BuildProblem = BuildProblem { path: "", line: 0, column: 0, severity: "", code: "", message: "" }
+            const text: String = ProblemParser::strip(raw).trim()
+            const parts: List<String> = text.split(":")
+            if (parts.len() < 3 || parts[0] == "" || parts[0].contains(" ") || !ProblemParser::digits(parts[1]))
+            {
+                return none
+            }
+            var column: Int64 = 0
+            var restFrom: Int64 = 2
+            if (ProblemParser::digits(parts[2]))
+            {
+                column = parts[2].toInt()
+                restFrom = 3
+            }
+            if (restFrom >= parts.len()) { return none }
+            var rest: String = ""
+            var i: Int64 = restFrom
+            while (i < parts.len())
+            {
+                if (i > restFrom) { rest = rest + ":" }
+                rest = rest + parts[i]
+                i = i + 1
+            }
+            rest = rest.trim()
+            var severity: String = "error"
+            for word in ["error", "warning", "note", "info"]
+            {
+                if (rest.startsWith(word + ":"))
+                {
+                    severity = word
+                    rest = rest.substring(word.len() + 1, rest.len()).trim()
+                }
+            }
+            if (rest == "") { return none }
+            if (severity == "info") { severity = "note" }
+            return BuildProblem { path: ProblemParser::resolve(parts[0], directory), line: parts[1].toInt(), column: column, severity: severity, code: "", message: rest }
+        }
+
+        /** The problem of a `compiler-message` event; a diagnostic without a range has line 0. */
+        fnc fromDiagnostic(diagnostic: JsonValue, directory: String) -> BuildProblem
+        {
+            var line: Int64 = 0
+            var column: Int64 = 0
+            const range: JsonValue = diagnostic.getField("range")
+            if (range.isObject())
+            {
+                line = range.getField("start").getField("line").getInt()
+                column = range.getField("start").getField("column").getInt()
+            }
+            var path: String = ""
+            if (diagnostic.getField("file").isString()) { path = diagnostic.getField("file").getString() }
+            var severity: String = "error"
+            if (diagnostic.getField("severity").isString()) { severity = diagnostic.getField("severity").getString() }
+            var code: String = ""
+            if (diagnostic.getField("code").isString()) { code = diagnostic.getField("code").getString() }
+            return BuildProblem { path: ProblemParser::resolve(path, directory), line: line, column: column, severity: severity, code: code, message: diagnostic.getField("message").getString() }
+        }
+    }
+}

@@ -128,3 +128,9 @@ errors and save/close continuation ordering. It also type-checks the fixed sourc
 The diagnostics, navigation and editing smoke scripts use `test-gui-smoke.sh`
 to reject unexpected stderr, including errors emitted after a fixture has printed
 its success message. Normal application INFO lines remain visible.
+
+## Build and test tasks
+
+`tests/BuildTest.tnx` runs the real `tinox` tool against throw-away projects (needs `tinox` on
+`PATH`); it covers the diagnostic parsers, run configurations, the test explorer, build errors, Run,
+Stop, discovery, run-failed and watch mode. See [build.md](build.md).

@@ -55,7 +55,7 @@ changes never raise events. See `bridge/src/widget/widget.cpp` for each type's p
 | `widget.update` | `target` (mount), `tree` | `root`, `nodes`; the root keeps key, type and layout kind |
 | `widget.show` / `hide` / `focus` | `target` (mount or node id) | |
 | `widget.close` | `target`, `force?` | without `force` a `QMainWindow` raises `widget.closeRequested` instead of closing |
-| `widget.append` | `target` (QPlainTextEdit), `text` | |
+| `widget.append` | `target` (QPlainTextEdit), `text`, optional `ansi`, `clear` | Plain: appends `text` as a new line. With `ansi` the text is streamed in as written (no implicit newline) and SGR colours/bold are decoded, also across writes; `clear` empties the log first |
 | `widget.saveState` / `restoreState` | `target` (mount), `group?`, `file?` | geometry, `QMainWindow::saveState` (docks and toolbars are found by their key), splitter sizes, in a `KConfigGroup` (default: the application's config). `restoreState` answers `restored` |
 
 Releasing the mount id (`tkde_release`) destroys the whole tree. The ids in `nodes` are object

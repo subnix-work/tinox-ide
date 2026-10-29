@@ -1,0 +1,60 @@
+module tinox.ide.build
+
+import tinox.core.json
+import tinox.ide.ui.Js
+
+namespace tinox.ide.build
+{
+    /** What Run starts: the project or one file, with arguments, environment and working directory. */
+    class RunConfig
+    {
+        /** The name shown in the picker; unique within a workspace. */
+        var name: String
+        /** "" runs the project (tinox.toml entry), otherwise the file to build and run, relative to the root or absolute. */
+        var file: String
+        /** Command-line arguments of the program, split like a shell without expansion. */
+        var args: String
+        /** KEY=value entries added to the environment of the program. */
+        var env: List<String>
+        /** Working directory of the program; "" is the workspace root. */
+        var cwd: String
+
+        /** A configuration that runs the project. */
+        fnc project(name: String) -> RunConfig
+        {
+            return RunConfig { name: name, file: "", args: "", env: [], cwd: "" }
+        }
+
+        /** Reads one entry of the configuration file; missing fields keep their defaults. */
+        fnc fromJson(value: JsonValue) -> RunConfig
+        {
+            var config: RunConfig = RunConfig::project(RunConfig::text(value, "name"))
+            config.file = RunConfig::text(value, "file")
+            config.args = RunConfig::text(value, "args")
+            config.cwd = RunConfig::text(value, "cwd")
+            const env: JsonValue = value.getField("env")
+            if (env.isArray())
+            {
+                for item in env.asList()
+                {
+                    if (item.isString()) { config.env.push(item.getString()) }
+                }
+            }
+            return config
+        }
+
+        /** A string field, "" when missing or of another type. */
+        fnc text(value: JsonValue, key: String) -> String
+        {
+            const field: JsonValue = value.getField(key)
+            if (field.isString()) { return field.getString() }
+            return ""
+        }
+
+        /** The JSON text of this configuration. */
+        fn toJson() -> String
+        {
+            return Js::object([Js::strField("name", this.name), Js::strField("file", this.file), Js::strField("args", this.args), Js::field("env", Js::strings(this.env)), Js::strField("cwd", this.cwd)])
+        }
+    }
+}

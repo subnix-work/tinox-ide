@@ -464,6 +464,16 @@ static void testLog()
     EXPECT(query(cmd("widget.append", Obj{{"target", double(id)}, {"text", "line 2"}})).value(QStringLiteral("ok")).toBool());
     EXPECT_EQ(dumpOf(id).value(QStringLiteral("text")).toString(), QStringLiteral("line 1\nline 2"));
     EXPECT_EQ(errorCode(query(cmd("widget.append", Obj{{"target", double(id)}}))), 0); // empty text is allowed
+    // Stream mode: no implicit newline, colour sequences (also split across writes) are not shown, clear starts over.
+    auto stream = [&](const char *text, bool clear = false) {
+        return query(cmd("widget.append", Obj{{"target", double(id)}, {"text", QString::fromLatin1(text)}, {"ansi", true}, {"clear", clear}}));
+    };
+    EXPECT(stream("\x1b[31mer", true).value(QStringLiteral("ok")).toBool());
+    EXPECT(stream("ror\x1b[").value(QStringLiteral("ok")).toBool());
+    EXPECT(stream("0m: bad\n").value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(dumpOf(id).value(QStringLiteral("text")).toString(), QStringLiteral("error: bad\n"));
+    EXPECT(stream("x", true).value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(dumpOf(id).value(QStringLiteral("text")).toString(), QStringLiteral("x"));
     Obj label = mountTree(tree("QLabel", "l"));
     EXPECT_EQ(errorCode(query(cmd("widget.append", Obj{{"target", label.value(QStringLiteral("id"))}, {"text", "x"}}))), -1);
     tkde_release(id);

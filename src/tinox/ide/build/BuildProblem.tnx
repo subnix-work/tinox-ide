@@ -1,0 +1,60 @@
+module tinox.ide.build
+
+import tinox.ide.ui.Row
+
+namespace tinox.ide.build
+{
+    /** One error or warning reported by a task, with a one-based compiler location. */
+    class BuildProblem
+    {
+        /** The file, absolute when the task knew its directory; "" for a message without a location. */
+        var path: String
+        /** One-based line, 0 when unknown. */
+        var line: Int64
+        /** One-based column, 0 when unknown. */
+        var column: Int64
+        /** "error", "warning" or "note". */
+        var severity: String
+        /** The stable compiler code, "" when there is none. */
+        var code: String
+        /** The first line is the headline. */
+        var message: String
+
+        /** Whether two reports say the same thing (JSON and text output of one run overlap). */
+        fn same(other: BuildProblem) -> Bool
+        {
+            return this.path == other.path && this.line == other.line && this.column == other.column && this.severity == other.severity && this.message == other.message
+        }
+
+        /** Breeze icon of the severity. */
+        fn icon() -> String
+        {
+            if (this.severity == "error") { return "dialog-error" }
+            if (this.severity == "warning") { return "dialog-warning" }
+            return "dialog-information"
+        }
+
+        /** "line:column", or "" when the report has no location. */
+        fn location() -> String
+        {
+            if (this.line <= 0) { return "" }
+            if (this.column <= 0) { return this.line.toString() }
+            return this.line.toString() + ":" + this.column.toString()
+        }
+
+        /** A row of the build problems tree. */
+        fn row(id: String) -> Row
+        {
+            return Row::create(id, this.message.split("\n")[0]).icon(this.icon()).toolTip(this.message).cell(this.location()).cell(this.code)
+        }
+
+        /** The one-line form written to the Output panel: `path:line:col: severity: message`. */
+        fn text() -> String
+        {
+            var origin: String = this.path
+            if (this.line > 0) { origin = origin + ":" + this.location() }
+            if (origin == "") { return this.severity + ": " + this.message }
+            return origin + ": " + this.severity + ": " + this.message
+        }
+    }
+}

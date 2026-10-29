@@ -9,16 +9,16 @@ class IdeAppTest
     {
         Bridge::init("test", "Test")
         const mountObject: Int64 = MockBridge::createObject()
-        MockBridge::onCommand("widget.mount", "{\"id\":" + mountObject.toString() + ",\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"outlineDock\":95,\"outlineTree\":90,\"navigationResults\":91,\"renameApply\":92,\"renameCancel\":93,\"breadcrumbs\":94,\"codeActions\":96,\"welcome\":61,\"status\":62}}", "")
+        MockBridge::onCommand("widget.mount", "{\"id\":" + mountObject.toString() + ",\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"outlineDock\":95,\"outlineTree\":90,\"navigationResults\":91,\"renameApply\":92,\"renameCancel\":93,\"breadcrumbs\":94,\"codeActions\":96,\"buildOutput\":97,\"buildProblems\":98,\"tests\":99,\"welcome\":61,\"status\":62}}", "")
         const modelObject: Int64 = MockBridge::createObject()
         MockBridge::onCommand("model.create", "{\"id\":" + modelObject.toString() + "}", "")
         MockBridge::onCommand("model.attach", "", "")
         MockBridge::onCommand("config.read", "{\"exists\":false,\"value\":true}", "")
-        for name in ["config.write", "core.log", "action.define", "action.set", "action.setMenuBar", "action.setToolBar", "widget.restoreState", "widget.saveState", "widget.show", "widget.append", "widget.close"]
+        for name in ["config.write", "core.log", "action.define", "action.set", "action.setMenuBar", "action.setToolBar", "widget.restoreState", "widget.saveState", "widget.show", "widget.append", "widget.close", "model.reset", "model.insert", "model.update", "model.expand", "model.select", "notify.send"]
         {
             MockBridge::onCommand(name, "", "")
         }
-        MockBridge::onCommand("widget.update", "{\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"outlineDock\":95,\"outlineTree\":90,\"navigationResults\":91,\"renameApply\":92,\"renameCancel\":93,\"breadcrumbs\":94,\"codeActions\":96,\"welcome\":61,\"status\":62}}", "")
+        MockBridge::onCommand("widget.update", "{\"root\":50,\"nodes\":{\"main\":50,\"tools\":51,\"project\":52,\"projectPanel\":53,\"projectHint\":54,\"projectTree\":55,\"bottom\":56,\"bottomTabs\":57,\"problems\":58,\"output\":59,\"editors\":60,\"outlineDock\":95,\"outlineTree\":90,\"navigationResults\":91,\"renameApply\":92,\"renameCancel\":93,\"breadcrumbs\":94,\"codeActions\":96,\"buildOutput\":97,\"buildProblems\":98,\"tests\":99,\"welcome\":61,\"status\":62}}", "")
         MockBridge::onCommand("widget.restoreState", "{\"restored\":false}", "")
     }
 
