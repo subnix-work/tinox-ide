@@ -1,0 +1,29 @@
+import TempProject
+import tinox.core.process.Process
+import tinox.core.time.Time
+import tinox.ide.app.FileSystem
+import tinox.ide.search.FileSearch
+import tinox.ide.search.SearchCounter
+import tinox.ide.workspace.WatchControl
+
+class SearchExitStatusTest
+{
+    @Test("ripgrep stderr survives pipe EOF arriving before exit status")
+    fn testDelayedExitStatus() -> Bool
+    {
+        const root: String = TempProject::create()
+        const script: String = TempProject::file(root, "rg", "#!/usr/bin/python3\nimport os,sys,time\nsys.stderr.write('delayed invalid expression\\n')\nsys.stderr.flush()\nos.close(1)\nos.close(2)\ntime.sleep(0.2)\nsys.exit(2)\n")
+        Process::run(["chmod", "+x", script], 3000, "")
+        const originalPath: String = Process::env("PATH")
+        Process::setEnv("PATH", root + ":" + originalPath)
+        const counter: SearchCounter = SearchCounter::create(1, 100)
+        const started: Int64 = Time::now()
+        var error: String = ""
+        try { FileSearch::runRipgrep(root, "[", true, true, WatchControl::create(), counter) }
+        catch (e: String) { error = e }
+        const elapsed: Int64 = Time::now() - started
+        Process::setEnv("PATH", originalPath)
+        TempProject::remove(root)
+        return error == "" && counter.error == "delayed invalid expression" && elapsed >= 150
+    }
+}
