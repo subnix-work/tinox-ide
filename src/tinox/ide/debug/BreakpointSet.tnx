@@ -40,7 +40,6 @@ namespace tinox.ide.debug
             var sorted: List<Int64> = []
             for line in lines
             {
-                // no `continue` in a for-in loop: it never advances (subnix-work/tinox#587)
                 var next: List<Int64> = sorted
                 if (line >= 0 && !sorted.contains(line))
                 {
