@@ -1,4 +1,6 @@
 import TempProject
+import tinox.core.process.Process
+import tinox.core.process.ProcessResult
 import tinox.ide.app.FileSystem
 import tinox.ide.workspace.Glob
 import tinox.ide.workspace.IgnoreRule
@@ -6,6 +8,21 @@ import tinox.ide.workspace.IgnoreRules
 
 class FileSystemTest
 {
+    @Test("canonical paths resolve symlinks, preserve filename whitespace and reject missing files")
+    fn testRealPath() -> Bool
+    {
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, " file with spaces\n", "data")
+        const alias: String = root + "/link"
+        const linked: ProcessResult = Process::run(["ln", "-s", "--", path, alias], 3000, "")
+        const resolved: String = FileSystem::realPath(root + "/./link")
+        var refused: Bool = false
+        try { FileSystem::realPath(root + "/missing") }
+        catch (e: String) { refused = true }
+        TempProject::remove(root)
+        return linked.success() && resolved == path && refused
+    }
+
     @Test("path helpers")
     fn testPaths() -> Bool
     {

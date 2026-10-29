@@ -244,6 +244,10 @@ namespace tinox.ide
             const app: IdeApp = IdeApp::start(events)
             app.workspace.restore()
             app.documents.restoreSession()
+            if (app.store.get("workspace.startupFile") != "")
+            {
+                app.documents.openQuietly(app.store.get("workspace.startupFile"))
+            }
             app.documents.startTicker()
             app.language.start()
             if (Bridge::env("TINOXIDE_SMOKE") == "1")

@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Tinox IDE
+GenericName=Integrated Development Environment
+GenericName[de]=Integrierte Entwicklungsumgebung
+Comment=Develop Tinox applications with KDE
+Comment[de]=Tinox-Anwendungen mit KDE entwickeln
+Exec=tinox-ide %f
+TryExec=tinox-ide
+Icon=org.subnix.tinoxide
+Terminal=false
+Categories=Qt;KDE;Development;IDE;
+MimeType=text/x-tinox;application/x-tinox-project;
+Keywords=Tinox;Editor;Programming;
+StartupNotify=true

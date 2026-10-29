@@ -2,6 +2,7 @@ module tinox.ide.workspace
 
 import tinox.ide.app.FileSystem
 import tinox.core.json
+import tinox.core.env.Env
 import tinox.core.process.Process
 import tinox.ide.app.Background
 import tinox.ide.app.BusMessage
@@ -170,11 +171,32 @@ namespace tinox.ide.workspace
             }
             if (path != "")
             {
-                this.openChosen(path)
+                this.openArgument(path)
             }
         }
 
         // ---------------------------------------------------------------- opening and closing
+
+        /** Opens a desktop/command-line path: a folder, a manifest's project, or a source file and its containing folder. */
+        fn openArgument(argument: String) -> Nothing
+        {
+            var path: String = argument
+            if (!path.startsWith("/"))
+            {
+                path = FileSystem::join(Env::currentDir(), path)
+            }
+            if (FileSystem::exists(path) && !FileSystem::isDirectory(path))
+            {
+                this.openChosen(FileSystem::parent(path))
+                if (FileSystem::baseName(path) != "tinox.toml")
+                {
+                    this.store.set("workspace.startupFile", path)
+                    this.bus.publish("file.openRequested", Js::object([Js::strField("path", path)]))
+                }
+                return
+            }
+            this.openChosen(path)
+        }
 
         /** Opens a folder; a failure is shown to the user, not thrown. */
         fn openChosen(path: String) -> Nothing

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Build/run/test and the LSP use the host's installed toolchain and project paths.
+# exec preserves stdio framing and exit status; arguments never pass through a shell.
+set -eu
+exec /usr/bin/flatpak-spawn --host --watch-bus --directory="$PWD" "$(basename "$0")" "$@"

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.subnix.tinoxide</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>Tinox IDE</name>
+  <summary>Develop Tinox applications with KDE</summary>
+  <description>
+    <p>Tinox IDE is a native KDE development environment for the Tinox language, written in Tinox with a Qt and KDE Frameworks bridge.</p>
+    <p>Edit projects with KTextEditor, navigate code with the Tinox language server,
+    and build, run and test applications from one window.</p>
+  </description>
+  <launchable type="desktop-id">org.subnix.tinoxide.desktop</launchable>
+  <provides><binary>tinox-ide</binary></provides>
+  <developer id="org.subnix"><name>Subnix</name></developer>
+  <url type="homepage">https://github.com/subnix-work/tinox-ide</url>
+  <url type="bugtracker">https://github.com/subnix-work/tinox-ide/issues</url>
+  <url type="vcs-browser">https://github.com/subnix-work/tinox-ide</url>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="0.1.0" date="2026-10-29" type="development"/></releases>
+</component>

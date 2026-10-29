@@ -1,0 +1,4 @@
+# Patch only the installed copy; the build-tree executable keeps its development RPATH.
+execute_process(COMMAND "@PATCHELF_EXECUTABLE@" --set-rpath "$ORIGIN/@TKDE_RELATIVE_LIBDIR@"
+    "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@KDE_INSTALL_BINDIR@/tinox-ide"
+    COMMAND_ERROR_IS_FATAL ANY)

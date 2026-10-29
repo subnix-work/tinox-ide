@@ -1,0 +1,2 @@
+#pragma once
+#define TINOX_IDE_VERSION "@TINOX_IDE_VERSION@"

@@ -45,6 +45,18 @@ namespace tinox.ide.app
             return Fs::readFile(path)
         }
 
+        /** Resolves an existing path including symlinks. Uses coreutils until the checked Fs API is published (subnix-work/tinox#584). */
+        fnc realPath(path: String) -> String
+        {
+            const result: ProcessResult = Process::run(["realpath", "-e", "--", path], 3000, "")
+            if (!result.success() || !result.stdout.endsWith("\n"))
+            {
+                throw "Cannot resolve path '" + path + "': " + result.stderr
+            }
+            // Remove only realpath's terminator; spaces and newlines can be part of a filename.
+            return result.stdout.substring(0, result.stdout.len() - 1)
+        }
+
         /** Creates or replaces a file. */
         fnc write(path: String, content: String) -> Nothing
         {

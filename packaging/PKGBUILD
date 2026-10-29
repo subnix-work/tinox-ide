@@ -1,0 +1,38 @@
+# Maintainer: Tinox contributors
+pkgname=tinox-ide-git
+pkgver=0.1.0.r0
+pkgrel=1
+pkgdesc='Native KDE development environment for the Tinox language'
+arch=('x86_64')
+url='https://github.com/subnix-work/tinox-ide'
+license=('MIT' 'Apache-2.0')
+depends=('qt6-base' 'kparts' 'kcoreaddons' 'ki18n' 'kcrash' 'kdbusaddons'
+         'ktexteditor' 'syntax-highlighting' 'kconfig' 'kconfigwidgets'
+         'kxmlgui' 'kwidgetsaddons' 'knotifications' 'gc')
+makedepends=('git' 'cmake' 'ninja' 'extra-cmake-modules' 'clang' 'patchelf' 'pkgconf')
+optdepends=('konsole: embedded interactive terminal' 'breeze: KDE widget style'
+            'ripgrep: project search' 'clang: compile Tinox applications')
+provides=('tinox-ide')
+conflicts=('tinox-ide')
+source=("tinox-ide::git+${TINOX_IDE_SOURCE:-https://github.com/subnix-work/tinox-ide.git}")
+sha256sums=('SKIP') # VCS source; release archives have SHA256SUMS (scripts/release.sh).
+
+pkgver() {
+    cd "$srcdir/tinox-ide"
+    local version
+    version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' tinox.toml | head -n1)
+    printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    cd "$srcdir/tinox-ide"
+    # Tinox is distributed upstream, not in Arch's official package repositories.
+    command -v tinox >/dev/null || { echo 'Build the current Tinox toolchain first; see docs/packaging.md' >&2; return 1; }
+    tinox install
+    make ide
+}
+
+package() {
+    cd "$srcdir/tinox-ide"
+    make install PREFIX=/usr LIBDIR=lib DESTDIR="$pkgdir"
+}

@@ -15,3 +15,11 @@ compile_commands.json
 # local tooling
 .claude/settings.local.json
 CMakeUserPresets.json
+
+# Flatpak builder cache and Arch package output
+.flatpak-builder/
+packaging/src/
+packaging/pkg/
+packaging/*.pkg.tar.*
+packaging/*.log
+packaging/tinox-ide/

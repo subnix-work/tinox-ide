@@ -1,6 +1,5 @@
 module tinox.ide.lsp
 
-import tinox.core.fs.Fs
 import tinox.core.json
 import tinox.core.process.Process
 import tinox.ide.app.BusMessage
@@ -110,7 +109,7 @@ namespace tinox.ide.lsp
             if (program == "" && FileSystem::exists("../tinox/target/release/tinox-lsp")) { program = "../tinox/target/release/tinox-lsp" }
             if (program == "") { throw "Language server not found; configure tinox-lsp in Settings" }
             // Resolve before changing the child cwd, including relative configured tool paths.
-            const resolved: String = Fs::realPath(program)
+            const resolved: String = FileSystem::realPath(program)
             const problem: String = ToolProbe::check(resolved)
             if (problem != "") { throw "Cannot start language server: " + problem + ". Configure tinox-lsp in Settings" }
             return resolved

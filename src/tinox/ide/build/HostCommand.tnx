@@ -1,0 +1,32 @@
+module tinox.ide.build
+
+namespace tinox.ide.build
+{
+    /** Keeps build tools and the resulting executable on the host when running in Flatpak. */
+    class HostCommand
+    {
+        /** Preserves argv, cwd and child-only environment without shell interpolation. Native execution is unchanged. */
+        fnc wrap(argv: List<String>, directory: String, env: List<String>, flatpak: Bool) -> List<String>
+        {
+            if (!flatpak || argv.len() == 0) { return argv }
+            var result: List<String> = ["/usr/bin/flatpak-spawn", "--host", "--watch-bus", "--directory=" + directory]
+            for entry in env
+            {
+                if (entry.contains("=")) { result.push("--env=" + entry) }
+                else { result.push("--unset-env=" + entry) }
+            }
+            var program: String = argv[0]
+            if (program == "/app/bin/tinox") { program = "tinox" }
+            if (program == "/app/bin/tinox-lsp") { program = "tinox-lsp" }
+            result.push("--")
+            result.push(program)
+            var index: Int64 = 1
+            while (index < argv.len())
+            {
+                result.push(argv[index])
+                index = index + 1
+            }
+            return result
+        }
+    }
+}
