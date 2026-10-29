@@ -16,8 +16,15 @@ its line and column.
 | Run All Tests | Ctrl+F5 | `tinox test --format json` |
 | Run Tests in Selected File | | `tinox test <file> --format json` for the file of the selected tree row |
 | Run Failed Tests | | the files that contain failed tests |
-| Discover Tests | | `tinox test --list --message-format=json`, nothing is compiled or run |
+| Discover Tests | | `tinox test --list --message-format=json` for the whole workspace, nothing is run |
+| Discover Tests in Current File | | `tinox test <file> --list --message-format=json` for the file of the editor tab (or the selected file of the test tree if the tab is not a `.tnx` file); only that file's tests are replaced |
 | Rerun Tests on Save | | checkable; saving a `.tnx` file runs all tests (watch mode) |
+
+The label above the test tree says what the last discovery covered (`Discovered: all tests in the workspace`, or the
+file, with a note that other files keep their earlier results). A discovery that is stopped, or that fails without
+reporting a single test or collection error, puts the previous tests and label back, so a cancelled run never
+replaces newer results. The file is passed before the flags because the tool ignores a file after them
+(subnix-work/tinox#585).
 
 `tinox test` takes a file but no method filter, so "run one" runs the file of the selected test
 and updates every test in it.

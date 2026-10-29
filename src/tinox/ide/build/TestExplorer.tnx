@@ -28,11 +28,23 @@ namespace tinox.ide.build
         var errors: List<String>
         /** The tree needs to be drawn again. */
         var dirty: Bool
+        /** The tests before the discovery in progress, restored when it is cancelled or fails. */
+        var saved: List<TestCase>
+        /** The collection errors before the discovery in progress. */
+        var savedErrors: List<String>
+        /** What the last finished discovery covered: "" before any, "all tests" or the file. */
+        var scope: String
+        /** The scope before the discovery in progress. */
+        var savedScope: String
+        /** Whether a discovery is in progress. */
+        var discovering: Bool
+        /** The tests and collection errors the discovery in progress has reported. */
+        var seen: Int64
 
         /** Creates the explorer; bind() attaches the tree once the window exists. */
         fnc create(window: MainWindow, documents: Documents) -> TestExplorer
         {
-            return TestExplorer { window: window, documents: documents, model: Model::create(window.events, ["Test", "Result", "Time"], false), cases: [], errors: [], dirty: false }
+            return TestExplorer { window: window, documents: documents, model: Model::create(window.events, ["Test", "Result", "Time"], false), cases: [], errors: [], dirty: false, saved: [], savedErrors: [], scope: "", savedScope: "", discovering: false, seen: 0 }
         }
 
         /** Attaches the model and the activation handler to the mounted tree. */
@@ -53,6 +65,77 @@ namespace tinox.ide.build
             }
             this.errors = []
             this.dirty = true
+        }
+
+        /** Whether two paths name the same file (the tool reports them relative to the project, the editor has them absolute). */
+        fnc same(a: String, b: String) -> Bool
+        {
+            return a == b || a.endsWith("/" + b) || b.endsWith("/" + a)
+        }
+
+        /**
+         * A discovery starts: `file` "" covers the whole workspace, else only that file. The tests it
+         * covers are dropped and found again; the rest stay. Keep the old state to restore if it fails.
+         */
+        fn beginDiscovery(file: String) -> Nothing
+        {
+            this.saved = this.cases
+            this.savedErrors = this.errors
+            this.savedScope = this.scope
+            this.discovering = true
+            this.seen = 0
+            if (file == "")
+            {
+                this.cases = []
+                this.errors = []
+                this.scope = "all tests"
+            }
+            else
+            {
+                var kept: List<TestCase> = []
+                for c in this.cases
+                {
+                    if (!TestExplorer::same(c.file, file)) { kept.push(c) }
+                }
+                this.cases = kept
+                var keptErrors: List<String> = []
+                for e in this.errors
+                {
+                    if (!e.startsWith(file + ": ")) { keptErrors.push(e) }
+                }
+                this.errors = keptErrors
+                this.scope = file
+            }
+            this.window.store.set("tests.scope", this.scope)
+            this.dirty = true
+        }
+
+        /** The discovery ended: keep what it found, or put the previous tests back (cancelled, failed). */
+        fn endDiscovery(keep: Bool) -> Nothing
+        {
+            if (!this.discovering) { return }
+            this.discovering = false
+            if (!keep)
+            {
+                this.cases = this.saved
+                this.errors = this.savedErrors
+                this.scope = this.savedScope
+                this.window.store.set("tests.scope", this.scope)
+                this.dirty = true
+            }
+            this.saved = []
+            this.savedErrors = []
+        }
+
+        /** The number of tests found in a file. */
+        fn countIn(file: String) -> Int64
+        {
+            var n: Int64 = 0
+            for c in this.cases
+            {
+                if (TestExplorer::same(c.file, file)) { n = n + 1 }
+            }
+            return n
         }
 
         /** Forgets everything (a new discovery follows). */
@@ -89,6 +172,7 @@ namespace tinox.ide.build
         fn handle(event: JsonValue) -> Nothing
         {
             const reason: String = RunConfig::text(event, "reason")
+            if (this.discovering && (reason == "test-discovered" || reason == "test-collection-error")) { this.seen = this.seen + 1 }
             if (reason == "test-discovered")
             {
                 this.caseOf(event)

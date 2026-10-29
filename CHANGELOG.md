@@ -9,3 +9,5 @@ Debugger integration (issue #31): gutter breakpoints, run to cursor, step over/i
 threads and a debug console through the Debug Adapter Protocol (`tinox dap`).
 Accessibility (issue #32): accessible names on all focusable widgets with an automated audit, focus commands for the
 project tree, bottom panel and editor, a Debug menu, legible log colours on dark and high-contrast schemes.
+File-scoped test discovery (issue #63): Discover Tests in Current File, a scope label above the test tree, and a cancelled
+discovery no longer replaces earlier results.
