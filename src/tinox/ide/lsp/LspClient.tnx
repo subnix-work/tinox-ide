@@ -119,7 +119,7 @@ namespace tinox.ide.lsp
                 root = Js::str(rootUri)
                 folders = "[{\"uri\":" + root + ",\"name\":\"workspace\"}]"
             }
-            const params: String = "{\"processId\":" + Process::pid().toString() + ",\"rootUri\":" + root + ",\"workspaceFolders\":" + folders + ",\"clientInfo\":{\"name\":\"tinox-ide\",\"version\":\"0.1.0\"},\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-16\"]},\"workspace\":{\"configuration\":true,\"applyEdit\":true,\"workspaceFolders\":true},\"textDocument\":{\"completion\":{\"completionItem\":{\"snippetSupport\":true,\"documentationFormat\":[\"markdown\",\"plaintext\"]}},\"hover\":{\"contentFormat\":[\"markdown\",\"plaintext\"]},\"signatureHelp\":{\"signatureInformation\":{\"documentationFormat\":[\"markdown\",\"plaintext\"],\"parameterInformation\":{\"labelOffsetSupport\":true},\"activeParameterSupport\":true}},\"codeAction\":{\"codeActionLiteralSupport\":{\"codeActionKind\":{\"valueSet\":[\"quickfix\",\"source.organizeImports\"]}},\"isPreferredSupport\":true,\"disabledSupport\":true,\"dataSupport\":true,\"resolveSupport\":{\"properties\":[\"edit\"]}},\"formatting\":{},\"rangeFormatting\":{},\"publishDiagnostics\":{\"versionSupport\":true},\"synchronization\":{\"dynamicRegistration\":false,\"didSave\":true}}}}"
+            const params: String = "{\"processId\":" + Process::pid().toString() + ",\"rootUri\":" + root + ",\"workspaceFolders\":" + folders + ",\"clientInfo\":{\"name\":\"tinox-ide\",\"version\":\"0.1.0\"},\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-16\"]},\"workspace\":{\"configuration\":true,\"applyEdit\":true,\"workspaceFolders\":true},\"textDocument\":{\"completion\":{\"completionItem\":{\"snippetSupport\":true,\"documentationFormat\":[\"markdown\",\"plaintext\"]}},\"hover\":{\"contentFormat\":[\"markdown\",\"plaintext\"]},\"signatureHelp\":{\"signatureInformation\":{\"documentationFormat\":[\"markdown\",\"plaintext\"],\"parameterInformation\":{\"labelOffsetSupport\":true},\"activeParameterSupport\":true}},\"codeAction\":{\"codeActionLiteralSupport\":{\"codeActionKind\":{\"valueSet\":[\"quickfix\",\"source.organizeImports\"]}},\"isPreferredSupport\":true,\"disabledSupport\":true,\"dataSupport\":true,\"resolveSupport\":{\"properties\":[\"edit\"]}},\"semanticTokens\":{\"requests\":{\"full\":true},\"tokenTypes\":[\"namespace\",\"type\",\"class\",\"enum\",\"interface\",\"struct\",\"typeParameter\",\"parameter\",\"variable\",\"property\",\"enumMember\",\"event\",\"function\",\"method\",\"macro\",\"keyword\",\"modifier\",\"comment\",\"string\",\"number\",\"regexp\",\"operator\",\"decorator\"],\"tokenModifiers\":[],\"formats\":[\"relative\"],\"overlappingTokenSupport\":false,\"multilineTokenSupport\":false},\"formatting\":{},\"rangeFormatting\":{},\"publishDiagnostics\":{\"versionSupport\":true},\"synchronization\":{\"dynamicRegistration\":false,\"didSave\":true}}}}"
             this.initialization = this.call("initialize", params, 10000)
             return this.initialization
         }
@@ -138,10 +138,21 @@ namespace tinox.ide.lsp
             }
             catch (e: String)
             {
-                this.pending.remove(future.id.toString())
+                this.forget(future.id.toString())
                 future.resolve(Json::parse("null"), -32097, e)
             }
             return future
+        }
+
+        /** Retires an id without accumulating runtime map tombstones (tinox#581). */
+        fn forget(id: String) -> Nothing
+        {
+            var live: Map<String, RpcFuture> = Map::new()
+            for key in this.pending.keys()
+            {
+                if (key != id) { live.set(key, this.pending.get(key)) }
+            }
+            this.pending = live
         }
 
         /** A user request. The future is settled by poll, a timeout or cancel. */
@@ -165,7 +176,7 @@ namespace tinox.ide.lsp
         {
             if (!future.done && this.pending.contains(future.id.toString()))
             {
-                this.pending.remove(future.id.toString())
+                this.forget(future.id.toString())
                 future.resolve(Json::parse("null"), -32800, "LSP request cancelled")
                 if (this.state == "ready") { this.notify("$/cancelRequest", "{\"id\":" + future.id.toString() + "}") }
                 else if (this.state == "initializing") { this.lost("LSP initialization cancelled") }
@@ -194,7 +205,7 @@ namespace tinox.ide.lsp
             const key: String = id.getInt().toString()
             if (!this.pending.contains(key)) { return }
             const future: RpcFuture = this.pending.get(key)
-            this.pending.remove(key)
+            this.forget(key)
             var result: JsonValue = message.getField("result")
             var code: Int64 = 0
             var description: String = ""
@@ -447,7 +458,7 @@ namespace tinox.ide.lsp
                 const future: RpcFuture = this.pending.get(key)
                 if (now >= future.deadline)
                 {
-                    this.pending.remove(key)
+                    this.forget(key)
                     future.resolve(Json::parse("null"), -32098, "LSP request timed out")
                     if (this.state == "ready") { this.notify("$/cancelRequest", "{\"id\":" + future.id.toString() + "}") }
                 }

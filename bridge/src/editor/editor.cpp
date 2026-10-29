@@ -3,6 +3,7 @@
 #include "../bridge.h"
 #include "diagnostics.h"
 #include "positions.h"
+#include "semantics.h"
 #include "tinoxkde.h"
 #include "viewfeatures.h"
 
@@ -139,6 +140,7 @@ public:
         connect(doc, &Document::aboutToClose, this, [this] { m_bridge.emitEvent(QStringLiteral("editor.closing"), {}, m_id); });
 
         m_diagnostics = new Diagnostics(doc, this);
+        new Semantics(doc);
     }
 
     static DocState *of(Document *d) { return d->findChild<DocState *>(QString(), Qt::FindDirectChildrenOnly); }
@@ -819,6 +821,7 @@ void registerCommands(Bridge &bridge)
         if (auto *d = qobject_cast<Document *>(o)) {
             if (DocState *state = DocState::of(d)) {
                 state->diagnostics().clearAll();
+                d->findChild<Semantics *>(QStringLiteral("semanticOverlay"))->clear();
             }
         }
     });
@@ -851,6 +854,7 @@ void registerCommands(Bridge &bridge)
     doc("editor.showConfigDialog", showConfigDialog);
     doc("editor.showViewWindow", showViewWindow);
     registerDiagnosticCommands(bridge);
+    registerSemanticCommands(bridge);
     registerViewFeatureCommands(bridge);
     if (bridge.debugCommandsEnabled()) {
         doc("editor.debug.type", debugType);

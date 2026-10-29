@@ -1,0 +1,17 @@
+module tinox.ide.lsp
+
+namespace tinox.ide.lsp
+{
+    /** One debounced semantic snapshot, replaced whenever its document changes. */
+    class SemanticRequest
+    {
+        /** Synchronized document version. */
+        var version: Int64
+        /** Earliest dispatch time, in milliseconds. */
+        var due: Int64
+        /** Whether a request has been dispatched. */
+        var sent: Bool
+        /** Session-owned future, populated after dispatch. */
+        var future: RpcFuture
+    }
+}
