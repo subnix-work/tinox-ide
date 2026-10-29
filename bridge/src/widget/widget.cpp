@@ -1,6 +1,7 @@
 #include "widget.h"
 
 #include "../bridge.h"
+#include "../i18n.h"
 #include "ansidecoder.h"
 #include "tinoxkde.h"
 
@@ -151,19 +152,21 @@ void addCommon(TypeDef &t)
     t.props.emplace(QStringLiteral("visible"),
                     def<QWidget>(Kind::Bool, true, Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setVisible(v.toBool()); })));
     t.props.emplace(QStringLiteral("toolTip"),
-                    def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setToolTip(str(v)); })));
+                    def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setToolTip(tr(str(v))); })));
     t.props.emplace(QStringLiteral("statusTip"),
-                    def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setStatusTip(str(v)); })));
-    t.props.emplace(QStringLiteral("accessibleName"),
-                    def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setAccessibleName(str(v)); })));
+                    def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setStatusTip(tr(str(v))); })));
+    t.props.emplace(QStringLiteral("accessibleName"), def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) {
+                                                                       w->setAccessibleName(tr(str(v)));
+                                                                   })));
     t.props.emplace(
         QStringLiteral("accessibleDescription"),
-        def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setAccessibleDescription(str(v)); })));
+        def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setAccessibleDescription(tr(str(v))); })));
     t.props.emplace(
         QStringLiteral("minimumSize"),
         def<QWidget>(Kind::Arr, QJsonArray{0, 0}, Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setMinimumSize(sizeOf(v)); })));
-    t.props.emplace(QStringLiteral("windowTitle"),
-                    def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setWindowTitle(str(v)); })));
+    t.props.emplace(QStringLiteral("windowTitle"), def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) {
+                                                                    w->setWindowTitle(tr(str(v)));
+                                                                })));
     t.props.emplace(QStringLiteral("windowIcon"),
                     def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setWindowIcon(iconOf(v)); })));
 }
@@ -248,7 +251,7 @@ const std::map<QString, TypeDef> &types()
         }
         {
             TypeDef t = makeType<QDockWidget>();
-            add<QDockWidget>(t, "title", Kind::Str, QString(), [](QDockWidget *w, const QJsonValue &v) { w->setWindowTitle(str(v)); });
+            add<QDockWidget>(t, "title", Kind::Str, QString(), [](QDockWidget *w, const QJsonValue &v) { w->setWindowTitle(tr(str(v))); });
             add<QDockWidget>(t, "floating", Kind::Bool, false, [](QDockWidget *w, const QJsonValue &v) { w->setFloating(v.toBool()); });
             add<QDockWidget>(t, "closable", Kind::Bool, true, [](QDockWidget *w, const QJsonValue &v) {
                 w->setFeatures(v.toBool() ? w->features() | QDockWidget::DockWidgetClosable
@@ -286,7 +289,7 @@ const std::map<QString, TypeDef> &types()
         }
         {
             TypeDef t = makeType<QToolBar>();
-            add<QToolBar>(t, "title", Kind::Str, QString(), [](QToolBar *w, const QJsonValue &v) { w->setWindowTitle(str(v)); });
+            add<QToolBar>(t, "title", Kind::Str, QString(), [](QToolBar *w, const QJsonValue &v) { w->setWindowTitle(tr(str(v))); });
             add<QToolBar>(t, "movable", Kind::Bool, true, [](QToolBar *w, const QJsonValue &v) { w->setMovable(v.toBool()); });
             add<QToolBar>(t, "iconSize", Kind::Num, 22,
                           [](QToolBar *w, const QJsonValue &v) { w->setIconSize(QSize(v.toInt(), v.toInt())); });
@@ -304,13 +307,13 @@ const std::map<QString, TypeDef> &types()
         }
         {
             TypeDef t = makeType<QStatusBar>();
-            add<QStatusBar>(t, "message", Kind::Str, QString(), [](QStatusBar *w, const QJsonValue &v) { w->showMessage(str(v)); });
+            add<QStatusBar>(t, "message", Kind::Str, QString(), [](QStatusBar *w, const QJsonValue &v) { w->showMessage(tr(str(v))); });
             add<QStatusBar>(t, "sizeGrip", Kind::Bool, true, [](QStatusBar *w, const QJsonValue &v) { w->setSizeGripEnabled(v.toBool()); });
             m.emplace(QStringLiteral("QStatusBar"), std::move(t));
         }
         {
             TypeDef t = makeType<QLabel>();
-            add<QLabel>(t, "text", Kind::Str, QString(), [](QLabel *w, const QJsonValue &v) { w->setText(str(v)); });
+            add<QLabel>(t, "text", Kind::Str, QString(), [](QLabel *w, const QJsonValue &v) { w->setText(tr(str(v))); });
             add<QLabel>(t, "wordWrap", Kind::Bool, false, [](QLabel *w, const QJsonValue &v) { w->setWordWrap(v.toBool()); });
             add<QLabel>(t, "textFormat", Kind::Str, QStringLiteral("auto"),
                         [](QLabel *w, const QJsonValue &v) {
@@ -330,7 +333,7 @@ const std::map<QString, TypeDef> &types()
                 }
             });
             add<QLineEdit>(t, "placeholder", Kind::Str, QString(),
-                           [](QLineEdit *w, const QJsonValue &v) { w->setPlaceholderText(str(v)); });
+                           [](QLineEdit *w, const QJsonValue &v) { w->setPlaceholderText(tr(str(v))); });
             add<QLineEdit>(t, "readOnly", Kind::Bool, false, [](QLineEdit *w, const QJsonValue &v) { w->setReadOnly(v.toBool()); });
             add<QLineEdit>(t, "clearButton", Kind::Bool, false,
                            [](QLineEdit *w, const QJsonValue &v) { w->setClearButtonEnabled(v.toBool()); });
@@ -341,7 +344,7 @@ const std::map<QString, TypeDef> &types()
         }
         {
             TypeDef t = makeType<QPushButton>();
-            add<QPushButton>(t, "text", Kind::Str, QString(), [](QPushButton *w, const QJsonValue &v) { w->setText(str(v)); });
+            add<QPushButton>(t, "text", Kind::Str, QString(), [](QPushButton *w, const QJsonValue &v) { w->setText(tr(str(v))); });
             add<QPushButton>(t, "icon", Kind::Str, QString(), [](QPushButton *w, const QJsonValue &v) { w->setIcon(iconOf(v)); });
             add<QPushButton>(t, "checkable", Kind::Bool, false, [](QPushButton *w, const QJsonValue &v) { w->setCheckable(v.toBool()); });
             add<QPushButton>(t, "checked", Kind::Bool, false, [](QPushButton *w, const QJsonValue &v) { w->setChecked(v.toBool()); });
@@ -350,7 +353,7 @@ const std::map<QString, TypeDef> &types()
         }
         {
             TypeDef t = makeType<QCheckBox>();
-            add<QCheckBox>(t, "text", Kind::Str, QString(), [](QCheckBox *w, const QJsonValue &v) { w->setText(str(v)); });
+            add<QCheckBox>(t, "text", Kind::Str, QString(), [](QCheckBox *w, const QJsonValue &v) { w->setText(tr(str(v))); });
             add<QCheckBox>(t, "checked", Kind::Bool, false, [](QCheckBox *w, const QJsonValue &v) { w->setChecked(v.toBool()); });
             m.emplace(QStringLiteral("QCheckBox"), std::move(t));
         }
@@ -362,9 +365,9 @@ const std::map<QString, TypeDef> &types()
                 for (const QJsonValue &i : v.toArray()) {
                     if (i.isObject()) {
                         w->addItem(iconOf(i.toObject().value(QStringLiteral("icon"))),
-                                   i.toObject().value(QStringLiteral("text")).toString());
+                                   tr(i.toObject().value(QStringLiteral("text")).toString()));
                     } else {
-                        w->addItem(i.toString());
+                        w->addItem(tr(i.toString()));
                     }
                 }
                 w->setCurrentIndex(std::min(current, w->count() - 1));
@@ -823,8 +826,8 @@ void place(Node &parent, Node &child, int index)
         }
     } else if (auto *tabs = qobject_cast<QTabWidget *>(pw)) {
         const QJsonObject tab = child.place.value(QStringLiteral("tab")).toObject();
-        tabs->insertTab(index, w, iconOf(tab.value(QStringLiteral("icon"))), tab.value(QStringLiteral("title")).toString());
-        tabs->setTabToolTip(index, tab.value(QStringLiteral("toolTip")).toString());
+        tabs->insertTab(index, w, iconOf(tab.value(QStringLiteral("icon"))), tr(tab.value(QStringLiteral("title")).toString()));
+        tabs->setTabToolTip(index, tr(tab.value(QStringLiteral("toolTip")).toString()));
     } else if (auto *stack = qobject_cast<QStackedWidget *>(pw)) {
         stack->insertWidget(index, w);
     } else if (auto *toolbar = qobject_cast<QToolBar *>(pw)) {
@@ -842,7 +845,7 @@ void place(Node &parent, Node &child, int index)
                         std::max(1, child.place.value(QStringLiteral("rowSpan")).toInt(1)),
                         std::max(1, child.place.value(QStringLiteral("colSpan")).toInt(1)));
     } else if (auto *form = qobject_cast<QFormLayout *>(pw->layout())) {
-        const QString label = child.place.value(QStringLiteral("label")).toString();
+        const QString label = tr(child.place.value(QStringLiteral("label")).toString());
         if (label.isEmpty()) {
             form->addRow(w);
         } else {

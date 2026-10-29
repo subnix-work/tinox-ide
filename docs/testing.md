@@ -147,6 +147,10 @@ accessibility tree over AT-SPI with a real display. See [accessibility.md](acces
 `scripts/test-discovery.sh` lists the tests of `tests/HostCommandTest.tnx` of this repository through Discover Tests in
 Current File (3 tests, without traversing the whole suite) and runs them with Run Tests in Selected File.
 
+`scripts/test-i18n.sh` installs the translations like a package would and drives the real IDE under `LANGUAGE=de`: commands,
+menus, widgets and assembled messages must be German, data must stay as it is. It also fails when `po/tinox-ide.pot` is out
+of date. The bridge side is `bridge/tests/i18n_test.cpp` with its own small catalog (`bridge/tests/i18n/`). See [i18n.md](i18n.md).
+
 ## Build and test tasks
 
 `tests/BuildTest.tnx` runs the real `tinox` tool against throw-away projects (needs `tinox` on

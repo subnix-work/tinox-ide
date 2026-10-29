@@ -1,0 +1,79 @@
+module tinox.ide.app
+
+import tinox.core.json
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.ui.Js
+
+namespace tinox.ide.app
+{
+    /**
+     * Translation of the messages the IDE assembles at run time (docs/i18n.md). The text is the English
+     * source; `%1`, `%2` … are replaced by the arguments after the lookup, so a translation may put them in
+     * another order. Static labels, menu entries and tool tips need no call: the bridge translates what it
+     * is given. scripts/i18n-extract.py finds the texts in `Tr::t`, `Tr::c`, `Tr::f` and `Tr::n`. Without a
+     * catalog (or without the bridge, as in the tests against the mock) the English text comes back with the
+     * arguments filled in.
+     */
+    class Tr
+    {
+        /** The translation of a text. */
+        fnc t(text: String) -> String
+        {
+            return Tr::lookup(text, "", "", 0, [])
+        }
+
+        /** The translation of a text in a context, for words that mean different things in different places. */
+        fnc c(context: String, text: String) -> String
+        {
+            return Tr::lookup(text, context, "", 0, [])
+        }
+
+        /** The translation of a text whose `%1`, `%2` … are replaced by these arguments. */
+        fnc f(text: String, args: List<String>) -> String
+        {
+            return Tr::lookup(text, "", "", 0, args)
+        }
+
+        /** The singular or plural form for a count (`%1` is the count, the arguments start at `%2`). */
+        fnc n(singular: String, plural: String, count: Int64, args: List<String>) -> String
+        {
+            return Tr::lookup(singular, "", plural, count, args)
+        }
+
+        /** Asks the bridge; any failure leaves the English text. */
+        fnc lookup(text: String, context: String, plural: String, count: Int64, args: List<String>) -> String
+        {
+            try
+            {
+                var command: Command = Command::named("i18n.translate").str("text", text).raw("args", Js::strings(args))
+                if (context != "") { command = command.str("context", context) }
+                if (plural != "") { command = command.str("plural", plural).int("n", count) }
+                const reply: JsonValue = Bridge::query(command.build())
+                if (reply.getField("text").isString()) { return reply.getField("text").getString() }
+            }
+            catch (e: String) { }
+            return Tr::fill(text, plural, count, args)
+        }
+
+        /** The English text with the arguments in place: what is shown when nothing translates it. */
+        fnc fill(text: String, plural: String, count: Int64, args: List<String>) -> String
+        {
+            var out: String = text
+            var numbers: List<String> = args
+            if (plural != "")
+            {
+                if (count != 1) { out = plural }
+                numbers = [count.toString()]
+                for arg in args { numbers.push(arg) }
+            }
+            var i: Int64 = numbers.len()
+            while (i > 0)
+            {
+                out = out.replace("%" + i.toString(), numbers[i - 1])
+                i = i - 1
+            }
+            return out
+        }
+    }
+}

@@ -1,6 +1,7 @@
 #include "action.h"
 
 #include "../bridge.h"
+#include "../i18n.h"
 #include "tinoxkde.h"
 
 #include <KActionCollection>
@@ -310,17 +311,17 @@ bool parseDescriptors(const QJsonValue &v, std::vector<Descriptor> &out, QString
 void applyFields(QAction *a, const QJsonObject &o)
 {
     if (o.contains(QStringLiteral("text"))) {
-        a->setText(o.value(QStringLiteral("text")).toString());
+        a->setText(tr(o.value(QStringLiteral("text")).toString()));
     }
     if (o.contains(QStringLiteral("icon"))) {
         const QString icon = o.value(QStringLiteral("icon")).toString();
         a->setIcon(icon.isEmpty() ? QIcon() : QIcon::fromTheme(icon));
     }
     if (o.contains(QStringLiteral("toolTip"))) {
-        a->setToolTip(o.value(QStringLiteral("toolTip")).toString());
+        a->setToolTip(tr(o.value(QStringLiteral("toolTip")).toString()));
     }
     if (o.contains(QStringLiteral("statusTip"))) {
-        a->setStatusTip(o.value(QStringLiteral("statusTip")).toString());
+        a->setStatusTip(tr(o.value(QStringLiteral("statusTip")).toString()));
     }
     if (o.contains(QStringLiteral("checkable"))) {
         a->setCheckable(o.value(QStringLiteral("checkable")).toBool());
@@ -630,10 +631,10 @@ void fillMenu(QMenu *menu, const QJsonArray &items)
                 menu->addAction(g_actions->find(i.toString()));
             }
         } else if (i.toObject().contains(QStringLiteral("section"))) {
-            menu->addSection(i.toObject().value(QStringLiteral("section")).toString());
+            menu->addSection(tr(i.toObject().value(QStringLiteral("section")).toString()));
         } else {
             const QJsonObject m = i.toObject().value(QStringLiteral("menu")).toObject();
-            QMenu *sub = menu->addMenu(m.value(QStringLiteral("title")).toString());
+            QMenu *sub = menu->addMenu(tr(m.value(QStringLiteral("title")).toString()));
             sub->setObjectName(m.value(QStringLiteral("id")).toString());
             const QString icon = m.value(QStringLiteral("icon")).toString();
             if (!icon.isEmpty()) {
@@ -691,7 +692,7 @@ Reply setMenuBar(Bridge &b, const QJsonObject &cmd)
     bar->clear();
     for (const QJsonValue &mv : menus.toArray()) {
         const QJsonObject m = mv.toObject();
-        QMenu *menu = bar->addMenu(m.value(QStringLiteral("title")).toString());
+        QMenu *menu = bar->addMenu(tr(m.value(QStringLiteral("title")).toString()));
         menu->setObjectName(m.value(QStringLiteral("id")).toString());
         fillMenu(menu, m.value(QStringLiteral("items")).toArray());
     }

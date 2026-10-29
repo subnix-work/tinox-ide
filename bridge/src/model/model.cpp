@@ -1,6 +1,7 @@
 #include "model.h"
 
 #include "../bridge.h"
+#include "../i18n.h"
 #include "tinoxkde.h"
 
 #include <QAbstractItemView>
@@ -644,7 +645,7 @@ Reply create(Bridge &b, const QJsonObject &cmd)
         if (!c.isString()) {
             return invalid(QStringLiteral("\"columns\" are header strings"));
         }
-        columns << c.toString();
+        columns << tr(c.toString());
     }
     auto *m = new TinoxModel(b, columns, cmd.value(QStringLiteral("lazy")).toBool());
     m->dropEnabled = cmd.value(QStringLiteral("acceptDrops")).toBool();

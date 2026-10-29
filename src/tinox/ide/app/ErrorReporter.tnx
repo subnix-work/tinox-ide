@@ -55,7 +55,7 @@ namespace tinox.ide.app
             this.logger.error(origin + ": " + message)
             try
             {
-                this.store.set("status.message", "Error in " + origin + ": " + message)
+                this.store.set("status.message", Tr::f("Error in %1: %2", [origin, message]))
                 this.store.setInt("errors.count", this.count)
                 if (this.toasts && this.lastToast != origin + message)
                 {

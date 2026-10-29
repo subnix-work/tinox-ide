@@ -1,6 +1,7 @@
 #include "dialog.h"
 
 #include "../bridge.h"
+#include "../i18n.h"
 #include "tinoxkde.h"
 
 #include <KNotification>
@@ -61,8 +62,8 @@ Reply send(Bridge &b, const QJsonObject &cmd)
     const int64_t id = g_nextId++;
     auto *n = new KNotification(event); // CloseOnTimeout: deleted by KNotification itself
     n->setComponentName(cmd.value(QStringLiteral("component")).toString(QStringLiteral("tinoxide")));
-    n->setTitle(cmd.value(QStringLiteral("title")).toString());
-    n->setText(cmd.value(QStringLiteral("text")).toString());
+    n->setTitle(tr(cmd.value(QStringLiteral("title")).toString()));
+    n->setText(tr(cmd.value(QStringLiteral("text")).toString()));
     n->setIconName(cmd.value(QStringLiteral("icon")).toString());
     n->setUrgency(urgency);
     for (int i = 0; i < actionIds.size(); ++i) {

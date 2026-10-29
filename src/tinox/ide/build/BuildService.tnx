@@ -8,6 +8,7 @@ import tinox.ide.app.FileSystem
 import tinox.ide.app.IdeCommand
 import tinox.ide.app.MainWindow
 import tinox.ide.app.Store
+import tinox.ide.app.Tr
 import tinox.ide.editor.Documents
 import tinox.ide.kde.Bridge
 import tinox.ide.kde.Command
@@ -252,8 +253,8 @@ namespace tinox.ide.build
         /** The label above the test tree: what the last discovery covered. */
         fnc scopeText(scope: String) -> String
         {
-            if (scope == "all tests") { return "Discovered: all tests in the workspace" }
-            return "Discovered: " + scope + " (other files keep their earlier results)"
+            if (scope == "all tests") { return Tr::t("Discovered: all tests in the workspace") }
+            return Tr::f("Discovered: %1 (other files keep their earlier results)", [scope])
         }
 
         /** A file was saved: with watch mode on, run the tests again. */
@@ -297,15 +298,15 @@ namespace tinox.ide.build
             this.clearLog = true
             this.problems = []
             this.problemsDirty = true
-            this.title = "Build"
-            if (steps[0].kind == "test" || steps[0].kind == "list") { this.title = "Tests" }
-            if (steps.len() > 1) { this.title = "Run" }
+            this.title = Tr::t("Build")
+            if (steps[0].kind == "test" || steps[0].kind == "list") { this.title = Tr::t("Tests") }
+            if (steps.len() > 1) { this.title = Tr::t("Run") }
             this.active = true
             store.setBool("build.active", true)
             store.set("build.activity", this.title + " running…")
-            store.set("status.message", this.title + " started")
+            store.set("status.message", Tr::f("%1 started", [this.title]))
             this.window.registry.refresh()
-            if (this.title == "Tests") { this.window.showBottomTab(this.testsTab) }
+            if (steps[0].kind == "test" || steps[0].kind == "list") { this.window.showBottomTab(this.testsTab) }
             else if (store.getBool("pref.Build.showOutput")) { this.window.showBottomTab(this.outputTab) }
             this.begin()
         }
@@ -556,15 +557,15 @@ namespace tinox.ide.build
                 this.tests.endDiscovery(listed)
             }
             var message: String = ""
-            if (this.cancelled) { message = this.title + " stopped" }
-            else if (kind == "list" && !listed) { message = "Test discovery failed; the earlier tests are kept" }
-            else if (kind == "run") { message = "Program exited with status " + status.toString() }
-            else if (kind == "debug") { message = "Debugger started" }
-            else if (kind == "list" && this.tests.scope != "all tests" && this.tests.scope != "") { message = this.tests.countIn(this.tests.scope).toString() + " tests found in " + this.tests.scope }
-            else if (kind == "list") { message = this.tests.cases.len().toString() + " tests found" }
+            if (this.cancelled) { message = Tr::f("%1 stopped", [this.title]) }
+            else if (kind == "list" && !listed) { message = Tr::t("Test discovery failed; the earlier tests are kept") }
+            else if (kind == "run") { message = Tr::f("Program exited with status %1", [status.toString()]) }
+            else if (kind == "debug") { message = Tr::t("Debugger started") }
+            else if (kind == "list" && this.tests.scope != "all tests" && this.tests.scope != "") { message = Tr::n("%1 test found in %2", "%1 tests found in %2", this.tests.countIn(this.tests.scope), [this.tests.scope]) }
+            else if (kind == "list") { message = Tr::n("%1 test found", "%1 tests found", this.tests.cases.len(), []) }
             else if (kind == "test") { message = this.tests.summary() }
-            else if (failed) { message = this.title + " failed: " + errors.toString() + " errors" }
-            else { message = this.title + " succeeded" }
+            else if (failed) { message = Tr::n("%2 failed: %1 error", "%2 failed: %1 errors", errors, [this.title]) }
+            else { message = Tr::f("%1 succeeded", [this.title]) }
             this.active = false
             store.setBool("build.active", false)
             store.set("build.activity", "")
@@ -641,7 +642,7 @@ namespace tinox.ide.build
             }
             ids.push("")
             texts.push("Cancel")
-            this.dialogs.ask("Run Configuration", "Selected: " + this.configs.selected, ids, texts, (id: String) => this.chosen(id))
+            this.dialogs.ask("Run Configuration", Tr::f("Selected: %1", [this.configs.selected]), ids, texts, (id: String) => this.chosen(id))
         }
 
         /** Applies and stores the choice. */
@@ -650,7 +651,7 @@ namespace tinox.ide.build
             if (name != "" && this.configs.pick(name))
             {
                 this.persist()
-                this.window.store.set("status.message", "Run configuration: " + name)
+                this.window.store.set("status.message", Tr::f("Run configuration: %1", [name]))
             }
         }
 
@@ -658,7 +659,7 @@ namespace tinox.ide.build
         fn persist() -> Nothing
         {
             try { this.configs.save(this.root()) }
-            catch (e: String) { this.dialogs.error("Run Configurations", "Cannot save " + RunConfigs::path(this.root()) + ":\n" + e) }
+            catch (e: String) { this.dialogs.error("Run Configurations", Tr::f("Cannot save %1:\n%2", [RunConfigs::path(this.root()), e])) }
         }
 
         /** Opens `.tinox-ide/run.json`, creating it with the current configurations first. */

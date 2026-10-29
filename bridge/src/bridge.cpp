@@ -10,6 +10,7 @@
 #include "terminal/terminal.h"
 #include "widget/widget.h"
 
+#include "i18n.h"
 #include <KAboutData>
 #include <KCoreAddons>
 #include <KCrash>
@@ -174,6 +175,7 @@ int64_t Bridge::init(const QString &appName, const QString &displayName)
     m_debugCommands = qEnvironmentVariable("TKDE_DEBUG_COMMANDS") == QLatin1String("1");
     m_namespaces = {QStringLiteral("core")};
     registerCoreCommands();
+    tkde::translation::registerCommands(*this);
     tkde::editor::registerCommands(*this);
     tkde::widget::registerCommands(*this);
     tkde::action::registerCommands(*this);

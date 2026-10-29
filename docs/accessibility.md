@@ -61,10 +61,10 @@ missing and how to check them by hand.
 - [ ] Menu entries that open a dialog should end with an ellipsis: not audited.
 - [ ] Mnemonics are not unique across all menus: the File, View, Go and Build menus mix this IDE's actions with
   KDE standard ones, and several accelerators clash. Needs a pass over the whole menu bar.
-- [ ] **Localisation**: the bridge sets the translation domain (`tinox-ide`) and `i18n()` marks the strings it creates
-  (the editor view names, for one). Every other UI string is an English literal in the Tinox sources, which
-  cannot be extracted or translated until Tinox has a message API (subnix-work/tinox#588). Sentences that are
-  assembled from parts (`"… " + count + " …"`) have to become `tr()` calls with placeholders then.
+- [x] **Localisation**: the bridge translates the UI strings it is given and `Tr` the messages assembled at run time;
+  the catalogs are KDE's (`po/`, German included). `scripts/test-i18n.sh` runs the IDE under `LANGUAGE=de` and checks
+  commands, menus, widgets and assembled messages. Not everything is translated yet (log output, compiler messages);
+  see [i18n.md](i18n.md). The message API Tinox itself should have is subnix-work/tinox#588.
 - [ ] A full review against the HIG pages (layouts, wording, dialog buttons) by a person.
 
 ## Running the checks
