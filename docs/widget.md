@@ -31,7 +31,8 @@ the `model` namespace, see model.md), `QPlainTextEdit` (read-only log, `widget.a
 another module owns (an editor view, a terminal). The tree never deletes an embedded widget;
 removing the node or releasing the tree hands it back, unparented.
 
-Every widget also has `enabled`, `visible`, `toolTip`, `statusTip`, `minimumSize`,
+Every widget also has `enabled`, `visible`, `toolTip`, `statusTip`, `accessibleName`,
+`accessibleDescription` (what a screen reader announces; see [accessibility.md](accessibility.md)), `minimumSize`,
 `windowTitle`, `windowIcon`. Icons are Breeze icon names (`QIcon::fromTheme`). Programmatic prop
 changes never raise events. See `bridge/src/widget/widget.cpp` for each type's props.
 

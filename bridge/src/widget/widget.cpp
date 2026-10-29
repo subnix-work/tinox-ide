@@ -7,6 +7,7 @@
 #include <KConfigGroup>
 #include <KSharedConfig>
 
+#include <QAccessible>
 #include <QApplication>
 #include <QBoxLayout>
 #include <QCheckBox>
@@ -28,6 +29,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -35,6 +37,8 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTableView>
+#include <QTextBlock>
+#include <QTextFragment>
 #include <QToolBar>
 #include <QTreeView>
 
@@ -150,6 +154,11 @@ void addCommon(TypeDef &t)
                     def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setToolTip(str(v)); })));
     t.props.emplace(QStringLiteral("statusTip"),
                     def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setStatusTip(str(v)); })));
+    t.props.emplace(QStringLiteral("accessibleName"),
+                    def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setAccessibleName(str(v)); })));
+    t.props.emplace(
+        QStringLiteral("accessibleDescription"),
+        def<QWidget>(Kind::Str, QString(), Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setAccessibleDescription(str(v)); })));
     t.props.emplace(
         QStringLiteral("minimumSize"),
         def<QWidget>(Kind::Arr, QJsonArray{0, 0}, Fn<QWidget>([](QWidget *w, const QJsonValue &v) { w->setMinimumSize(sizeOf(v)); })));
@@ -1414,8 +1423,7 @@ Reply focusWidget(Bridge &b, const QJsonObject &cmd)
 }
 
 // Keeps the colour state of a stream-mode log next to its widget.
-struct AnsiDecoderHolder : QObject
-{
+struct AnsiDecoderHolder : QObject {
     explicit AnsiDecoderHolder(QObject *parent) : QObject(parent) {}
     AnsiDecoder decoder;
 };
@@ -1523,6 +1531,99 @@ Reply dumpTree(Bridge &b, const QJsonObject &cmd)
     return Reply::success(f);
 }
 
+/// What a screen reader would find: every widget of a mount that can take the keyboard focus but
+/// has no accessible name (Qt falls back to the text of buttons, labels and so on).
+Reply accessibilityAudit(Bridge &b, const QJsonObject &cmd)
+{
+    Reply fail;
+    Mount *m = mountOf(b, cmd, fail);
+    if (!m) {
+        return fail;
+    }
+    QJsonArray unnamed;
+    int focusable = 0;
+    const QList<QWidget *> all = m->rootWidget->findChildren<QWidget *>();
+    for (QWidget *w : all) {
+        // parts of a composite widget (scroll bars, viewports, the editor inside a combo box) are not separate stops for the user
+        const QString name = w->objectName();
+        // popups and tool tips of other modules are windows of their own, not stops of this one
+        if (w->isHidden() || w->isWindow() || w->focusPolicy() == Qt::NoFocus || name.startsWith(QLatin1String("qt_")) ||
+            qobject_cast<QScrollBar *>(w)) {
+            continue;
+        }
+        // the bars and messages inside KTextEditor's view and the drop-down list of a combo box belong to KDE and Qt
+        bool insideEditor = false;
+        for (QWidget *p = w->parentWidget(); p && !insideEditor; p = p->parentWidget()) {
+            insideEditor = p->inherits("KTextEditor::ViewPrivate") || p->inherits("QComboBoxPrivateContainer");
+        }
+        if (insideEditor) {
+            continue;
+        }
+        ++focusable;
+        QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(w);
+        if (iface && !iface->text(QAccessible::Name).trimmed().isEmpty()) {
+            continue;
+        }
+        QJsonObject o;
+        o.insert(QStringLiteral("class"), QString::fromLatin1(w->metaObject()->className()));
+        o.insert(QStringLiteral("objectName"), name);
+        o.insert(QStringLiteral("parent"), w->parentWidget() ? w->parentWidget()->objectName() : QString());
+        QStringList path; // class(objectName) up to the window, to find widgets that have no name of their own
+        for (QWidget *p = w; p; p = p->parentWidget()) {
+            path.prepend(QString::fromLatin1(p->metaObject()->className()) + QLatin1Char('(') + p->objectName() + QLatin1Char(')'));
+        }
+        o.insert(QStringLiteral("path"), path.join(QStringLiteral(" > ")));
+        unnamed.append(o);
+    }
+    QJsonObject f;
+    f.insert(QStringLiteral("focusable"), focusable);
+    f.insert(QStringLiteral("unnamed"), unnamed);
+    return Reply::success(f);
+}
+
+/// Test hook: the foreground colour of every text fragment of a log, to check legibility.
+Reply logColors(Bridge &b, const QJsonObject &cmd)
+{
+    Reply fail;
+    QWidget *w = widgetTarget(b, cmd, fail);
+    if (!w) {
+        return fail;
+    }
+    auto *edit = qobject_cast<QPlainTextEdit *>(w);
+    if (!edit) {
+        return Reply::failure(TKDE_E_INVALID_ARG, QStringLiteral("needs a QPlainTextEdit"));
+    }
+    QJsonArray fragments;
+    for (QTextBlock block = edit->document()->begin(); block.isValid(); block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            const QBrush brush = fragment.charFormat().foreground();
+            QJsonObject o;
+            o.insert(QStringLiteral("text"), fragment.text());
+            o.insert(QStringLiteral("color"), brush.style() == Qt::NoBrush ? QString() : brush.color().name());
+            fragments.append(o);
+        }
+    }
+    QJsonObject f;
+    f.insert(QStringLiteral("fragments"), fragments);
+    f.insert(QStringLiteral("background"), edit->palette().color(QPalette::Base).name());
+    return Reply::success(f);
+}
+
+/// Test hook: the widget that has the keyboard focus now, with its parents' names up to the window.
+Reply focusState(Bridge &, const QJsonObject &)
+{
+    QJsonObject f;
+    QWidget *w = QApplication::focusWidget();
+    QStringList chain;
+    for (QWidget *p = w; p; p = p->parentWidget()) {
+        chain << QString::fromLatin1(p->metaObject()->className()) + QLatin1Char('(') + p->objectName() + QLatin1Char(')');
+    }
+    f.insert(QStringLiteral("chain"), chain.join(QStringLiteral(" < ")));
+    f.insert(QStringLiteral("objectName"), w ? w->objectName() : QString());
+    return Reply::success(f);
+}
+
 /// Test hook: does what a user would do to the widget, so the events fire for real.
 Reply debugAct(Bridge &b, const QJsonObject &cmd)
 {
@@ -1625,6 +1726,9 @@ void registerCommands(Bridge &bridge)
     reg("widget.restoreState", restoreState);
     if (bridge.debugCommandsEnabled()) {
         reg("widget.debug.dump", dumpTree);
+        reg("widget.debug.accessibility", accessibilityAudit);
+        reg("widget.debug.focus", focusState);
+        reg("widget.debug.logColors", logColors);
         reg("widget.debug.act", debugAct);
     }
 }

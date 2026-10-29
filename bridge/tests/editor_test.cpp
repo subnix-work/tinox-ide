@@ -585,6 +585,19 @@ static void testDiagnostics()
     }
     EXPECT(contrast(dark, darkBg) >= 3.0);
     EXPECT(light != dark);
+    // and on the pure black and white of a high-contrast scheme
+    for (const QColor &bg : {QColor(0, 0, 0), QColor(0xff, 0xff, 0xff)}) {
+        query(cmd("editor.debug.setPalette", Obj{{"base", bg.name()}}));
+        QColor shown;
+        for (int i = 0; i < 100; ++i) {
+            shown = errorColor();
+            if (contrast(shown, bg) >= 3.0) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        EXPECT(contrast(shown, bg) >= 3.0);
+    }
     query(cmd("editor.debug.setPalette", Obj{{"dark", false}}));
 
     // releasing a document that still has diagnostics must not crash (ranges are the caller's to delete)

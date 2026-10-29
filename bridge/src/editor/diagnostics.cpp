@@ -358,7 +358,11 @@ void registerDiagnosticCommands(Bridge &bridge)
         // Test hook: switch the application palette between a dark and a light scheme.
         bridge.registerCommand(QStringLiteral("editor.debug.setPalette"), [](const QJsonObject &cmd) {
             QPalette p;
-            if (cmd.value(QStringLiteral("dark")).toBool()) {
+            if (cmd.contains(QStringLiteral("base"))) { // any background, e.g. the pure black and white of a high-contrast scheme
+                const QColor base(cmd.value(QStringLiteral("base")).toString());
+                p.setColor(QPalette::Base, base);
+                p.setColor(QPalette::Text, base.lightness() < 128 ? QColor(Qt::white) : QColor(Qt::black));
+            } else if (cmd.value(QStringLiteral("dark")).toBool()) {
                 p.setColor(QPalette::Base, QColor(0x1b, 0x1e, 0x20));
                 p.setColor(QPalette::Text, QColor(0xfc, 0xfc, 0xfc));
             } else {

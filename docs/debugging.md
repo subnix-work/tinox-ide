@@ -16,7 +16,7 @@ program must be built with debug information, which **Start Debugging** does for
 | Toggle Breakpoint | Ctrl+F9 | on the line of the cursor |
 | Remove All Breakpoints | | in all files and in the running session |
 
-All of them are in the **Build** menu. The run configuration (arguments, environment, working
+All of them are in the **Debug** menu. The run configuration (arguments, environment, working
 directory, [build.md](build.md#run-configurations)) is the one Run uses.
 
 ## Breakpoints

@@ -13,7 +13,7 @@ OUT := build/tinox-ide
 PREFIX ?= /usr/local
 LIBDIR ?= lib
 
-.PHONY: all bridge ide run example docs test test-bridge test-asan test-tsan fuzz bench fmt clean check-env install-resources install test-packaging release dogfood test-dogfood test-manual
+.PHONY: test-atspi all bridge ide run example docs test test-bridge test-asan test-tsan fuzz bench fmt clean check-env install-resources install test-packaging release dogfood test-dogfood test-manual
 
 all: ide
 
@@ -41,6 +41,11 @@ test: bridge
 	TINOX=$(TINOX) scripts/test-editing.sh
 	TINOX=$(TINOX) scripts/test-semantics.sh
 	TINOX=$(TINOX) scripts/test-debug.sh
+	TINOX=$(TINOX) scripts/test-accessibility.sh
+
+# The accessibility tree of the real IDE over AT-SPI, as Orca reads it (needs a display; opens a window).
+test-atspi: bridge
+	TINOX=$(TINOX) scripts/test-atspi.sh
 
 bench: bridge
 	QT_QPA_PLATFORM=offscreen $(BUILD_DIR)/bin/bench_queue

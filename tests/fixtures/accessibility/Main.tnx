@@ -1,0 +1,104 @@
+import tinox.core.json
+import tinox.core.process.Process
+import tinox.ide.IdeApp
+import tinox.ide.app.FileSystem
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.App
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Js
+import tinox.ide.ui.Mount
+
+class Main
+{
+    fnc main() -> Int32
+    {
+        return App::run("tinoxide", "Tinox Accessibility Smoke", (events: EventLoop) => Main::logic(events))
+    }
+
+    fnc logic(events: EventLoop) -> Int32
+    {
+        const results: List<Bool> = []
+        events.onType("core.ready", (event: Event) => Main::check(events, results))
+        events.run()
+        if (results.len() != 1 || !results[0]) { return 1 }
+        return 0
+    }
+
+    fnc expect(ok: Bool, message: String) -> Nothing
+    {
+        if (!ok) { throw message }
+    }
+
+    /** The focusable widgets of the main window that a screen reader could not name, as "Class(objectName)". */
+    fnc unnamed(app: IdeApp, mount: Mount) -> List<String>
+    {
+        app.events.pump(50)
+        const audit: JsonValue = Bridge::query(Command::named("widget.debug.accessibility").target(mount.mountId).build())
+        var out: List<String> = []
+        for item in audit.getField("unnamed").asList() { out.push(item.getField("class").getString() + "(" + item.getField("objectName").getString() + " in " + item.getField("parent").getString() + ") " + item.getField("path").getString()) }
+        return out
+    }
+
+    fnc focusChain() -> String
+    {
+        return Bridge::query(Command::named("widget.debug.focus").build()).getField("chain").getString()
+    }
+
+    /** Runs the command and reports whether the focused widget lies inside the node with this key (by object name). */
+    fnc focusIn(app: IdeApp, command: String, key: String) -> Bool
+    {
+        app.registry.execute(command)
+        app.events.pump(100)
+        return Main::focusChain().contains("(" + key + ")")
+    }
+
+    fnc check(events: EventLoop, results: List<Bool>) -> Nothing
+    {
+        const app: IdeApp = IdeApp::start(events)
+        try
+        {
+            const root: String = Process::env("TINOX_A11Y_ROOT")
+            app.store.set("workspace.path", root)
+            app.store.setBool("workspace.open", true)
+            app.store.set("workspace.name", "a11y")
+            const file: OpenFile = app.documents.open(root + "/Main.tnx")
+            app.events.pump(100)
+            var missing: List<String> = Main::unnamed(app, app.window.mount)
+            Main::expect(missing.len() == 0, "main window: widgets without an accessible name: " + Js::join(missing, ", "))
+            // the keyboard reaches every region of the window
+            app.window.mount.show()
+            Main::expect(Main::focusIn(app, "focus.project", "projectTree"), "Focus Project Tree did not focus the tree: " + Main::focusChain())
+            Main::expect(Main::focusIn(app, "focus.bottom", "bottomTabs"), "Focus Problems and Output did not focus the tabs: " + Main::focusChain())
+            Main::expect(Main::focusIn(app, "focus.editor", "editors"), "Focus Editor did not focus the editor: " + Main::focusChain())
+            app.registry.execute("nav.quickOpen")
+            app.events.pump(100)
+            missing = Main::unnamed(app, app.navigation.picker.mount)
+            Main::expect(app.navigation.picker.mount.isMounted(), "quick open did not open")
+            Main::expect(missing.len() == 0, "quick open: widgets without an accessible name: " + Js::join(missing, ", "))
+            app.settingsDialog.open(-1)
+            app.events.pump(100)
+            missing = Main::unnamed(app, app.settingsDialog.mount)
+            Main::expect(app.settingsDialog.mount.isMounted(), "the settings window did not open")
+            Main::expect(missing.len() == 0, "settings: widgets without an accessible name: " + Js::join(missing, ", "))
+            // Optionally stay up so an external AT-SPI client can read the tree (scripts/test-accessibility.sh).
+            const hold: String = Process::env("TINOX_A11Y_HOLD")
+            if (hold != "")
+            {
+                println("accessibility: holding for the AT-SPI check")
+                const start: Int64 = Bridge::nowNs()
+                while (!FileSystem::exists(hold) && (Bridge::nowNs() - start) / 1000000 < 90000) { app.events.pump(50) }
+            }
+            println("accessibility: every focusable widget of the main window, quick open and settings has an accessible name")
+            results.push(true)
+        }
+        catch (e: String)
+        {
+            printStderr("accessibility smoke failed: " + e)
+            results.push(false)
+        }
+        app.quit()
+    }
+}
