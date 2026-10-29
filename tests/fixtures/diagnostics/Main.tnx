@@ -1,3 +1,4 @@
+import tinox.core.json
 import tinox.core.process.Process
 import tinox.ide.IdeApp
 import tinox.ide.editor.OpenFile
@@ -7,6 +8,8 @@ import tinox.ide.kde.Command
 import tinox.ide.kde.Event
 import tinox.ide.kde.EventLoop
 import tinox.ide.ui.Diagnostic
+import tinox.ide.ui.Position
+import tinox.ide.ui.Utf16
 
 class Main
 {
@@ -39,6 +42,26 @@ class Main
         return predicate(app)
     }
 
+    fnc completion(app: IdeApp, file: OpenFile) -> Nothing
+    {
+        const source: String = "class Box\n{\n    fn count() -> Int64 { return 1 }\n}\nclass Main\n{\n    fnc main() -> Int32\n    {\n        const box: Box = Box {}\n        box.\n        return 0\n    }\n}\n"
+        const report: Int64 = app.language.reports
+        file.doc.setText(source)
+        Main::expect(Main::wait(app, (a: IdeApp) => a.language.client.documents.get(Utf16::uri(file.path)).text == source && a.language.reports > report, 5000), "completion source was not synchronized")
+        file.views[0].setCursor(Position::create(9, 12))
+        app.events.pump(0)
+        file.views[0].requestCompletion()
+        Main::expect(Main::wait(app, (a: IdeApp) => Main::hasCompletion(file.views[0].id(), "count"), 5000), "type-aware member completion did not reach KTextEditor: " + Json::stringify(Bridge::query(Command::named("editor.debug.completionState").target(file.views[0].id()).build())) + " pending=" + app.language.assistance.pending.len().toString())
+        println("assistance: real tinox-lsp member completion reached the native model")
+    }
+
+    fnc hasCompletion(view: Int64, label: String) -> Bool
+    {
+        const state = Bridge::query(Command::named("editor.debug.completionState").target(view).build())
+        for item in state.getField("labels").asList() { if (item.getString() == label) { return true } }
+        return false
+    }
+
     fnc check(events: EventLoop, results: List<Bool>) -> Nothing
     {
         const app: IdeApp = IdeApp::start(events)
@@ -69,6 +92,7 @@ class Main
             const fixLatency: Int64 = (Bridge::nowNs() - fixed) / 1000000
             Main::expect(fixLatency < 300, "fixed diagnostic latency exceeded 300 ms: " + fixLatency.toString())
             Main::expect(file.doc.diagnostics("lsp").len() == 0, "editor retained stale diagnostics")
+            Main::completion(app, file)
             app.documents.discard(file)
             Main::expect(app.language.paths.keys().len() == 0, "closed file remains synchronized")
             Main::expect(events.failureCount() == 0, "an event-loop handler failed")

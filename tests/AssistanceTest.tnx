@@ -1,0 +1,128 @@
+import DiagnosticsHarness
+import MockBridge
+import TempProject
+import tinox.core.json
+import tinox.ide.IdeApp
+import tinox.ide.editor.OpenFile
+import tinox.ide.ui.Js
+import tinox.ide.ui.Utf16
+
+class AssistanceTest
+{
+    fnc start() -> IdeApp
+    {
+        const app: IdeApp = DiagnosticsHarness::start()
+        for name in ["editor.enableCompletion", "editor.disableCompletion", "editor.setCompletions", "editor.showAssistance"] { MockBridge::onCommand(name, "", "") }
+        return app
+    }
+
+    fnc enable(app: IdeApp) -> Nothing
+    {
+        app.language.assistance.clear(app.language)
+        app.language.client.capabilities = Json::parse("{\"completionProvider\":{\"triggerCharacters\":[\".\",\":\"]},\"hoverProvider\":true,\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]}}")
+        app.language.poll()
+        DiagnosticsHarness::drain()
+    }
+
+    fnc event(app: IdeApp, file: OpenFile, type: String, character: Int64, extra: String) -> Nothing
+    {
+        app.events.handle("{\"type\":" + Js::str(type) + ",\"target\":" + file.views[0].id().toString() + ",\"position\":{\"line\":0,\"character\":" + character.toString() + "}" + extra + "}")
+    }
+
+    fnc reply(app: IdeApp, result: String) -> Nothing
+    {
+        const id: Int64 = app.language.assistance.pending[0].future.id
+        app.language.client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + id.toString() + ",\"result\":" + result + "}")
+        app.language.poll()
+    }
+
+    @Test("completion is asynchronous, forwards CompletionList edits/snippets and handles null results")
+    fn testCompletion() -> Bool
+    {
+        const app: IdeApp = AssistanceTest::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Main.tnx", "value.")
+        const file: OpenFile = DiagnosticsHarness::open(app, path, "value.")
+        AssistanceTest::enable(app)
+        AssistanceTest::event(app, file, "editor.completionRequested", 6, ",\"req\":17")
+        const asynchronous: Bool = app.language.assistance.pending.len() == 1 && DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.setCompletions") == ""
+        AssistanceTest::reply(app, "{\"isIncomplete\":false,\"items\":[{\"label\":\"method\",\"kind\":2,\"insertText\":\"method(${1:value})$0\",\"insertTextFormat\":2,\"additionalTextEdits\":[],\"documentation\":{\"kind\":\"markdown\",\"value\":\"**docs**\"}}]}")
+        const command: String = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.setCompletions")
+        AssistanceTest::event(app, file, "editor.completionRequested", 6, ",\"req\":18")
+        AssistanceTest::reply(app, "null")
+        const empty: String = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.setCompletions")
+        app.language.shutdown()
+        TempProject::remove(root)
+        return asynchronous && command.contains("\"req\":17") && command.contains("insertTextFormat") && command.contains("markdown") && empty.contains("\"items\":[]") && app.events.failureCount() == 0
+    }
+
+    @Test("cursor movement and focus loss cancel requests, late replies cannot produce UI updates")
+    fn testCancel() -> Bool
+    {
+        const app: IdeApp = AssistanceTest::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Main.tnx", "value.")
+        const file: OpenFile = DiagnosticsHarness::open(app, path, "value.")
+        AssistanceTest::enable(app)
+        AssistanceTest::event(app, file, "editor.completionRequested", 6, ",\"req\":1")
+        const future = app.language.assistance.pending[0].future
+        AssistanceTest::event(app, file, "editor.cursorMoved", 0, "")
+        const cancelled: Bool = future.done && future.code == -32800 && app.language.assistance.pending.len() == 0
+        app.language.client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + future.id.toString() + ",\"result\":[{\"label\":\"late\"}]}")
+        AssistanceTest::event(app, file, "editor.hoverRequested", 2, ",\"req\":2")
+        const hover = app.language.assistance.pending[0].future
+        AssistanceTest::event(app, file, "editor.focusChanged", 2, ",\"focused\":false")
+        app.language.poll()
+        const commands: List<String> = DiagnosticsHarness::drain()
+        app.language.shutdown()
+        TempProject::remove(root)
+        return cancelled && hover.code == -32800 && DiagnosticsHarness::last(commands, "editor.setCompletions") == "" && DiagnosticsHarness::last(commands, "editor.showAssistance") == "" && app.events.failureCount() == 0
+    }
+
+    @Test("hover and signature help carry structured content and signature help refreshes the active parameter")
+    fn testHoverAndSignature() -> Bool
+    {
+        const app: IdeApp = AssistanceTest::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Main.tnx", "call(a,")
+        const file: OpenFile = DiagnosticsHarness::open(app, path, "call(a,")
+        AssistanceTest::enable(app)
+        AssistanceTest::event(app, file, "editor.hoverRequested", 1, ",\"req\":1")
+        AssistanceTest::reply(app, "{\"contents\":{\"kind\":\"markdown\",\"value\":\"**call**\"}}")
+        const hover: String = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.showAssistance")
+        AssistanceTest::event(app, file, "editor.cursorMoved", 5, "")
+        const signature: Bool = app.language.assistance.pending.len() == 1 && app.language.assistance.pending[0].kind == "signatureHelp"
+        AssistanceTest::reply(app, "{\"signatures\":[{\"label\":\"call(a, b)\",\"parameters\":[{\"label\":[5,6]},{\"label\":[8,9]}]}],\"activeParameter\":0}")
+        const popup: String = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.showAssistance")
+        AssistanceTest::event(app, file, "editor.cursorMoved", 7, "")
+        const refresh: Bool = app.language.assistance.pending.len() == 1
+        AssistanceTest::reply(app, "null")
+        const closed: Bool = !app.language.assistance.signatures.contains(file.views[0].id().toString())
+        app.language.shutdown()
+        TempProject::remove(root)
+        return signature && refresh && closed && hover.contains("markdown") && popup.contains("activeParameter") && app.events.failureCount() == 0
+    }
+
+    @Test("closed and changed buffers discard requests; unsupported servers receive none")
+    fn testLifecycle() -> Bool
+    {
+        const app: IdeApp = AssistanceTest::start()
+        const root: String = TempProject::create()
+        const path: String = TempProject::file(root, "Main.tnx", "abc")
+        const file: OpenFile = DiagnosticsHarness::open(app, path, "abc")
+        AssistanceTest::event(app, file, "editor.hoverRequested", 1, "")
+        const unsupported: Bool = app.language.assistance.pending.len() == 0
+        AssistanceTest::enable(app)
+        AssistanceTest::event(app, file, "editor.hoverRequested", 1, "")
+        const future = app.language.assistance.pending[0].future
+        app.events.handle("{\"type\":\"editor.changed\",\"target\":" + file.doc.id().toString() + ",\"version\":1,\"origin\":\"user\",\"changes\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"text\":\"x\"}]}")
+        const changed: Bool = future.code == -32800
+        AssistanceTest::event(app, file, "editor.hoverRequested", 1, "")
+        const closing = app.language.assistance.pending[0].future
+        app.documents.discard(file)
+        const closed: Bool = closing.code == -32800 && app.language.assistance.pending.len() == 0
+        app.language.shutdown()
+        TempProject::remove(root)
+        return unsupported && changed && closed && app.events.failureCount() == 0
+    }
+}

@@ -27,6 +27,8 @@ namespace tinox.ide.ui
         var provider: CompletionProvider
         /** Whether enableCompletion() was called. */
         var hasProvider: Bool
+        /** Whether completion answers arrive asynchronously through a service. */
+        var asynchronousCompletion: Bool
         /** Called when the cursor moves. */
         var cursorHandler: fnc(Position) -> Nothing
         /** Called when the selection changes. */
@@ -45,6 +47,7 @@ namespace tinox.ide.ui
                 viewId: reply.getField("id").getInt(),
                 provider: NoCompletions {},
                 hasProvider: false,
+                asynchronousCompletion: false,
                 cursorHandler: (position: Position) => Action::ignore(),
                 selectionHandler: (ev: Event) => Action::ignore(),
                 focusHandler: (focused: Bool) => Action::ignore(),
@@ -77,7 +80,7 @@ namespace tinox.ide.ui
             }
             else if (ev.type == "editor.completionRequested")
             {
-                this.answerCompletion(ev)
+                if (!this.asynchronousCompletion) { this.answerCompletion(ev) }
             }
             else if (ev.type == "editor.hoverRequested")
             {
@@ -213,14 +216,23 @@ namespace tinox.ide.ui
          */
         fn enableCompletion(provider: CompletionProvider, triggers: List<String>, minWordLength: Int64) -> Nothing
         {
+            this.asynchronousCompletion = false
             this.provider = provider
             this.hasProvider = true
+            Bridge::query(Command::named("editor.enableCompletion").target(this.viewId).raw("triggers", Js::strings(triggers)).int("minWordLength", minWordLength).build())
+        }
+
+        /** Enables completion answered later with editor.setCompletions by a nonblocking service. */
+        fn enableAsyncCompletion(triggers: List<String>, minWordLength: Int64) -> Nothing
+        {
+            this.asynchronousCompletion = true
             Bridge::query(Command::named("editor.enableCompletion").target(this.viewId).raw("triggers", Js::strings(triggers)).int("minWordLength", minWordLength).build())
         }
 
         /** Turns completion off. */
         fn disableCompletion() -> Nothing
         {
+            this.asynchronousCompletion = false
             this.hasProvider = false
             Bridge::query(Command::named("editor.disableCompletion").target(this.viewId).build())
         }

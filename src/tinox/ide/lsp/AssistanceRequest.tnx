@@ -1,0 +1,25 @@
+module tinox.ide.lsp
+
+import tinox.ide.ui.Position
+
+namespace tinox.ide.lsp
+{
+    /** A language request pinned to a view and a synchronized buffer version. */
+    class AssistanceRequest
+    {
+        /** LSP method suffix: completion, hover or signatureHelp. */
+        var kind: String
+        /** Originating view. */
+        var view: Int64
+        /** Completion model request number. */
+        var number: Int64
+        /** Document URI. */
+        var uri: String
+        /** Synchronized version at invocation. */
+        var version: Int64
+        /** Position at invocation. */
+        var position: Position
+        /** Nonblocking RPC result. */
+        var future: RpcFuture
+    }
+}

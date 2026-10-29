@@ -113,3 +113,38 @@ blocked by an unread stdin pipe. It also initializes, synchronizes, requests sym
 and shuts down the real `tinox-lsp`. Set `TINOX_LSP` to its executable, put it on
 PATH, or build it at `../tinox/target/release/tinox-lsp`; absence fails this integration
 test rather than silently skipping it. Python 3 is needed for the scripted peer.
+
+## Editing assistance (#26)
+
+`LanguageService.assistance` configures every Tinox editor view, including new
+splits, from the server's completion trigger characters. KTextEditor filters the
+returned items as typing continues; incomplete completion lists request another
+batch. Ctrl+Space uses the same asynchronous path. `EditorView.enableAsyncCompletion`
+lets a service answer `editor.completionRequested` later without invoking a
+synchronous `CompletionProvider` or sending a premature empty answer.
+
+`LanguageAssistance` keeps at most one completion, hover and signature request per
+view, with a three-second timeout. Cursor movement, focus loss, edits, close and
+server retirement cancel obsolete futures. Results also require a live view and
+the synchronized document version; the bridge independently rejects completions
+after native cursor/text changes and stale hover/signature presentations before
+queued events have reached the logic task.
+
+Completion accepts arrays, CompletionList and null. The bridge maps LSP kind
+numbers to icons, sorts by sortText, shows Markdown documentation in an expandable
+completion detail pane and applies textEdit plus additionalTextEdits in one undo
+transaction. LSP tab stops and placeholder defaults become KTextEditor editable
+template fields, with `$0` marking the final cursor position.
+
+Hover accepts Markdown/plaintext MarkupContent, legacy MarkedString and arrays.
+Qt converts Markdown with embedded HTML disabled, and escapes plaintext/code.
+Signature help starts at the negotiated trigger characters and refreshes while a
+call is active. Its popup emphasizes the active parameter, accepting either
+UTF-16 label offsets or string labels and signature-level activeParameter overrides.
+
+`AssistanceTest.tnx` covers nonblocking dispatch, completion result shapes,
+cancellation, late replies, hover/signature delivery and document lifecycle.
+The bridge editor tests cover rich text, active parameter highlighting, native
+freshness checks and snippet/import insertion with one-step undo. The offscreen
+IDE smoke test also requests member completion from the real `tinox-lsp` and
+checks that the type's method reaches the native completion model.

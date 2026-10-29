@@ -47,20 +47,52 @@ class DocState : public QObject
 public:
     DocState(Bridge &bridge, Document *doc, int64_t id) : QObject(doc), m_bridge(bridge), m_doc(doc), m_id(id)
     {
+        for (int line = 0; line < doc->lines(); ++line) {
+            m_lineLengths.append(doc->lineLength(line));
+        }
         // One notification per editing transaction, carrying every change in order.
         // Each change's range refers to the text AFTER the previous one (LSP didChange).
         connect(doc, &Document::editingStarted, this, [this] { m_changes = QJsonArray(); });
         connect(doc, &Document::textInserted, this, [this](Document *, Cursor position, const QString &text) {
+            if (m_silent) {
+                return;
+            }
+            m_lineLengths[position.line()] += text.size();
             QJsonObject c;
             c.insert(QStringLiteral("range"), toJson(Range(position, position)));
             c.insert(QStringLiteral("text"), text);
             m_changes.append(c);
         });
         connect(doc, &Document::textRemoved, this, [this](Document *, Range range, const QString &) {
+            if (m_silent) {
+                return;
+            }
+            m_lineLengths[range.start().line()] -= range.columnWidth();
             QJsonObject c;
             c.insert(QStringLiteral("range"), toJson(range));
             c.insert(QStringLiteral("text"), QString());
             m_changes.append(c);
+        });
+        // KTextEditor reports newline edits separately from textInserted/textRemoved.
+        connect(doc, &Document::lineWrapped, this, [this](Document *, Cursor position) {
+            if (m_silent) {
+                return;
+            }
+            const int tail = m_lineLengths[position.line()] - position.column();
+            m_lineLengths[position.line()] = position.column();
+            m_lineLengths.insert(position.line() + 1, tail);
+            m_changes.append(
+                QJsonObject{{QStringLiteral("range"), toJson(Range(position, position))}, {QStringLiteral("text"), QStringLiteral("\n")}});
+        });
+        connect(doc, &Document::lineUnwrapped, this, [this](Document *, int line) {
+            if (m_silent) {
+                return;
+            }
+            const int column = m_lineLengths[line - 1];
+            m_lineLengths[line - 1] += m_lineLengths[line];
+            m_lineLengths.removeAt(line);
+            m_changes.append(
+                QJsonObject{{QStringLiteral("range"), toJson(Range(line - 1, column, line, 0))}, {QStringLiteral("text"), QString()}});
         });
         connect(doc, &Document::editingFinished, this, [this] {
             if (m_changes.isEmpty() || m_silent) {
@@ -115,7 +147,16 @@ public:
     Diagnostics &diagnostics() { return *m_diagnostics; }
 
     /// Initial content (a new document's text) is not a change: no event, no version.
-    void setSilent(bool silent) { m_silent = silent; }
+    void setSilent(bool silent)
+    {
+        m_silent = silent;
+        if (!silent) {
+            m_lineLengths.clear();
+            for (int line = 0; line < m_doc->lines(); ++line) {
+                m_lineLengths.append(m_doc->lineLength(line));
+            }
+        }
+    }
 
     /// The text was replaced wholesale from a file: one event, and a new version.
     void reloaded()
@@ -142,6 +183,7 @@ private:
     int m_apiDepth = 0;
     bool m_silent = false;
     QJsonArray m_changes;
+    QList<int> m_lineLengths;
     Diagnostics *m_diagnostics = nullptr;
 };
 
@@ -235,7 +277,10 @@ Reply openDocument(Bridge &b, const QJsonObject &cmd)
         b.release(id);
         return Reply::failure(TKDE_E_INVALID_ARG, QStringLiteral("unknown encoding: %1").arg(encoding));
     }
-    if (!doc->openUrl(u) || doc->openingError()) {
+    DocState::of(doc)->setSilent(true);
+    const bool opened = doc->openUrl(u);
+    DocState::of(doc)->setSilent(false);
+    if (!opened || doc->openingError()) {
         b.release(id);
         return Reply::failure(TKDE_E_FAILED, QStringLiteral("cannot open %1 (the file could not be read or decoded)").arg(u.toString()));
     }

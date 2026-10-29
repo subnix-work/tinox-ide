@@ -5,6 +5,7 @@
 
 #include <KTextEditor/View>
 
+#include <QJsonValue>
 #include <cstdint>
 
 namespace tkde
@@ -12,6 +13,11 @@ namespace tkde
 class Bridge;
 namespace editor
 {
+/// Renders LSP MarkupContent, MarkedString or arrays as Qt rich text.
+QString assistanceMarkup(const QJsonValue &value);
+/// Renders signature help with its active parameter emphasized.
+QString signatureMarkup(const QJsonObject &result);
+
 /// Called for every new view: wires its events and the hover provider.
 void installViewFeatures(Bridge &bridge, KTextEditor::View *view, int64_t id);
 /// editor.enableCompletion, editor.setCompletions, editor.showTooltip, editor.completionState.
