@@ -1,0 +1,178 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every job runs in an Arch Linux container: it ships Qt 6 and KDE Frameworks 6 at the versions the IDE is
+# developed against (Ubuntu 24.04 has neither). The pinned Tinox compiler is built once and cached
+# (.github/tinox-ref, .github/actions/setup).
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    timeout-minutes: 30
+    steps:
+      - run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Formatting, doc comments, scripts
+        run: |
+          scripts/check-format.sh
+          python3 scripts/check-docs.py
+          scripts/test-check-env.sh
+          scripts/test-syntax.sh
+
+  bridge:
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    timeout-minutes: 40
+    steps:
+      - run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Build the bridge and run its tests offscreen
+        run: dbus-run-session -- make test-bridge
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-libs
+          path: bridge/build/bin/libtinoxkde*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: bridge-test-log
+          path: bridge/build/Testing
+          if-no-files-found: ignore
+
+  tinox-tests:
+    needs: bridge
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bridge-libs
+          path: bridge/build/bin
+      - uses: ./.github/actions/setup
+      - name: Tinox tests against the bridge mock (one file at a time)
+        run: dbus-run-session -- scripts/ci-tinox-tests.sh ${{ matrix.shard }} 6
+
+  e2e:
+    needs: bridge
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    timeout-minutes: 45
+    steps:
+      - run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bridge-libs
+          path: bridge/build/bin
+      - uses: ./.github/actions/setup
+      - name: The real IDE on Qt's offscreen platform
+        run: |
+          dbus-run-session -- bash -ec '
+            scripts/test-example.sh
+            scripts/test-diagnostics.sh
+            scripts/test-navigation.sh
+            scripts/test-editing.sh
+            scripts/test-semantics.sh
+            scripts/test-debug.sh
+            scripts/test-accessibility.sh
+            scripts/test-discovery.sh'
+
+  ide:
+    needs: bridge
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    timeout-minutes: 30
+    steps:
+      - run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bridge-libs
+          path: bridge/build/bin
+      - uses: ./.github/actions/setup
+      - name: Build the IDE and pack it
+        run: |
+          mkdir -p build dist
+          "$TINOX" build -o build/tinox-ide
+          cp -a build/tinox-ide bridge/build/bin/libtinoxkde* dist/
+          tar -C dist -czf tinox-ide-linux-x86_64.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tinox-ide-linux-x86_64
+          path: tinox-ide-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  # One job to require in the branch rules: it fails when any job above did not succeed.
+  ci-ok:
+    if: always()
+    needs: [lint, bridge, tinox-tests, e2e, ide]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: All jobs succeeded
+        run: |
+          echo '${{ toJSON(needs) }}'
+          [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "false" ]
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ci-ok]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tinox-ide-linux-x86_64
+      - name: Publish the tarball (the Flatpak bundle comes from packaging.yml)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" tinox-ide-linux-x86_64.tar.gz --repo "$GITHUB_REPOSITORY" --generate-notes
+
+  # Nightly: sanitizers and the fuzzer. Not part of the PR gate.
+  nightly:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:latest
+      options: --privileged
+    timeout-minutes: 90
+    steps:
+      - run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: AddressSanitizer, UBSanitizer and LeakSanitizer
+        run: dbus-run-session -- make test-asan
+      - name: ThreadSanitizer
+        run: |
+          sysctl -w vm.mmap_rnd_bits=28 || true
+          dbus-run-session -- make test-tsan
+      - name: Fuzz the command parser
+        run: dbus-run-session -- make fuzz FUZZ_SECONDS=600
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: build/fuzz-artifacts
+          if-no-files-found: ignore

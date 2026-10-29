@@ -1,0 +1,50 @@
+name: Set up the Tinox IDE build
+description: Installs Qt 6 / KDE Frameworks and the build tools, and builds the pinned Tinox toolchain (cached).
+runs:
+  using: composite
+  steps:
+    - name: Install packages
+      shell: bash
+      run: |
+        pacman -Syu --noconfirm --needed git base-devel rust clang llvm lld cmake ninja ccache python gdb dbus \
+          qt6-base qt6-declarative extra-cmake-modules kconfig kcoreaddons ki18n kcrash kdbusaddons kxmlgui \
+          ktexteditor syntax-highlighting kio knotifications kparts breeze gc pkgconf
+    - name: Pinned Tinox ref
+      id: ref
+      shell: bash
+      run: echo "sha=$(tr -d '[:space:]' < .github/tinox-ref)" >> "$GITHUB_OUTPUT"
+    - uses: actions/checkout@v4
+      with:
+        repository: subnix-work/tinox
+        ref: ${{ steps.ref.outputs.sha }}
+        path: tinox
+    - name: Cache the Tinox build
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          tinox/target
+          ~/.tinox
+        key: tinox-${{ steps.ref.outputs.sha }}-${{ hashFiles('tinox/Cargo.lock') }}
+        restore-keys: |
+          tinox-${{ steps.ref.outputs.sha }}-
+          tinox-
+    - name: Cache compiler objects of the bridge
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-${{ github.job }}-${{ hashFiles('bridge/**') }}
+        restore-keys: ccache-${{ github.job }}-
+    - name: Build the Tinox toolchain
+      shell: bash
+      run: |
+        git config --global --add safe.directory '*'
+        (cd tinox && cargo build --release -p tinox -p tinox-lsp)
+        echo "$GITHUB_WORKSPACE/tinox/target/release" >> "$GITHUB_PATH"
+        echo "TINOX=$GITHUB_WORKSPACE/tinox/target/release/tinox" >> "$GITHUB_ENV"
+        echo "TINOX_LSP=$GITHUB_WORKSPACE/tinox/target/release/tinox-lsp" >> "$GITHUB_ENV"
+        echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+        echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+        echo "QT_QPA_PLATFORM=offscreen" >> "$GITHUB_ENV"
+        echo "TKDE_NO_KCRASH=1" >> "$GITHUB_ENV"
