@@ -1,0 +1,86 @@
+import DiagnosticsHarness
+import MockBridge
+import TempProject
+import tinox.core.json
+import tinox.ide.lsp.SemanticRequest
+import tinox.ide.IdeApp
+import tinox.ide.ui.Utf16
+
+class SemanticHighlightingTest
+{
+    fnc enable(app: IdeApp) -> Nothing
+    {
+        MockBridge::onCommand("editor.setSemanticTokens", "{\"count\":1}", "")
+        app.language.client.capabilities = Json::parse("{\"semanticTokensProvider\":{\"full\":{\"delta\":true},\"legend\":{\"tokenTypes\":[\"class\"]}}}")
+    }
+
+    @Test("semantic snapshots debounce, use the server legend and apply validated colour preferences")
+    fn testSnapshots() -> Bool
+    {
+        const app = DiagnosticsHarness::start()
+        const root = TempProject::create()
+        const path = TempProject::file(root, "Main.tnx", "abc")
+        DiagnosticsHarness::open(app, path, "abc")
+        SemanticHighlightingTest::enable(app)
+        const uri = Utf16::uri(path)
+        const item: SemanticRequest = app.language.semantics.pending.get(uri)
+        app.language.semantics.poll(app.language)
+        const delayed: Bool = !item.sent
+        app.language.semantics.schedule(app.language, uri)
+        const latest: SemanticRequest = app.language.semantics.pending.get(uri)
+        latest.due = 0
+        app.language.semantics.poll(app.language)
+        const sent: Bool = latest.sent && app.language.semantics.pending.keys().len() == 1
+        const invalid = app.preferences.set("SemanticColors.class", "red")
+        app.preferences.set("SemanticColors.class", "#123456")
+        const cancelled: Bool = latest.future.code == -32800
+        const colored: SemanticRequest = app.language.semantics.pending.get(uri)
+        colored.due = 0
+        app.language.semantics.poll(app.language)
+        app.language.client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + colored.future.id.toString() + ",\"result\":{\"data\":[0,0,3,0,0]}}")
+        DiagnosticsHarness::drain()
+        app.language.semantics.poll(app.language)
+        const command = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.setSemanticTokens")
+        app.language.shutdown()
+        TempProject::remove(root)
+        return delayed && sent && invalid != "" && cancelled && command.contains("\"legend\":[\"class\"]") && command.contains("#123456") && command.contains("\"version\":0") && app.language.semantics.pending.keys().len() == 0
+    }
+
+    @Test("unsupported servers, stale replies, request failures and stopped services do not publish colours")
+    fn testLifecycle() -> Bool
+    {
+        const app = DiagnosticsHarness::start()
+        const root = TempProject::create()
+        const path = TempProject::file(root, "Main.tnx", "abc")
+        DiagnosticsHarness::open(app, path, "abc")
+        const uri = Utf16::uri(path)
+        app.language.semantics.poll(app.language)
+        const unsupported: Bool = app.language.semantics.pending.keys().len() == 0
+        SemanticHighlightingTest::enable(app)
+        app.language.semantics.schedule(app.language, uri)
+        const stale: SemanticRequest = app.language.semantics.pending.get(uri)
+        stale.due = 0
+        app.language.semantics.poll(app.language)
+        MockBridge::onCommand("editor.info", "{\"version\":1}", "")
+        app.language.client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + stale.future.id.toString() + ",\"result\":{\"data\":[0,0,3,0,0]}}")
+        DiagnosticsHarness::drain()
+        app.language.semantics.poll(app.language)
+        const rejected: Bool = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.setSemanticTokens") == ""
+        MockBridge::onCommand("editor.info", "{\"version\":0}", "")
+        app.language.semantics.schedule(app.language, uri)
+        const failed: SemanticRequest = app.language.semantics.pending.get(uri)
+        failed.due = 0
+        app.language.semantics.poll(app.language)
+        failed.future.resolve(Json::parse("null"), -32603, "failed")
+        DiagnosticsHarness::drain()
+        app.language.semantics.poll(app.language)
+        const quiet: Bool = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.setSemanticTokens") == ""
+        app.language.semantics.schedule(app.language, uri)
+        app.language.shutdown()
+        DiagnosticsHarness::drain()
+        app.language.poll()
+        const stopped: Bool = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.setSemanticTokens") == ""
+        TempProject::remove(root)
+        return unsupported && rejected && quiet && stopped && app.language.semantics.pending.keys().len() == 0
+    }
+}

@@ -1,0 +1,91 @@
+import tinox.core.json
+import tinox.core.process.Process
+import tinox.ide.IdeApp
+import tinox.ide.kde.App
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.TextEdit
+import tinox.ide.ui.Position
+
+class Main
+{
+    fnc main() -> Int32
+    {
+        return App::run("tinoxide", "Tinox Semantic Smoke", (events: EventLoop) => Main::logic(events))
+    }
+
+    fnc logic(events: EventLoop) -> Int32
+    {
+        const results: List<Bool> = []
+        events.onType("core.ready", (event: Event) => Main::check(events, results))
+        events.run()
+        if (results.len() != 1 || !results[0]) { return 1 }
+        return 0
+    }
+
+    fnc expect(ok: Bool, message: String) -> Nothing
+    {
+        if (!ok) { throw message }
+    }
+
+    fnc wait(app: IdeApp, reports: Int64) -> Nothing
+    {
+        const start = Bridge::nowNs()
+        while (app.language.semantics.reports <= reports && (Bridge::nowNs() - start) / 1000000 < 15000) { app.events.pump(10) }
+        Main::expect(app.language.semantics.reports > reports, "semantic tokens timed out")
+    }
+
+    fnc items(id: Int64) -> List<JsonValue>
+    {
+        return Bridge::query(Command::named("editor.debug.semanticTokens").target(id).build()).getField("items").asList()
+    }
+
+    fnc check(events: EventLoop, results: List<Bool>) -> Nothing
+    {
+        const app = IdeApp::start(events)
+        try
+        {
+            const root = Process::env("TINOX_SEMANTICS_ROOT")
+            app.store.set("workspace.path", root)
+            const file = app.documents.open(root + "/Main.tnx")
+            file.views[0].setTheme("Breeze Light")
+            app.language.start()
+            Main::wait(app, 0)
+            var method: String = ""
+            var field: String = ""
+            var typeColor: String = ""
+            for token in Main::items(file.doc.id())
+            {
+                const kind = token.getField("type").getString()
+                if (kind == "class") { typeColor = token.getField("color").getString() }
+                if (kind == "method") { method = token.getField("color").getString() }
+                if (kind == "property") { field = token.getField("color").getString() }
+            }
+            Main::expect(method != "" && field != "" && typeColor != "", "server did not classify methods, fields and types")
+            Main::expect(method != field && field != typeColor && method != typeColor, "default semantic colours are not distinct")
+            const count = Main::items(file.doc.id()).len()
+            const reports = app.language.semantics.reports
+            file.doc.edit([TextEdit::insert(Position::create(0, 0), "\n")])
+            const moving = Main::items(file.doc.id())
+            Main::expect(moving.len() == count && moving[0].getField("range").getField("start").getField("line").getInt() == 1, "typing cleared semantic colours instead of moving them")
+            Main::wait(app, reports)
+            const before = app.language.semantics.reports
+            Main::expect(app.preferences.set("SemanticColors.method", "#123456") == "", "colour preference rejected")
+            Main::wait(app, before)
+            for overridden in Main::items(file.doc.id())
+            {
+                if (overridden.getField("type").getString() == "method") { Main::expect(overridden.getField("color").getString() == "#123456", "method override was not applied") }
+            }
+            app.language.shutdown()
+            Main::expect(Main::items(file.doc.id()).len() == 0, "shutdown left semantic ranges alive")
+            Main::expect(events.failureCount() == 0, "event handler failed")
+            println("semantic highlighting smoke ok")
+            results.push(true)
+        }
+        catch (e: String) { println("semantic highlighting smoke failed: " + e)
+            results.push(false) }
+        app.quit()
+    }
+}

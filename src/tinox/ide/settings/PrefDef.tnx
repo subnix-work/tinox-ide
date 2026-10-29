@@ -15,7 +15,7 @@ namespace tinox.ide.settings
         var group: String
         /** The key in the config file. */
         var key: String
-        /** `bool`, `int`, `text`, `path` or `choice`. */
+        /** `bool`, `int`, `text`, `color`, `path` or `choice`. */
         var kind: String
         /** The label in the dialog. */
         var label: String

@@ -53,11 +53,13 @@ namespace tinox.ide.lsp
         var assistance: LanguageAssistance
         /** Number of accepted diagnostic batches, for verification and latency measurements. */
         var reports: Int64
+        /** Debounced semantic token overlay. */
+        var semantics: SemanticHighlighting
 
         /** Installs the diagnostics presenter, commands and editor/workspace subscriptions. */
         fnc create(window: MainWindow, documents: Documents, preferences: Preferences) -> LanguageService
         {
-            const service: LanguageService = LanguageService { window: window, documents: documents, preferences: preferences, problems: Problems::create(window, documents), client: LspClient::create((json: String) => LspClient::ignore()), factory: (argv: List<String>, directory: String, uri: String) => LspClient::launch(argv, directory, uri), enabled: false, connected: false, unavailable: false, polling: false, paths: Map::new(), assistance: LanguageAssistance::create(documents), reports: 0 }
+            const service: LanguageService = LanguageService { window: window, documents: documents, preferences: preferences, problems: Problems::create(window, documents), client: LspClient::create((json: String) => LspClient::ignore()), factory: (argv: List<String>, directory: String, uri: String) => LspClient::launch(argv, directory, uri), enabled: false, connected: false, unavailable: false, polling: false, paths: Map::new(), assistance: LanguageAssistance::create(documents), reports: 0, semantics: SemanticHighlighting::create() }
             window.registry.register(IdeCommand::create("lsp.restart", "Restart &Language Server").icon("view-refresh").category("Tools").run((c: CommandContext) => service.restart()))
             window.addSettingsMenu(["options_configure", "lsp.restart"])
             window.bus.subscribe("editor.opened", (m: BusMessage) => service.opened(m.str("path")))
@@ -95,6 +97,7 @@ namespace tinox.ide.lsp
             {
                 this.client.poll()
                 this.assistance.poll(this)
+                this.semantics.poll(this)
             }
         }
 
@@ -149,6 +152,7 @@ namespace tinox.ide.lsp
             const snapshot: JsonValue = file.doc.snapshot()
             this.client.open(uri, "tinox", snapshot.getField("text").getString(), snapshot.getField("version").getInt())
             this.paths.set(uri, path)
+            this.semantics.schedule(this, uri)
             this.assistance.wire(this)
         }
 
@@ -170,6 +174,7 @@ namespace tinox.ide.lsp
                 changes.push(TextEdit::replace(Range::parse(item.getField("range")), item.getField("newText").getString()))
             }
             this.client.change(uri, version, changes)
+            this.semantics.schedule(this, uri)
             const index: Int64 = this.documents.indexOf(path)
             if (index >= 0)
             {
@@ -186,6 +191,7 @@ namespace tinox.ide.lsp
             const uri: String = Utf16::uri(path)
             this.assistance.cancelPath(this, uri)
             this.assistance.detach(uri)
+            this.semantics.close(this, uri)
             this.problems.clear(path)
             if (this.connected && this.paths.contains(uri)) { this.client.close(uri) }
             this.paths.remove(uri)
@@ -227,8 +233,10 @@ namespace tinox.ide.lsp
             if (state == "backoff" || state == "initializing" || state == "stopping" || state == "closed")
             {
                 this.assistance.clear(this)
+                this.semantics.clear(this)
                 this.problems.clearAll()
             }
+            if (state == "ready") { this.semantics.refresh(this) }
             this.window.store.set("lsp.state", state)
         }
 
@@ -236,6 +244,7 @@ namespace tinox.ide.lsp
         fn retire() -> Nothing
         {
             this.assistance.clear(this)
+            this.semantics.clear(this)
             if (this.connected)
             {
                 this.client.notification = (method: String, params: JsonValue) => LspClient::ignore()
@@ -259,6 +268,7 @@ namespace tinox.ide.lsp
         /** Applies only language-server preferences to this session. */
         fn settingChanged(id: String) -> Nothing
         {
+            if (id.startsWith("SemanticColors.")) { this.semantics.refresh(this) }
             if (id == "Tools.lspPath" || id == "Tools.lspArgs") { this.restart() }
         }
 

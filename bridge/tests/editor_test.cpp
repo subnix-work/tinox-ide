@@ -393,6 +393,49 @@ static void testVersionedDiagnostics()
     tkde_release(doc);
 }
 
+static void testSemanticTokens()
+{
+    const auto doc = newDoc(QStringLiteral("Type method field\n😀value"));
+    const auto view = newView(doc);
+    query(cmd("editor.setTheme", Obj{{"target", double(view)}, {"theme", "Breeze Light"}}));
+    const QJsonArray legend{"class", "method", "property", "variable"};
+    const QJsonArray data{0, 0, 4, 0, 0, 0, 5, 6, 1, 0, 0, 7, 5, 2, 0, 1, 2, 5, 3, 0};
+    auto set = [&](const QJsonArray &tokens, int version = 0, const Obj &colors = Obj{}) {
+        return query(cmd("editor.setSemanticTokens",
+                         Obj{{"target", double(doc)}, {"version", version}, {"legend", legend}, {"data", tokens}, {"colors", colors}}));
+    };
+    auto items = [&] { return query(cmd("editor.debug.semanticTokens", Obj{{"target", double(doc)}}))["items"].toArray(); };
+    EXPECT(set(data)["ok"].toBool());
+    auto first = items();
+    EXPECT_EQ(first.size(), 4);
+    EXPECT(first[0].toObject()["color"] != first[1].toObject()["color"]);
+    EXPECT(first[0].toObject()["color"] != first[2].toObject()["color"]);
+    EXPECT(first[1].toObject()["color"] != first[2].toObject()["color"]);
+    EXPECT(!set(QJsonArray{0, 0, 4, 9, 0})["ok"].toBool());
+    EXPECT(!set(QJsonArray{0, 0, 4, 0})["ok"].toBool());
+    EXPECT(!set(QJsonArray{1, 1, 1, 0, 0})["ok"].toBool()); // inside the emoji
+    EXPECT(!set(QJsonArray{0, 0, 99, 0, 0})["ok"].toBool());
+    EXPECT(!set(data, 1)["ok"].toBool());
+    EXPECT(items() == first); // validation rejects the complete batch atomically
+    EXPECT(set(data, 0, Obj{{"method", "#123456"}})["ok"].toBool());
+    EXPECT(items()[1].toObject()["color"].toString() == QStringLiteral("#123456"));
+    const QJsonValue light = items()[0].toObject()["color"];
+    query(cmd("editor.setTheme", Obj{{"target", double(view)}, {"theme", "Breeze Dark"}}));
+    EXPECT(items()[0].toObject()["color"] != light);
+    EXPECT(set(data)["ok"].toBool());
+    const auto dark = items();
+    EXPECT(dark[0].toObject()["color"] != dark[1].toObject()["color"]);
+    EXPECT(dark[0].toObject()["color"] != dark[2].toObject()["color"]);
+    EXPECT(dark[1].toObject()["color"] != dark[2].toObject()["color"]);
+    EXPECT(set(data, 0, Obj{{"method", "#123456"}})["ok"].toBool());
+    EXPECT(items()[1].toObject()["color"].toString() == QStringLiteral("#123456"));
+    query(cmd("editor.edit", Obj{{"target", double(doc)}, {"edits", QJsonArray{Obj{{"range", range(0, 0, 0, 0)}, {"newText", "\n"}}}}}));
+    EXPECT_EQ(items().size(), 4); // typing retains the overlay
+    EXPECT_EQ(items()[0].toObject()["range"].toObject()["start"].toObject()["line"].toInt(), 1);
+    EXPECT(!set(data)["ok"].toBool());
+    tkde_release(doc); // release active moving ranges before document destruction
+}
+
 static void testDiagnostics()
 {
     int64_t doc = newDoc(QStringLiteral("let a = 1\nlet b = 2\nlet c = 3\nlet d = 4"));
@@ -687,6 +730,7 @@ static void driver(QString dir)
     testExternalModification(dir);
     testHighlightingAndThemes();
     testDiagnostics();
+    testSemanticTokens();
     testVersionedDiagnostics();
     testCompletionAndHover();
     testLspAssistance();
