@@ -6,7 +6,7 @@ runs:
     - name: Install packages
       shell: bash
       run: |
-        pacman -Syu --noconfirm --needed git base-devel rust clang llvm lld cmake ninja ccache python gdb dbus \
+        pacman -Syu --noconfirm --needed git base-devel rust clang llvm lld cmake ninja ccache python gdb dbus ripgrep \
           qt6-base qt6-declarative extra-cmake-modules kconfig kcoreaddons ki18n kcrash kdbusaddons kxmlgui \
           ktexteditor syntax-highlighting kio knotifications kparts breeze gc pkgconf
     - name: Pinned Tinox ref
