@@ -50,7 +50,7 @@ Format Selection and Organize Imports are also available in the Edit menu/palett
 Format-on-save is opt-in. If formatting fails, that save is cancelled and the
 buffer stays open; fix the source or disable the preference to save it as-is.
 
-Use Find in Files from the Go menu or command palette for project-wide text search.
+Use Find in Files from the Search menu or command palette for project-wide text search.
 Review replacement previews before applying them. The exact search and supported
 ignore/regex behaviour are described in [search.md](../search.md).
 
