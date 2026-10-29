@@ -535,39 +535,11 @@ namespace tinox.ide.navigation
         /** Parses both WorkspaceEdit forms; file resource operations are explicitly rejected. */
         fn prepare(value: JsonValue) -> Nothing
         {
-            var edits: Map<String, JsonValue> = value.getField("changes").asTable()
-            var versions: Map<String, Int64> = Map::new()
-            for change in value.getField("documentChanges").asList()
-            {
-                if (!change.getField("kind").isNull()) { throw "Rename resource operations are not supported" }
-                const uri: String = change.getField("textDocument").getField("uri").getString()
-                if (uri == "" || edits.contains(uri)) { throw "Duplicate or missing WorkspaceEdit URI" }
-                edits.set(uri, change.getField("edits"))
-                if (!change.getField("textDocument").getField("version").isNull()) {
-                    if (!change.getField("textDocument").getField("version").isInt()) { throw "WorkspaceEdit version must be an integer or null" }
-                    versions.set(uri, change.getField("textDocument").getField("version").getInt()) }
-            }
-            var preview: List<WorkspaceChange> = []
+            const preview: List<WorkspaceChange> = WorkspaceEdits::parse(this.language.documents, value)
             var locations: List<Location> = []
-            for uri in edits.keys()
+            for change in preview
             {
-                const path: String = Location::path(uri)
-                const file: OpenFile = this.language.documents.open(path)
-                const snapshot: JsonValue = file.doc.snapshot()
-                const version: Int64 = snapshot.getField("version").getInt()
-                if (versions.contains(uri) && versions.get(uri) != version) { throw "Rename result is stale" }
-                var replacements: List<TextEdit> = []
-                if (!edits.get(uri).isArray()) { throw "WorkspaceEdit edits must be an array" }
-                for edit in edits.get(uri).asList()
-                {
-                    const range: Range = Location::span(edit.getField("range"))
-                    if (!edit.getField("newText").isString()) { throw "WorkspaceEdit has no replacement text" }
-                    Utf16::offset(snapshot.getField("text").getString(), range.start)
-                    Utf16::offset(snapshot.getField("text").getString(), range.end)
-                    replacements.push(TextEdit::replace(range, edit.getField("newText").getString()))
-                    locations.push(Location { path: path, range: range, extent: range, name: file.doc.textIn(range) + " → " + edit.getField("newText").getString() })
-                }
-                preview.push(WorkspaceChange { file: file, version: version, text: snapshot.getField("text").getString(), edits: replacements })
+                for edit in change.edits { locations.push(Location { path: change.file.path, range: edit.range, extent: edit.range, name: change.file.doc.textIn(edit.range) + " → " + edit.newText }) }
             }
             this.preview = preview
             this.previewing = preview.len() > 0

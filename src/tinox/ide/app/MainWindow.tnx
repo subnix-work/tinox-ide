@@ -44,6 +44,8 @@ namespace tinox.ide.app
         var editorIndex: fnc(Store) -> Int64
         /** Extra tabs of the bottom panel, each drawn from the store. */
         var bottomPanels: List<fnc(Store) -> Node>
+        /** Commands contributed to the Edit menu. */
+        var editMenu: List<String>
         /** Command ids of the Settings menu. */
         var settingsMenu: List<String>
         /** Command ids of the Go menu. */
@@ -58,7 +60,7 @@ namespace tinox.ide.app
         /** A window drawn from `store`, with menus made of the commands in `registry`. */
         fnc create(events: EventLoop, store: Store, bus: EventBus, registry: CommandRegistry, actions: Actions) -> MainWindow
         {
-            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow", fileMenu: ["file_quit"], viewMenu: ["view.project", "view.bottom"], bottomPanels: [], goMenu: [], searchMenu: [], settingsMenu: [], editorTabs: (s: Store) => MainWindow::welcomeTabs(), editorIndex: (s: Store) => 0 }
+            return MainWindow { events: events, store: store, bus: bus, registry: registry, actions: actions, mount: Mount::create(events), stateGroup: "MainWindow", fileMenu: ["file_quit"], viewMenu: ["view.project", "view.bottom"], bottomPanels: [], goMenu: [], searchMenu: [], settingsMenu: [], editMenu: [], editorTabs: (s: Store) => MainWindow::welcomeTabs(), editorIndex: (s: Store) => 0 }
         }
 
         /** The editor area before any file is open. */
@@ -72,6 +74,12 @@ namespace tinox.ide.app
         {
             this.editorTabs = tabs
             this.editorIndex = index
+        }
+
+        /** Adds editing commands before the menus are mounted. */
+        fn addEditMenu(items: List<String>) -> Nothing
+        {
+            for item in items { this.editMenu.push(item) }
         }
 
         /** Gives the window a Settings menu with these commands. */
@@ -189,12 +197,12 @@ namespace tinox.ide.app
                                 .add(Ui::treeView("problems").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Problems", "dialog-warning"))
                                 .add(Ui::log("output").inTab("Output", "utilities-terminal"))
                                 .addAll(this.panels())))
-                .add(Ui::column("editorColumn").add(Ui::button("breadcrumbs", this.store.get("navigation.breadcrumb")).visible(this.store.get("navigation.breadcrumb") != ""))
-                .add(Ui::tabs("editors")
-                        .bool("tabsClosable", true)
-                        .bool("movable", true)
-                        .currentIndex(this.editorIndex(this.store))
-                        .addAll(this.editorTabs(this.store))))
+                .add(Ui::column("editorColumn").add(Ui::row("editorAssistance").add(Ui::button("breadcrumbs", this.store.get("navigation.breadcrumb")).visible(this.store.get("navigation.breadcrumb") != "")).add(Ui::button("codeActions", "Code Actions").icon("hint").toolTip("Code actions (Alt+Enter)").visible(this.store.getBool("editing.actionsAvailable"))))
+                        .add(Ui::tabs("editors")
+                                .bool("tabsClosable", true)
+                                .bool("movable", true)
+                                .currentIndex(this.editorIndex(this.store))
+                                .addAll(this.editorTabs(this.store))))
                 .add(Ui::statusBar("status").str("message", this.store.get("status.message"))
                         .add(Ui::label("problemCounts", this.store.get("problems.summary")).permanent().visible(this.store.has("problems.summary"))))
         }
@@ -216,10 +224,10 @@ namespace tinox.ide.app
             this.mount.render(this.describe())
         }
 
-        /** The menu bar: File and View, from commands of the registry. */
+        /** The menu bar, assembled from commands registered by the feature modules. */
         fn menus() -> List<Menu>
         {
-            return [Menu::create("&File").id("file").actions(this.fileMenu), Menu::create("&View").id("view").actions(this.viewMenu), Menu::create("&Go").id("go").actions(this.goMenu), Menu::create("&Search").id("search").actions(this.searchMenu), Menu::create("S&ettings").id("settings").actions(this.settingsMenu)]
+            return [Menu::create("&File").id("file").actions(this.fileMenu), Menu::create("&Edit").id("edit").actions(this.editMenu), Menu::create("&View").id("view").actions(this.viewMenu), Menu::create("&Go").id("go").actions(this.goMenu), Menu::create("&Search").id("search").actions(this.searchMenu), Menu::create("S&ettings").id("settings").actions(this.settingsMenu)]
         }
 
         /** Builds and shows the window: first render, menus, state changes, saved layout. Call after the registry is attached. */

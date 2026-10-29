@@ -4,7 +4,7 @@ import tinox.ide.ui.TextEdit
 import tinox.ide.ui.Js
 namespace tinox.ide.navigation
 {
-    /** One version-pinned document in a rename preview, including the original text for undo. */
+    /** One version-pinned workspace document, including the original text for undo. */
     class WorkspaceChange
     {
         /** Open native buffer (closed files are opened before preview). */

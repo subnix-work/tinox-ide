@@ -71,13 +71,15 @@ namespace tinox.ide.editor
         var sessionDirty: Bool
         /** Seconds since the last autosave. */
         var sinceAutosave: Int64
+        /** Asynchronous pre-save barrier; false cancels the write and any pending close. */
+        var beforeSave: fnc(OpenFile, fnc(Bool) -> Nothing) -> Nothing
         /** Ends the ticker task. */
         var control: WatchControl
 
         /** The document module for a window. */
         fnc create(events: EventLoop, bus: EventBus, store: Store, registry: CommandRegistry, dialogs: Dialogs, settings: Settings, logger: Logger, window: MainWindow) -> Documents
         {
-            return Documents { events: events, bus: bus, store: store, registry: registry, dialogs: dialogs, settings: settings, logger: logger, window: window, files: [], active: -1, revision: 0, sessionDirty: false, sinceAutosave: 0, control: WatchControl::create() }
+            return Documents { events: events, bus: bus, store: store, registry: registry, dialogs: dialogs, settings: settings, logger: logger, window: window, files: [], active: -1, revision: 0, sessionDirty: false, sinceAutosave: 0, beforeSave: (file: OpenFile, done: fnc(Bool) -> Nothing) => done(true), control: WatchControl::create() }
         }
 
         // ---------------------------------------------------------------- wiring
@@ -571,8 +573,24 @@ namespace tinox.ide.editor
         {
             if (this.active >= 0)
             {
-                this.saveQuietly(this.files[this.active])
+                this.saveWith(this.files[this.active], (ok: Bool) => this.closed(ok))
             }
+        }
+
+        /** Runs pre-save work without blocking event dispatch, then writes the still-open document. */
+        fn saveWith(file: OpenFile, done: fnc(Bool) -> Nothing) -> Nothing
+        {
+            this.beforeSave(file, (ready: Bool) => this.saveReady(file, ready, done))
+        }
+
+        /** Completes a save only after its barrier succeeds and its original document is still open. */
+        fn saveReady(file: OpenFile, ready: Bool, done: fnc(Bool) -> Nothing) -> Nothing
+        {
+            if (!ready || this.indexOf(file.path) < 0) { done(false)
+                return }
+            if (this.files[this.indexOf(file.path)].doc.id() != file.doc.id()) { done(false)
+                return }
+            done(this.saveQuietly(file))
         }
 
         /** Saves, showing a failure to the user. Returns whether it worked. */
@@ -608,7 +626,7 @@ namespace tinox.ide.editor
             {
                 if (f.modified)
                 {
-                    this.saveQuietly(f)
+                    this.saveWith(f, (ok: Bool) => this.closed(ok))
                 }
             }
         }
@@ -636,6 +654,15 @@ namespace tinox.ide.editor
                 this.dialogs.error("Save As", path + " is open in another tab.")
                 return
             }
+            this.beforeSave(f, (ready: Bool) => this.saveAsReady(f, path, ready))
+        }
+
+        /** Completes Save As after formatting; cancellation cannot retarget or write a closed buffer. */
+        fn saveAsReady(f: OpenFile, path: String, ready: Bool) -> Nothing
+        {
+            if (!ready || this.indexOf(f.path) < 0 || this.files[this.indexOf(f.path)].doc.id() != f.doc.id()) { return }
+            if (this.indexOf(path) >= 0) { this.dialogs.error("Save As", path + " is open in another tab.")
+                return }
             try
             {
                 const oldPath: String = f.path
@@ -695,12 +722,8 @@ namespace tinox.ide.editor
         {
             if (answer == "save")
             {
-                if (this.saveQuietly(f))
-                {
-                    this.discard(f)
-                    then(true)
-                    return
-                }
+                this.saveWith(f, (ok: Bool) => this.closeSaved(f, ok, then))
+                return
             }
             else if (answer == "discard")
             {
@@ -709,6 +732,13 @@ namespace tinox.ide.editor
                 return
             }
             then(false)
+        }
+
+        /** A close with Save waits for formatting and disk success before releasing the buffer. */
+        fn closeSaved(file: OpenFile, ok: Bool, done: fnc(Bool) -> Nothing) -> Nothing
+        {
+            if (ok) { this.discard(file) }
+            done(ok)
         }
 
         /** Closes every file, asking for each one that has unsaved changes; stops at the first Cancel. */
@@ -950,7 +980,7 @@ namespace tinox.ide.editor
                     {
                         if (f.modified && !f.missing)
                         {
-                            this.saveQuietly(f)
+                            this.saveWith(f, (ok: Bool) => this.closed(ok))
                         }
                     }
                 }
@@ -1063,14 +1093,21 @@ namespace tinox.ide.editor
             {
                 then(false)
             }
-            else if (answer == "save" && !this.saveQuietly(f))
+            else if (answer == "save")
             {
-                then(false)
+                this.saveWith(f, (ok: Bool) => this.reviewSaved(ok, next, then))
             }
             else
             {
                 this.reviewFrom(next, then)
             }
         }
+        /** Continues quit review only when asynchronous pre-save work and the write succeeded. */
+        fn reviewSaved(ok: Bool, next: Int64, done: fnc(Bool) -> Nothing) -> Nothing
+        {
+            if (ok) { this.reviewFrom(next, done) }
+            else { done(false) }
+        }
+
     }
 }

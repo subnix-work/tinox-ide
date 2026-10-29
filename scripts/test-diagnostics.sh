@@ -10,7 +10,7 @@ if [ -z "${TINOX_LSP:-}" ] && [ -x "$here/../tinox/target/release/tinox-lsp" ]; 
     export TINOX_LSP="$here/../tinox/target/release/tinox-lsp"
 fi
 printf 'class Main\n{\n}\n' > "$sandbox/Main.tnx"
-env QT_QPA_PLATFORM=offscreen TKDE_DEBUG_COMMANDS=1 TKDE_NO_KCRASH=1 \
+scripts/test-gui-smoke.sh diagnostics env QT_QPA_PLATFORM=offscreen TKDE_DEBUG_COMMANDS=1 TKDE_NO_KCRASH=1 \
     XDG_CONFIG_HOME="$sandbox/config" XDG_DATA_HOME="$sandbox/data" XDG_CACHE_HOME="$sandbox/cache" \
     TINOX_DIAGNOSTICS_FILE="$sandbox/Main.tnx" \
     timeout 120 "${TINOX:-tinox}" run tests/fixtures/diagnostics/Main.tnx

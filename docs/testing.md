@@ -120,3 +120,11 @@ The real navigation smoke (`scripts/test-navigation.sh`, part of `make test`)
 creates two Tinox files in a temporary project and drives the IDE through
 cross-file definition, history, references, outline, workspace symbol palette and
 previewed multi-file rename/apply/undo against the real language server.
+
+`scripts/test-editing.sh` exercises real Qt/tinox-lsp formatting, selection,
+format-on-save idempotence and undo, import quick fixes, organize imports, syntax
+errors and save/close continuation ordering. It also type-checks the fixed source.
+
+The diagnostics, navigation and editing smoke scripts use `test-gui-smoke.sh`
+to reject unexpected stderr, including errors emitted after a fixture has printed
+its success message. Normal application INFO lines remain visible.

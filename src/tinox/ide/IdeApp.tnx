@@ -9,6 +9,7 @@ import tinox.ide.app.Logger
 import tinox.ide.app.MainWindow
 import tinox.ide.app.Store
 import tinox.ide.navigation.NavigationService
+import tinox.ide.editing.EditService
 import tinox.ide.lsp.LanguageService
 import tinox.ide.kde.App
 import tinox.ide.kde.Bridge
@@ -73,6 +74,8 @@ namespace tinox.ide
         var language: LanguageService
         /** LSP navigation and rename. */
         var codeNavigation: NavigationService
+        /** Formatting, save barriers and code actions. */
+        var editing: EditService
         /** The integrated terminal. */
         var terminal: TerminalPanel
         /** The preferences with their defaults and checks. */
@@ -113,7 +116,8 @@ namespace tinox.ide
             const terminal: TerminalPanel = TerminalPanel::install(window)
             const language: LanguageService = LanguageService::create(window, documents, preferences)
             const codeNavigation: NavigationService = NavigationService::create(language)
-            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, language: language, codeNavigation: codeNavigation, terminal: terminal, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
+            const editing: EditService = EditService::create(language, codeNavigation)
+            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, language: language, codeNavigation: codeNavigation, editing: editing, terminal: terminal, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
             app.loadSettings()
             app.registerCommands()
             workspace.registerCommands()
@@ -136,6 +140,7 @@ namespace tinox.ide
             search.bind()
             language.problems.bind()
             codeNavigation.bind()
+            editing.bind()
             logger.info("Tinox IDE started")
             return app
         }
@@ -204,6 +209,7 @@ namespace tinox.ide
             }
             this.running = false
             this.logger.info("Tinox IDE is quitting")
+            this.editing.shutdown()
             this.language.shutdown()
             this.workspace.shutdown()
             this.documents.shutdown()
