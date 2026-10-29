@@ -5,9 +5,11 @@
 
 #include "driver.h"
 
+#include <QColor>
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <cmath>
 
 #include <thread>
 
@@ -91,6 +93,40 @@ static void testGolden()
         }
         tkde_release(int64_t(reply.value(QStringLiteral("id")).toDouble()));
     }
+}
+
+static void testAccessibility()
+{
+    // an icon-only button and a tree have no text a screen reader could read
+    Obj m = mountTree(
+        tree("QWidget", "root", {},
+             QJsonArray{tree("QPushButton", "icon", Obj{{"icon", "list-add"}}), tree("QTreeView", "files"),
+                        tree("QLineEdit", "named", Obj{{"accessibleName", "Search"}}), tree("QPushButton", "go", Obj{{"text", "Go"}})}));
+    EXPECT(m.value(QStringLiteral("ok")).toBool());
+    const int64_t id = int64_t(m.value(QStringLiteral("id")).toDouble());
+    Obj audit = query(cmd("widget.debug.accessibility", Obj{{"target", double(id)}}));
+    EXPECT(audit.value(QStringLiteral("ok")).toBool());
+    QStringList unnamed;
+    for (const QJsonValue &v : audit.value(QStringLiteral("unnamed")).toArray()) {
+        unnamed << v.toObject().value(QStringLiteral("objectName")).toString();
+    }
+    unnamed.sort();
+    EXPECT_EQ(unnamed.join(QLatin1Char(',')), QStringLiteral("files,icon"));
+    EXPECT(audit.value(QStringLiteral("focusable")).toInt() >= 4);
+
+    // naming them fixes the report, with the description kept apart
+    Obj u = query(cmd(
+        "widget.update",
+        Obj{{"target", double(id)},
+            {"tree", tree("QWidget", "root", {},
+                          QJsonArray{tree("QPushButton", "icon",
+                                          Obj{{"icon", "list-add"}, {"accessibleName", "Add"}, {"accessibleDescription", "Adds an item"}}),
+                                     tree("QTreeView", "files", Obj{{"accessibleName", "Files"}}),
+                                     tree("QLineEdit", "named", Obj{{"accessibleName", "Search"}}),
+                                     tree("QPushButton", "go", Obj{{"text", "Go"}})})}}));
+    EXPECT(u.value(QStringLiteral("ok")).toBool());
+    EXPECT(query(cmd("widget.debug.accessibility", Obj{{"target", double(id)}})).value(QStringLiteral("unnamed")).toArray().isEmpty());
+    tkde_release(id);
 }
 
 static void testMinimalUpdate()
@@ -466,7 +502,8 @@ static void testLog()
     EXPECT_EQ(errorCode(query(cmd("widget.append", Obj{{"target", double(id)}}))), 0); // empty text is allowed
     // Stream mode: no implicit newline, colour sequences (also split across writes) are not shown, clear starts over.
     auto stream = [&](const char *text, bool clear = false) {
-        return query(cmd("widget.append", Obj{{"target", double(id)}, {"text", QString::fromLatin1(text)}, {"ansi", true}, {"clear", clear}}));
+        return query(
+            cmd("widget.append", Obj{{"target", double(id)}, {"text", QString::fromLatin1(text)}, {"ansi", true}, {"clear", clear}}));
     };
     EXPECT(stream("\x1b[31mer", true).value(QStringLiteral("ok")).toBool());
     EXPECT(stream("ror\x1b[").value(QStringLiteral("ok")).toBool());
@@ -474,6 +511,34 @@ static void testLog()
     EXPECT_EQ(dumpOf(id).value(QStringLiteral("text")).toString(), QStringLiteral("error: bad\n"));
     EXPECT(stream("x", true).value(QStringLiteral("ok")).toBool());
     EXPECT_EQ(dumpOf(id).value(QStringLiteral("text")).toString(), QStringLiteral("x"));
+    // terminal colours stay readable on a dark and a light background (WCAG text contrast 4.5:1)
+    auto luminance = [](const QColor &c) {
+        auto ch = [](double v) { return v <= 0.03928 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
+        return 0.2126 * ch(c.redF()) + 0.7152 * ch(c.greenF()) + 0.0722 * ch(c.blueF());
+    };
+    for (const char *base : {"#000000", "#1b1e20", "#ffffff"}) {
+        query(cmd("editor.debug.setPalette", Obj{{"base", QString::fromLatin1(base)}}));
+        EXPECT(stream("\x1b[34mblue \x1b[31mred \x1b[33myellow \x1b[30mblack \x1b[0mplain", true).value(QStringLiteral("ok")).toBool());
+        Obj colors = query(cmd("widget.debug.logColors", Obj{{"target", double(id)}}));
+        const QColor bg(colors.value(QStringLiteral("background")).toString());
+        int coloured = 0;
+        for (const QJsonValue &v : colors.value(QStringLiteral("fragments")).toArray()) {
+            const QColor fg(v.toObject().value(QStringLiteral("color")).toString());
+            if (!fg.isValid()) {
+                continue; // the plain text uses the widget's own colour
+            }
+            ++coloured;
+            const double la = luminance(fg), lb = luminance(bg);
+            const double ratio = (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+            if (ratio < 4.5) {
+                std::fprintf(stderr, "low contrast %.2f for %s on %s (%s)\n", ratio, qPrintable(fg.name()), base,
+                             qPrintable(v.toObject().value(QStringLiteral("text")).toString()));
+            }
+            EXPECT(ratio >= 4.5);
+        }
+        EXPECT_EQ(coloured, 4);
+    }
+    query(cmd("editor.debug.setPalette", Obj{{"dark", false}}));
     Obj label = mountTree(tree("QLabel", "l"));
     EXPECT_EQ(errorCode(query(cmd("widget.append", Obj{{"target", label.value(QStringLiteral("id"))}, {"text", "x"}}))), -1);
     tkde_release(id);
@@ -486,6 +551,7 @@ static void driver(QString dir)
     EXPECT(!waitFor("core.ready").isEmpty());
     EXPECT(query(cmd("core.capabilities")).value(QStringLiteral("namespaces")).toArray().contains(QStringLiteral("widget")));
     testGolden();
+    testAccessibility();
     testMinimalUpdate();
     testOrderedContainers();
     testErrorsAreAtomic();

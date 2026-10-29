@@ -140,6 +140,10 @@ colour overrides and shutdown cleanup. Like the other LSP smokes it uses
 a gutter breakpoint in a sample program is hit, the locals are read, a step and continue follow, and
 the session ends with the program. It is skipped when gdb is not installed; see [debugging.md](debugging.md).
 
+`scripts/test-accessibility.sh` asks the bridge for every keyboard-focusable widget without an accessible name
+(main window, quick open, settings) and moves the focus with the Focus commands; `make test-atspi` reads the
+accessibility tree over AT-SPI with a real display. See [accessibility.md](accessibility.md).
+
 ## Build and test tasks
 
 `tests/BuildTest.tnx` runs the real `tinox` tool against throw-away projects (needs `tinox` on

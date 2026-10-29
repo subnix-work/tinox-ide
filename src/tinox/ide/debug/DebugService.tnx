@@ -93,14 +93,12 @@ namespace tinox.ide.debug
         fnc install(window: MainWindow, documents: Documents) -> DebugService
         {
             const service: DebugService = DebugService { window: window, documents: documents, breakpoints: BreakpointSet::create(), factory: (argv: List<String>, directory: String) => DapClient::launch(argv, directory), client: DapClient::create((json: String) => DapClient::ignore()), calls: [], live: false, ending: false, generation: 0, threadId: 0, frames: [], frameIndex: 0, markedPath: "", cursorPath: "", cursorLine: 0, drawn: false, shown: [], references: Map::new(), rowCount: 0, input: "", pending: "", transcript: "", clearConsole: false, variables: Model::create(window.events, ["Name", "Value", "Type"], true), stack: Model::create(window.events, ["Frame", "Location"], false), threads: Model::create(window.events, ["Thread"], false), variablesTab: window.bottomPanels.len() + 2, consoleTab: window.bottomPanels.len() + 5 }
-            window.addBottomPanel((s: Store) => Ui::treeView("debugVariables").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Variables", "debug-run"))
-            window.addBottomPanel((s: Store) => Ui::treeView("debugStack").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Call Stack", "view-list-tree"))
-            window.addBottomPanel((s: Store) => Ui::treeView("debugThreads").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Threads", "view-list-details"))
-            window.addBottomPanel((s: Store) => Ui::column("debugConsole").add(Ui::log("debugOutput")).add(Ui::lineEdit("debugInput", "").str("placeholder", "Evaluate an expression or run a debugger command")).inTab("Debug Console", "utilities-terminal"))
+            window.addBottomPanel((s: Store) => Ui::treeView("debugVariables").accessibleName("Variables").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Variables", "debug-run"))
+            window.addBottomPanel((s: Store) => Ui::treeView("debugStack").accessibleName("Call stack").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Call Stack", "view-list-tree"))
+            window.addBottomPanel((s: Store) => Ui::treeView("debugThreads").accessibleName("Threads").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Threads", "view-list-details"))
+            window.addBottomPanel((s: Store) => Ui::column("debugConsole").add(Ui::log("debugOutput").accessibleName("Debug console output")).add(Ui::lineEdit("debugInput", "").accessibleName("Debug console input").str("placeholder", "Evaluate an expression or run a debugger command")).inTab("Debug Console", "utilities-terminal"))
             service.registerCommands()
-            var items: List<String> = window.buildMenu
-            for item in ["-", "debug.start", "debug.continue", "debug.pause", "debug.stepOver", "debug.stepInto", "debug.stepOut", "debug.runToCursor", "debug.stop", "-", "debug.toggleBreakpoint", "debug.clearBreakpoints"] { items.push(item) }
-            window.addBuildMenu(items)
+            window.addDebugMenu(["debug.start", "debug.stop", "-", "debug.continue", "debug.pause", "debug.stepOver", "debug.stepInto", "debug.stepOut", "debug.runToCursor", "-", "debug.toggleBreakpoint", "debug.clearBreakpoints"])
             window.events.onPoll((events: EventLoop) => service.poll())
             window.bus.subscribe("debug.launch", (m: BusMessage) => service.launch(m))
             window.bus.subscribe("editor.opened", (m: BusMessage) => service.opened(m.str("path")))

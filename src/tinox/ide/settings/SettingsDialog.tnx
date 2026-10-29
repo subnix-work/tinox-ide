@@ -216,14 +216,14 @@ namespace tinox.ide.settings
             var stack: Node = Ui::stack("prefStack").currentIndex(this.page).stretch(4)
             for name in Preferences::pages()
             {
-                stack = stack.add(Ui::scroll("prefScroll:" + name).add(this.pageNode(name)))
+                stack = stack.add(Ui::scroll("prefScroll:" + name).accessibleName(name + " settings").add(this.pageNode(name)))
             }
             return Ui::column("prefs")
                 .windowTitle("Settings — Tinox IDE")
                 .minimumSize(780, 460)
                 .add(Ui::row("prefsBody")
                         .stretch(1)
-                        .add(Ui::listView("prefPages").stretch(1))
+                        .add(Ui::listView("prefPages").accessibleName("Settings pages").stretch(1))
                         .add(stack))
                 .add(Ui::row("prefsButtons")
                         .add(Ui::label("prefsSpacer", "Changes are saved and applied at once.").stretch(1))
@@ -278,7 +278,7 @@ namespace tinox.ide.settings
                     }
                     i = i + 1
                 }
-                return Ui::comboBox(key, names).currentIndex(current).labelled(d.label)
+                return Ui::comboBox(key, names).accessibleName(d.label).currentIndex(current).labelled(d.label)
             }
             const problem: String = this.problem(d)
             var hint: String = ""
@@ -296,7 +296,7 @@ namespace tinox.ide.settings
             }
             return Ui::column("box:" + d.id())
                 .labelled(d.label)
-                .add(Ui::lineEdit(key, this.shown(d)).bool("clearButton", true))
+                .add(Ui::lineEdit(key, this.shown(d)).accessibleName(d.label).bool("clearButton", true))
                 .add(Ui::label("hint:" + d.id(), hint).visible(hint != "" && problem == ""))
                 .add(Ui::label("error:" + d.id(), "⚠ " + problem).visible(problem != ""))
         }

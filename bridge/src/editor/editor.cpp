@@ -8,6 +8,7 @@
 #include "tinoxkde.h"
 #include "viewfeatures.h"
 
+#include <KLocalizedString>
 #include <KTextEditor/Document>
 #include <KTextEditor/Editor>
 #include <KTextEditor/Message>
@@ -374,6 +375,15 @@ Reply createView(Bridge &b, const QJsonObject &cmd)
         return fail;
     }
     View *view = doc->createView(nullptr);
+    // a screen reader announces the file the view shows, also after a rename or save as
+    const QPointer<View> guarded(view);
+    const auto name = [doc, guarded] {
+        if (guarded) {
+            guarded->setAccessibleName(i18nc("accessible name of the text editor, %1 is the file name", "Editor: %1", doc->documentName()));
+        }
+    };
+    name();
+    QObject::connect(doc, &Document::documentNameChanged, view, name);
     const int64_t id = b.registerObject(view);
     installViewFeatures(b, view, id);
     QJsonObject f;

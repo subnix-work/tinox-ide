@@ -137,16 +137,16 @@ namespace tinox.ide.search
         {
             return Ui::column("searchPanel")
                 .add(Ui::row("searchBar")
-                        .add(Ui::lineEdit("searchQuery", this.query).str("placeholder", "Find in files").bool("clearButton", true).stretch(3))
+                        .add(Ui::lineEdit("searchQuery", this.query).accessibleName("Find in files").str("placeholder", "Find in files").bool("clearButton", true).stretch(3))
                         .add(Ui::checkBox("searchCase", "Aa").bool("checked", this.caseSensitive).toolTip("Match case"))
                         .add(Ui::checkBox("searchRegex", ".*").bool("checked", this.useRegex).toolTip("Regular expression"))
                         .add(Ui::button("searchGo", "Search").icon("edit-find"))
                         .add(Ui::button("searchCancel", "Cancel").icon("process-stop").enabled(this.store.getBool("search.running"))))
                 .add(Ui::row("replaceBar")
-                        .add(Ui::lineEdit("searchReplace", this.replacement).str("placeholder", "Replace with").bool("clearButton", true).stretch(3))
+                        .add(Ui::lineEdit("searchReplace", this.replacement).accessibleName("Replace with").str("placeholder", "Replace with").bool("clearButton", true).stretch(3))
                         .add(Ui::button("searchReplaceAll", "Replace All").icon("edit-find-replace").enabled(this.store.getBool("search.canReplace")))
                         .add(Ui::label("searchStatus", this.store.get("search.status")).stretch(2)))
-                .add(Ui::treeView("searchResults").bool("headerHidden", true).bool("uniformRowHeights", true).str("selectionMode", "single").stretch(1))
+                .add(Ui::treeView("searchResults").accessibleName("Search results").bool("headerHidden", true).bool("uniformRowHeights", true).str("selectionMode", "single").stretch(1))
                 .inTab("Search", "edit-find")
         }
 

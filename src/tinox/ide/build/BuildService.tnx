@@ -87,9 +87,9 @@ namespace tinox.ide.build
         {
             const tests: TestExplorer = TestExplorer::create(window, documents)
             const service: BuildService = BuildService { window: window, documents: documents, dialogs: dialogs, tests: tests, configs: RunConfigs::load(""), model: Model::create(window.events, ["Message", "Location", "Code"], false), problems: [], problemsDirty: false, steps: [], index: 0, run: TaskRun { mutex: Mutex::new(), out: "", err: "", stopping: false, done: true, status: 0, failure: "" }, active: false, cancelled: false, title: "", artifact: "", directory: "", partialOut: "", partialErr: "", pending: "", clearLog: false, testsFailed: false, outputTab: window.bottomPanels.len() + 2, problemsTab: window.bottomPanels.len() + 3, testsTab: window.bottomPanels.len() + 4 }
-            window.addBottomPanel((s: Store) => Ui::log("buildOutput").inTab("Build", "run-build"))
-            window.addBottomPanel((s: Store) => Ui::treeView("buildProblems").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Build Problems", "dialog-error"))
-            window.addBottomPanel((s: Store) => Ui::treeView("tests").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Tests", "checkmark"))
+            window.addBottomPanel((s: Store) => Ui::log("buildOutput").accessibleName("Build output").inTab("Build", "run-build"))
+            window.addBottomPanel((s: Store) => Ui::treeView("buildProblems").accessibleName("Build problems").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Build Problems", "dialog-error"))
+            window.addBottomPanel((s: Store) => Ui::treeView("tests").accessibleName("Tests").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Tests", "checkmark"))
             service.registerCommands()
             window.addBuildMenu(["build.build", "build.check", "build.run", "build.stop", "-", "build.selectConfig", "build.editConfigs", "-", "tests.runAll", "tests.runFile", "tests.runFailed", "tests.discover", "tests.watch"])
             window.events.onPoll((events: EventLoop) => service.poll())

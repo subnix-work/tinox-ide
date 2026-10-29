@@ -114,7 +114,7 @@ namespace tinox.ide.navigation
         /** Reference and rename result panel. */
         fn panel() -> Node
         {
-            return Ui::column("navigationPanel").add(Ui::label("navigationHeading", this.language.window.store.get("navigation.heading"))).add(Ui::row("renameButtons").visible(this.previewing).add(Ui::button("renameApply", "Apply Rename")).add(Ui::button("renameCancel", "Cancel"))).add(Ui::treeView("navigationResults").bool("uniformRowHeights", true)).inTab("References / Rename", "edit-find")
+            return Ui::column("navigationPanel").add(Ui::label("navigationHeading", this.language.window.store.get("navigation.heading"))).add(Ui::row("renameButtons").visible(this.previewing).add(Ui::button("renameApply", "Apply Rename")).add(Ui::button("renameCancel", "Cancel"))).add(Ui::treeView("navigationResults").accessibleName("References and rename preview").bool("uniformRowHeights", true)).inTab("References / Rename", "edit-find")
         }
 
         /** Attaches models and UI events after mounting. */

@@ -139,6 +139,18 @@ namespace tinox.ide.ui
             return this.str("toolTip", value)
         }
 
+        /** What a screen reader announces for the widget; set it where there is no visible text (icon buttons, trees, logs, text fields). */
+        fn accessibleName(value: String) -> Node
+        {
+            return this.str("accessibleName", value)
+        }
+
+        /** A longer explanation a screen reader reads after the name. */
+        fn accessibleDescription(value: String) -> Node
+        {
+            return this.str("accessibleDescription", value)
+        }
+
         /** Whether the widget reacts to input. */
         fn enabled(value: Bool) -> Node
         {
