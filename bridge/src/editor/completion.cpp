@@ -2,12 +2,15 @@
 
 #include "../bridge.h"
 #include "positions.h"
+#include "viewfeatures.h"
 
 #include <KTextEditor/Document>
 #include <KTextEditor/MovingCursor>
 #include <KTextEditor/View>
 
 #include <QIcon>
+#include <QJsonDocument>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <memory>
@@ -47,6 +50,9 @@ CompletionModel::CompletionModel(Bridge &bridge, View *view, int64_t viewId)
     : CodeCompletionModel(view), m_bridge(bridge), m_viewId(viewId), m_view(view)
 {
     setHasGroups(false);
+    connect(view, &View::cursorPositionChanged, this, [this](View *, Cursor) { ++m_request; });
+    connect(view->document(), &Document::textChanged, this, [this](Document *) { ++m_request; });
+    connect(view, &View::focusOut, this, [this] { ++m_request; });
 }
 
 void CompletionModel::setTriggers(const QStringList &triggers, int minWordLength)
@@ -65,14 +71,21 @@ void CompletionModel::completionInvoked(View *view, const Range &range, Invocati
     beginResetModel();
     m_items.clear();
     endResetModel();
-    ++m_request;
     static const char *const names[] = {"automatic", "user", "manual", "manual"};
+    ask(view, range, QString::fromLatin1(names[std::clamp(int(type), 0, 3)]));
+}
+
+void CompletionModel::ask(View *view, const Range &range, const QString &trigger)
+{
+    ++m_request;
+    m_requestedPosition = view->cursorPosition();
+    m_word = range;
     QJsonObject f;
     f.insert(QStringLiteral("req"), double(m_request));
     f.insert(QStringLiteral("position"), toJson(view->cursorPosition()));
     f.insert(QStringLiteral("word"), toJson(range));
     f.insert(QStringLiteral("wordText"), view->document()->text(range));
-    f.insert(QStringLiteral("trigger"), QString::fromLatin1(names[std::clamp(int(type), 0, 3)]));
+    f.insert(QStringLiteral("trigger"), trigger);
     m_bridge.emitEvent(QStringLiteral("editor.completionRequested"), f, m_viewId);
 }
 
@@ -97,11 +110,20 @@ bool CompletionModel::shouldStartCompletion(View *view, const QString &insertedT
     return n >= m_minWordLength;
 }
 
-bool CompletionModel::setItems(int64_t req, const QList<Item> &items)
+QString CompletionModel::filterString(View *view, const Range &range, const Cursor &position)
+{
+    if (m_incomplete && position != m_requestedPosition) {
+        ask(view, range, QStringLiteral("again"));
+    }
+    return CodeCompletionModelControllerInterface::filterString(view, range, position);
+}
+
+bool CompletionModel::setItems(int64_t req, const QList<Item> &items, bool incomplete)
 {
     if (req != m_request) {
         return false; // the user moved on; this answer is for an older request
     }
+    m_incomplete = incomplete;
     beginResetModel();
     m_items = items;
     endResetModel();
@@ -120,20 +142,33 @@ void CompletionModel::executeCompletionItem(View *view, const Range &word, const
     }
     const Item &item = m_items.at(index.row());
     Document *doc = view->document();
-    const QString text = item.insertText.isEmpty() ? item.label : item.insertText;
+    const QString text = item.insertText.isEmpty() && item.textEdit.isEmpty() ? item.label : item.insertText;
+    Range replacement = word;
+    if (!item.textEdit.isEmpty()) {
+        QString error;
+        const auto span = item.textEdit.contains(QStringLiteral("range")) ? item.textEdit.value(QStringLiteral("range"))
+                                                                          : item.textEdit.value(QStringLiteral("replace"));
+        if (!readRange(span, doc, replacement, error)) {
+            return;
+        }
+    }
 
     // the word replaced by the item plus the item's additional edits, all against the text as it is now
-    std::vector<PlannedEdit> edits{{word, text}};
+    std::vector<PlannedEdit> edits{{replacement, item.snippet ? QString() : text}};
     for (const QJsonValue &v : item.additionalEdits) {
         Range r;
         QString error;
         if (!readRange(v.toObject().value(QStringLiteral("range")), doc, r, error)) {
             continue; // an invalid extra edit must not block the main insertion
         }
+        if (r.start() < replacement.end() && replacement.start() < r.end()) {
+            continue;
+        }
         edits.push_back({r, v.toObject().value(QStringLiteral("newText")).toString()});
     }
-    std::stable_sort(edits.begin(), edits.end(),
-                     [](const PlannedEdit &a, const PlannedEdit &b) { return a.range.start() < b.range.start(); });
+    std::stable_sort(edits.begin(), edits.end(), [](const PlannedEdit &a, const PlannedEdit &b) {
+        return a.range.start() == b.range.start() ? a.range.end() < b.range.end() : a.range.start() < b.range.start();
+    });
     for (size_t i = 1; i < edits.size(); ++i) {
         if (edits[i].range.start() < edits[i - 1].range.end()) {
             edits.erase(edits.begin() + long(i)); // overlapping extra edit: drop it
@@ -142,17 +177,52 @@ void CompletionModel::executeCompletionItem(View *view, const Range &word, const
     }
     // A moving cursor at the word start rides along with earlier extra edits and, moving on insert,
     // ends up behind the inserted text.
-    std::unique_ptr<MovingCursor> end(doc->newMovingCursor(word.start(), MovingCursor::MoveOnInsert));
+    std::unique_ptr<MovingCursor> end(doc->newMovingCursor(replacement.start(), MovingCursor::MoveOnInsert));
     {
         Document::EditingTransaction transaction(doc);
         for (auto it = edits.rbegin(); it != edits.rend(); ++it) {
             doc->replaceText(it->range, it->text);
         }
+        if (item.snippet) {
+            // Translate LSP tab stops/defaults to KTextEditor's editable template fields.
+            QString templ = text;
+            const QRegularExpression stop(QStringLiteral(R"(\$\{(\d+)(?::([^}]*))?\}|\$(\d+))"));
+            auto matches = stop.globalMatch(text);
+            QList<QRegularExpressionMatch> found;
+            while (matches.hasNext()) {
+                found.prepend(matches.next());
+            }
+            for (const auto &match : found) {
+                const auto number = match.captured(1).isEmpty() ? match.captured(3) : match.captured(1);
+                QString field;
+                if (number == QStringLiteral("0")) {
+                    field = QStringLiteral("${cursor}");
+                } else {
+                    field = QStringLiteral("${arg%1").arg(number);
+                    const auto quoted = QJsonDocument(QJsonArray{match.captured(2)}).toJson(QJsonDocument::Compact);
+                    field += QLatin1Char('=') + QString::fromUtf8(quoted.mid(1, quoted.size() - 2));
+                    field += QLatin1Char('}');
+                }
+                templ.replace(match.capturedStart(), match.capturedLength(), field);
+            }
+            view->insertTemplate(end->toCursor(), templ);
+        }
     }
-    view->setCursorPosition(end->toCursor());
+    if (!item.snippet) {
+        view->setCursorPosition(end->toCursor());
+    }
     QJsonObject f;
     f.insert(QStringLiteral("label"), item.label);
     m_bridge.emitEvent(QStringLiteral("editor.completionAccepted"), f, m_viewId);
+}
+
+QJsonArray CompletionModel::labels() const
+{
+    QJsonArray result;
+    for (const auto &item : m_items) {
+        result.append(item.label);
+    }
+    return result;
 }
 
 QModelIndex CompletionModel::index(int row, int column, const QModelIndex &parent) const
@@ -185,6 +255,12 @@ QVariant CompletionModel::data(const QModelIndex &index, int role) const
         return QVariant();
     case Qt::DecorationRole:
         return index.column() == Icon ? QVariant(QIcon::fromTheme(iconName(item.kind))) : QVariant();
+#if KTEXTEDITOR_ENABLE_DEPRECATED_SINCE(6, 19)
+    case IsExpandable:
+        return !item.documentation.isEmpty();
+#endif
+    case ExpandingWidget:
+        return item.documentation;
     case Qt::ToolTipRole:
         return item.documentation.isEmpty() ? QVariant() : QVariant(item.documentation);
     default:

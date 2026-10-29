@@ -119,7 +119,7 @@ namespace tinox.ide.lsp
                 root = Js::str(rootUri)
                 folders = "[{\"uri\":" + root + ",\"name\":\"workspace\"}]"
             }
-            const params: String = "{\"processId\":" + Process::pid().toString() + ",\"rootUri\":" + root + ",\"workspaceFolders\":" + folders + ",\"clientInfo\":{\"name\":\"tinox-ide\",\"version\":\"0.1.0\"},\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-16\"]},\"workspace\":{\"configuration\":true,\"applyEdit\":true,\"workspaceFolders\":true},\"textDocument\":{\"publishDiagnostics\":{\"versionSupport\":true},\"synchronization\":{\"dynamicRegistration\":false,\"didSave\":true}}}}"
+            const params: String = "{\"processId\":" + Process::pid().toString() + ",\"rootUri\":" + root + ",\"workspaceFolders\":" + folders + ",\"clientInfo\":{\"name\":\"tinox-ide\",\"version\":\"0.1.0\"},\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-16\"]},\"workspace\":{\"configuration\":true,\"applyEdit\":true,\"workspaceFolders\":true},\"textDocument\":{\"completion\":{\"completionItem\":{\"snippetSupport\":true,\"documentationFormat\":[\"markdown\",\"plaintext\"]}},\"hover\":{\"contentFormat\":[\"markdown\",\"plaintext\"]},\"signatureHelp\":{\"signatureInformation\":{\"documentationFormat\":[\"markdown\",\"plaintext\"],\"parameterInformation\":{\"labelOffsetSupport\":true},\"activeParameterSupport\":true}},\"publishDiagnostics\":{\"versionSupport\":true},\"synchronization\":{\"dynamicRegistration\":false,\"didSave\":true}}}}"
             this.initialization = this.call("initialize", params, 10000)
             return this.initialization
         }

@@ -59,11 +59,17 @@ returns the current (moved) ranges. Hover shows the messages (HTML-escaped).
 `editor.enableCompletion` `{target (view), triggers?, minWordLength?}` /
 `editor.disableCompletion`; `editor.requestCompletion` or typing raises
 `editor.completionRequested {req, word, wordText}`; the logic answers with
-`editor.setCompletions {target, req, items:[{label,kind?,detail?,insertText?,additionalTextEdits?}]}`.
+`editor.setCompletions {target, req, isIncomplete?, items:[{label,kind?,detail?,documentation?,insertText?,insertTextFormat?,textEdit?,sortText?,additionalTextEdits?}]}`.
 An answer to an older `req` is ignored (`stale:true`, not an error). Accepting an item replaces
 the word and applies `additionalTextEdits` in one undo step (`editor.completionAccepted`).
 `editor.hoverRequested` carries the position under the mouse; `editor.showTooltip`
-`{target, position, markup}` answers it.
+`{target, position, markup}` answers it. `editor.showAssistance`
+`{target, kind: "hover" | "signatureHelp", req, version, position, result}` renders
+LSP rich text or an active-parameter signature. Stale native versions, hover
+request numbers and signature cursor positions are ignored (`stale:true`).
+See [the LSP client](lsp-client.md#editing-assistance-26) for the asynchronous presenter.
+Newline insertions/removals are included in `editor.changed` alongside text edits,
+including multiline replacement, undo and redo.
 
 ## Notes for maintainers
 

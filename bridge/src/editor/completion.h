@@ -29,7 +29,10 @@ public:
         QString label;
         QString detail; // shown right of the label, e.g. a signature
         QString documentation;
-        QString kind;               // function, method, class, variable, ...
+        QString kind; // function, method, class, variable, ...
+        QString sortText;
+        QJsonObject textEdit;
+        bool snippet = false;
         QString insertText;         // defaults to the label
         QJsonArray additionalEdits; // LSP-shaped {range, newText}, applied with the item
     };
@@ -39,9 +42,12 @@ public:
     /// Characters that start a completion when typed (e.g. "." and "::").
     void setTriggers(const QStringList &triggers, int minWordLength);
     /// Accepts the answer for request `req`; an answer to an older request is ignored.
-    bool setItems(int64_t req, const QList<Item> &items);
+    bool setItems(int64_t req, const QList<Item> &items, bool incomplete = false);
     int64_t currentRequest() const { return m_request; }
     int itemCount() const { return m_items.size(); }
+    QJsonArray labels() const;
+
+    QString filterString(KTextEditor::View *view, const KTextEditor::Range &range, const KTextEditor::Cursor &position) override;
 
     // CodeCompletionModel
     void completionInvoked(KTextEditor::View *view, const KTextEditor::Range &range, InvocationType type) override;
@@ -61,6 +67,9 @@ private:
     QList<Item> m_items;
     KTextEditor::Range m_word;
     KTextEditor::View *m_view;
+    bool m_incomplete = false;
+    KTextEditor::Cursor m_requestedPosition;
+    void ask(KTextEditor::View *view, const KTextEditor::Range &range, const QString &trigger);
     bool m_answerPending = false; // an answer opened the popup itself: do not ask again
 };
 } // namespace editor

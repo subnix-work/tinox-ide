@@ -524,6 +524,93 @@ static void testCompletionAndHover()
     tkde_release(doc);
 }
 
+static QString replayChanges(QString text, const Obj &event)
+{
+    for (const auto &value : event.value(QStringLiteral("changes")).toArray()) {
+        const auto edit = value.toObject();
+        const auto span = edit.value(QStringLiteral("range")).toObject();
+        const auto offset = [&text](const Obj &position) {
+            int result = 0;
+            for (int line = 0; line < position.value(QStringLiteral("line")).toInt(); ++line) {
+                const int newline = text.indexOf(QLatin1Char('\n'), result);
+                EXPECT(newline >= 0);
+                if (newline < 0) {
+                    return -1;
+                }
+                result = newline + 1;
+            }
+            return result + position.value(QStringLiteral("character")).toInt();
+        };
+        const int start = offset(span.value(QStringLiteral("start")).toObject());
+        const int end = offset(span.value(QStringLiteral("end")).toObject());
+        EXPECT(start >= 0 && end >= start && end <= text.size());
+        if (start < 0 || end < start || end > text.size()) {
+            return {};
+        }
+        text.replace(start, end - start, edit.value(QStringLiteral("text")).toString());
+    }
+    return text;
+}
+
+static void testMultilineChangeReplay()
+{
+    const QString original = QStringLiteral("one\ntwo\n");
+    const QString replacement = QStringLiteral("α\n😀\nthree\nfour\n");
+    const auto doc = newDoc(original);
+    const auto view = newView(doc);
+    drainEvents();
+    query(cmd("editor.setText", Obj{{"target", double(doc)}, {"text", replacement}}));
+    EXPECT_EQ(replayChanges(original, waitFor("editor.changed")), replacement);
+    drainEvents();
+    query(cmd("editor.undo", Obj{{"target", double(view)}}));
+    EXPECT_EQ(replayChanges(replacement, waitFor("editor.changed")), original);
+    drainEvents();
+    query(cmd("editor.redo", Obj{{"target", double(view)}}));
+    EXPECT_EQ(replayChanges(original, waitFor("editor.changed")), replacement);
+    tkde_release(doc);
+}
+
+static void testLspAssistance()
+{
+    const auto render = [](const QJsonValue &result, const QString &kind = QString()) {
+        return query(cmd("editor.debug.assistanceMarkup", Obj{{"result", result}, {"kind", kind}}))["markup"].toString();
+    };
+    EXPECT(render(Obj{{"kind", "markdown"}, {"value", "**bold** <script>bad</script>"}}).contains(QStringLiteral("font-weight:700")));
+    EXPECT(render(Obj{{"kind", "plaintext"}, {"value", "<tag>"}}).contains(QStringLiteral("&lt;tag&gt;")));
+    EXPECT(render(Obj{{"language", "tinox"}, {"value", "x < y"}}).contains(QStringLiteral("x &lt; y")));
+    EXPECT(render(QJsonArray{QStringLiteral("one"), QStringLiteral("two")}).contains(QStringLiteral("<hr>")));
+    const Obj signature{{"label", "call(a, b)"},
+                        {"parameters", QJsonArray{Obj{{"label", QJsonArray{5, 6}}}, Obj{{"label", QJsonArray{8, 9}}}}}};
+    EXPECT(render(Obj{{"signatures", QJsonArray{signature}}, {"activeParameter", 1}}, QStringLiteral("signatureHelp"))
+               .contains(QStringLiteral("<b>b</b>")));
+    EXPECT(render(Obj{{"signatures", QJsonArray{}}}, QStringLiteral("signatureHelp")).isEmpty());
+
+    const auto doc = newDoc(QStringLiteral("val.me"));
+    const auto view = newView(doc);
+    query(cmd("editor.enableCompletion", Obj{{"target", double(view)}}));
+    query(cmd("editor.setCursor", Obj{{"target", double(view)}, {"position", pos(0, 6)}}));
+    drainEvents();
+    query(cmd("editor.requestCompletion", Obj{{"target", double(view)}}));
+    auto req = waitFor("editor.completionRequested")["req"].toInt();
+    const Obj item{{"label", "method"},
+                   {"kind", 2},
+                   {"insertTextFormat", 2},
+                   {"textEdit", Obj{{"range", range(0, 4, 0, 6)}, {"newText", "method(${1:value})$0"}}},
+                   {"additionalTextEdits", QJsonArray{Obj{{"range", range(0, 0, 0, 0)}, {"newText", "import example\n"}}}}};
+    EXPECT(query(cmd("editor.setCompletions", Obj{{"target", double(view)}, {"req", req}, {"items", QJsonArray{item}}}))["ok"].toBool());
+    EXPECT(query(cmd("editor.debug.acceptCompletion", Obj{{"target", double(view)}, {"index", 0}}))["ok"].toBool());
+    EXPECT_EQ(textOf(doc), QStringLiteral("import example\nval.method(value)"));
+    query(cmd("editor.undo", Obj{{"target", double(view)}}));
+    EXPECT_EQ(textOf(doc), QStringLiteral("val.me"));
+
+    drainEvents();
+    query(cmd("editor.requestCompletion", Obj{{"target", double(view)}}));
+    req = waitFor("editor.completionRequested")["req"].toInt();
+    query(cmd("editor.setCursor", Obj{{"target", double(view)}, {"position", pos(0, 0)}}));
+    EXPECT(query(cmd("editor.setCompletions", Obj{{"target", double(view)}, {"req", req}, {"items", QJsonArray{item}}}))["stale"].toBool());
+    tkde_release(doc);
+}
+
 static void testLifecycleCleanup()
 {
     // many documents and views created and released: nothing is left registered
@@ -560,6 +647,8 @@ static void driver(QString dir)
     testDiagnostics();
     testVersionedDiagnostics();
     testCompletionAndHover();
+    testLspAssistance();
+    testMultilineChangeReplay();
     testLifecycleCleanup();
     tkde_post("{\"cmd\":\"core.quit\"}");
 }

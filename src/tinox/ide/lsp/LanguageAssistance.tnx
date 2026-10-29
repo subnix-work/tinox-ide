@@ -1,0 +1,234 @@
+module tinox.ide.lsp
+
+import tinox.core.json
+import tinox.ide.editor.Documents
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.ui.Js
+import tinox.ide.ui.Position
+import tinox.ide.ui.Utf16
+
+namespace tinox.ide.lsp
+{
+    /** Poll-driven editing assistance. Requests never wait on the language server. */
+    class LanguageAssistance
+    {
+        /** Editor collection, including split views. */
+        var documents: Documents
+        /** Views already configured for this session. */
+        var wired: Map<String, Bool>
+        /** Outstanding requests, at most one per view and feature. */
+        var pending: List<AssistanceRequest>
+        /** Last queued cursor position, retried once its text transaction is synchronized. */
+        var cursors: Map<String, Position>
+        /** Views with an active signature popup, retriggered as the cursor moves. */
+        var signatures: Map<String, Bool>
+
+        /** Creates an idle presenter. */
+        fnc create(documents: Documents) -> LanguageAssistance
+        {
+            return LanguageAssistance { documents: documents, wired: Map::new(), pending: [], cursors: Map::new(), signatures: Map::new() }
+        }
+
+        /** Configures newly opened or split Tinox views once capabilities are available. */
+        fn wire(service: LanguageService) -> Nothing
+        {
+            if (service.client.state != "ready") { return }
+            var live: Map<String, Bool> = Map::new()
+            for file in this.documents.files
+            {
+                if (service.paths.contains(Utf16::uri(file.path)))
+                {
+                    for view in file.views
+                    {
+                        if (!this.wired.contains(view.id().toString()))
+                        {
+                            if (this.supports(service, "completion"))
+                            {
+                                var triggers: List<String> = []
+                                for item in service.client.capabilities.getField("completionProvider").getField("triggerCharacters").asList() { triggers.push(item.getString()) }
+                                view.enableAsyncCompletion(triggers, 2)
+                            }
+                        }
+                        live.set(view.id().toString(), true)
+                    }
+                }
+                else
+                {
+                    for view in file.views
+                    {
+                        if (this.wired.contains(view.id().toString()) && view.asynchronousCompletion) { view.disableCompletion() }
+                    }
+                }
+            }
+            this.wired = live
+        }
+
+        /** Tests boolean or options-object server capabilities. */
+        fn supports(service: LanguageService, kind: String) -> Bool
+        {
+            const value: JsonValue = service.client.capabilities.getField(kind + "Provider")
+            return value.isObject() || (value.isBool() && value.getBool())
+        }
+
+        /** Looks up a live view's synchronized URI; released views cannot receive replies. */
+        fn uri(view: Int64) -> String
+        {
+            for file in this.documents.files
+            {
+                for editor in file.views { if (editor.id() == view) { return Utf16::uri(file.path) } }
+            }
+            return ""
+        }
+
+        /** Cancels superseded work and handles native editing-assistance events. */
+        fn handle(service: LanguageService, ev: Event) -> Nothing
+        {
+            if (!service.enabled || !service.connected) { return }
+            const uri: String = this.uri(ev.target)
+            if (!service.paths.contains(uri)) { return }
+            if (ev.type == "editor.cursorMoved" || (ev.type == "editor.focusChanged" && !ev.bool("focused")))
+            {
+                this.cancelView(service, ev.target, "")
+                if (ev.type == "editor.cursorMoved") { this.cursors.set(ev.target.toString(), Position::parse(ev.field("position")))
+                    this.signature(service, ev.target, Position::parse(ev.field("position")), uri) }
+                else { this.signatures.remove(ev.target.toString()) }
+                return
+            }
+            if (ev.type == "editor.completionRequested") { this.request(service, "completion", ev.target, ev.int("req"), Position::parse(ev.field("position")), uri) }
+            if (ev.type == "editor.hoverRequested") { this.request(service, "hover", ev.target, ev.int("req"), Position::parse(ev.field("position")), uri) }
+        }
+
+        /** Starts or refreshes signature help at negotiated trigger characters and during an active call. */
+        fn signature(service: LanguageService, view: Int64, position: Position, uri: String) -> Nothing
+        {
+            if (service.client.state != "ready" || !service.client.documents.contains(uri)) { return }
+            const text: String = service.client.documents.get(uri).text
+            var offset: Int64 = 0
+            try { offset = Utf16::offset(text, position) }
+            catch (e: String) { return }
+            var before: String = ""
+            if (offset > 0) { before = text.substring(0, offset) }
+            if (before.endsWith("\n") || before == "") { this.signatures.remove(view.toString())
+                return }
+            var trigger: Bool = this.signatures.contains(view.toString())
+            for item in service.client.capabilities.getField("signatureHelpProvider").getField("triggerCharacters").asList()
+            {
+                if (item.getString() != "" && before.endsWith(item.getString())) { trigger = true }
+            }
+            if (trigger) { this.request(service, "signatureHelp", view, 0, position, uri) }
+        }
+
+        /** Sends one bounded request and immediately returns to event dispatch. */
+        fn request(service: LanguageService, kind: String, view: Int64, number: Int64, position: Position, uri: String) -> Nothing
+        {
+            this.cancelView(service, view, kind)
+            if (service.client.state != "ready" || !this.supports(service, kind) || !service.client.documents.contains(uri)) { return }
+            const doc: LspDocument = service.client.documents.get(uri)
+            Utf16::offset(doc.text, position)
+            const params: String = Js::object([Js::field("textDocument", Js::object([Js::strField("uri", uri)])), Js::field("position", position.toJson())])
+            if (kind == "signatureHelp") { this.signatures.set(view.toString(), true) }
+            const future: RpcFuture = service.client.request("textDocument/" + kind, params, 3000)
+            this.pending.push(AssistanceRequest { kind: kind, view: view, number: number, uri: uri, version: doc.version, position: position, future: future })
+        }
+
+        /** Cancels one feature or all requests of a view, settling futures before late replies arrive. */
+        fn cancelView(service: LanguageService, view: Int64, kind: String) -> Nothing
+        {
+            var keep: List<AssistanceRequest> = []
+            for item in this.pending
+            {
+                if (item.view == view && (kind == "" || item.kind == kind)) { service.client.cancel(item.future) }
+                else { keep.push(item) }
+            }
+            this.pending = keep
+        }
+
+        /** Invalidates all views of an edited, closed or renamed buffer. */
+        fn cancelPath(service: LanguageService, uri: String) -> Nothing
+        {
+            var keep: List<AssistanceRequest> = []
+            for item in this.pending
+            {
+                if (item.uri == uri) { service.client.cancel(item.future) }
+                else { keep.push(item) }
+            }
+            this.pending = keep
+
+        }
+
+        /** Detaches a buffer before close or Save As, including views that become non-Tinox. */
+        fn detach(uri: String) -> Nothing
+        {
+            for file in this.documents.files
+            {
+                if (Utf16::uri(file.path) == uri)
+                {
+                    for view in file.views
+                    {
+                        if (this.wired.contains(view.id().toString()) && view.asynchronousCompletion) { view.disableCompletion() }
+                        this.wired.remove(view.id().toString())
+                        this.signatures.remove(view.id().toString())
+                        this.cursors.remove(view.id().toString())
+                    }
+                }
+            }
+        }
+
+        /** Discards work before a server generation or workspace is retired. */
+        fn clear(service: LanguageService) -> Nothing
+        {
+            for item in this.pending { service.client.cancel(item.future) }
+            for file in this.documents.files { this.detach(Utf16::uri(file.path)) }
+            this.pending = []
+            this.signatures = Map::new()
+            this.cursors = Map::new()
+            this.wired = Map::new()
+        }
+
+        /** Publishes only completed results for a still-live view and the exact buffer version. */
+        fn poll(service: LanguageService) -> Nothing
+        {
+            this.wire(service)
+            var keep: List<AssistanceRequest> = []
+            for item in this.pending
+            {
+                if (this.uri(item.view) != item.uri || !service.client.documents.contains(item.uri) || service.client.documents.get(item.uri).version != item.version)
+                {
+                    service.client.cancel(item.future)
+                }
+                else if (!item.future.done) { keep.push(item) }
+                else if (item.future.code == 0 && service.client.state == "ready")
+                {
+                    try { this.present(item) }
+                    catch (e: String) { service.window.store.set("status.message", "Language assistance: " + e) }
+                }
+            }
+            this.pending = keep
+        }
+
+        /** Translates CompletionList/array/null and sends structured hover/signature content to Qt. */
+        fn present(item: AssistanceRequest) -> Nothing
+        {
+            const result: JsonValue = item.future.result
+            if (item.kind == "completion")
+            {
+                var items: JsonValue = result
+                if (result.isObject()) { items = result.getField("items") }
+                if (items.isNull()) { items = Json::parse("[]") }
+                if (!items.isArray()) { throw "Invalid completion result" }
+                Bridge::query(Command::named("editor.setCompletions").target(item.view).int("req", item.number).bool("isIncomplete", result.getField("isIncomplete").getBool()).raw("items", Json::stringify(items)).build())
+            }
+            else
+            {
+                if (item.kind == "signatureHelp")
+                {
+                    this.signatures.remove(item.view.toString())
+                    if (result.getField("signatures").asList().len() > 0) { this.signatures.set(item.view.toString(), true) }
+                }
+                Bridge::query(Command::named("editor.showAssistance").target(item.view).str("kind", item.kind).int("req", item.number).int("version", item.version).raw("position", item.position.toJson()).raw("result", Json::stringify(result)).build())
+            }
+        }
+    }
+}

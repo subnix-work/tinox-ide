@@ -3,6 +3,7 @@
 #include "../bridge.h"
 #include "completion.h"
 #include "diagnostics.h"
+#include "editor.h"
 #include "positions.h"
 #include "tinoxkde.h"
 
@@ -12,12 +13,84 @@
 
 #include <QEvent>
 #include <QJsonArray>
+#include <QTextDocument>
 #include <QToolTip>
+#include <algorithm>
 
 using namespace KTextEditor;
 
 namespace tkde::editor
 {
+QString assistanceMarkup(const QJsonValue &value)
+{
+    if (value.isNull() || value.isUndefined()) {
+        return {};
+    }
+    if (value.isArray()) {
+        QStringList parts;
+        for (const auto &part : value.toArray()) {
+            parts << assistanceMarkup(part);
+        }
+        return parts.join(QStringLiteral("<hr>"));
+    }
+    const auto object = value.toObject();
+    const QString text = value.isString() ? value.toString() : object.value(QStringLiteral("value")).toString();
+    if (object.contains(QStringLiteral("language"))) {
+        return QStringLiteral("<pre>%1</pre>").arg(text.toHtmlEscaped());
+    }
+    if (value.isString() || object.value(QStringLiteral("kind")) == QStringLiteral("markdown")) {
+        QTextDocument document;
+        document.setMarkdown(text, QTextDocument::MarkdownNoHTML);
+        return document.toHtml();
+    }
+    return QStringLiteral("<p>%1</p>").arg(text.toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br>")));
+}
+
+QString signatureMarkup(const QJsonObject &result)
+{
+    const auto signatures = result.value(QStringLiteral("signatures")).toArray();
+    if (signatures.isEmpty()) {
+        return {};
+    }
+    int active = result.value(QStringLiteral("activeSignature")).toInt();
+    if (active < 0 || active >= signatures.size()) {
+        active = 0;
+    }
+    const auto signature = signatures.at(active).toObject();
+    const QString label = signature.value(QStringLiteral("label")).toString();
+    const auto parameters = signature.value(QStringLiteral("parameters")).toArray();
+    const int parameter = signature.value(QStringLiteral("activeParameter")).toInt(result.value(QStringLiteral("activeParameter")).toInt());
+    int start = -1, end = -1;
+    QJsonObject info;
+    if (parameter >= 0 && parameter < parameters.size()) {
+        info = parameters.at(parameter).toObject();
+        const auto span = info.value(QStringLiteral("label"));
+        if (span.isArray() && span.toArray().size() == 2) {
+            start = span.toArray().at(0).toInt(-1);
+            end = span.toArray().at(1).toInt(-1);
+        } else if (span.isString() && !span.toString().isEmpty()) {
+            // Find repeated parameter labels in their declared order.
+            int from = 0;
+            for (int i = 0; i <= parameter; ++i) {
+                const auto name = parameters.at(i).toObject().value(QStringLiteral("label")).toString();
+                start = label.indexOf(name, from);
+                end = start + name.size();
+                if (start < 0) {
+                    break;
+                }
+                from = end;
+            }
+        }
+    }
+    QString html = label.toHtmlEscaped();
+    if (start >= 0 && end >= start && end <= label.size()) {
+        html = label.left(start).toHtmlEscaped() + QStringLiteral("<b>") + label.mid(start, end - start).toHtmlEscaped() +
+               QStringLiteral("</b>") + label.mid(end).toHtmlEscaped();
+    }
+    return QStringLiteral("<pre>%1</pre>").arg(html) + assistanceMarkup(signature.value(QStringLiteral("documentation"))) +
+           assistanceMarkup(info.value(QStringLiteral("documentation")));
+}
+
 namespace
 {
 class ViewState;
@@ -41,6 +114,9 @@ public:
         return QString();
     }
 
+    void invalidate() { ++m_request; }
+    int64_t request() const { return m_request; }
+
 private:
     Bridge &m_bridge;
     int64_t m_viewId;
@@ -54,6 +130,8 @@ public:
     ViewState(Bridge &bridge, View *view, int64_t id) : QObject(view), m_bridge(bridge), m_view(view), m_id(id), m_hover(bridge, id)
     {
         connect(view, &View::cursorPositionChanged, this, [this](View *, Cursor c) {
+            m_hover.invalidate();
+            QToolTip::hideText();
             QJsonObject f;
             f.insert(QStringLiteral("position"), toJson(c));
             m_bridge.emitEvent(QStringLiteral("editor.cursorMoved"), f, m_id);
@@ -69,7 +147,13 @@ public:
             f.insert(QStringLiteral("focused"), true);
             m_bridge.emitEvent(QStringLiteral("editor.focusChanged"), f, m_id);
         });
+        connect(view->document(), &Document::textChanged, this, [this](Document *) {
+            m_hover.invalidate();
+            QToolTip::hideText();
+        });
         connect(view, &View::focusOut, this, [this] {
+            m_hover.invalidate();
+            QToolTip::hideText();
             QJsonObject f;
             f.insert(QStringLiteral("focused"), false);
             m_bridge.emitEvent(QStringLiteral("editor.focusChanged"), f, m_id);
@@ -104,6 +188,7 @@ public:
     }
 
     CompletionModel *completion() const { return m_completion; }
+    int64_t hoverRequest() const { return m_hover.request(); }
 
 private:
     Bridge &m_bridge;
@@ -197,13 +282,36 @@ void registerViewFeatureCommands(Bridge &bridge)
             CompletionModel::Item item;
             item.label = o.value(QStringLiteral("label")).toString();
             item.detail = o.value(QStringLiteral("detail")).toString();
-            item.documentation = o.value(QStringLiteral("documentation")).toString();
-            item.kind = o.value(QStringLiteral("kind")).toString();
+            const auto documentation = o.value(QStringLiteral("documentation"));
+            item.documentation =
+                assistanceMarkup(documentation.isString() ? QJsonValue(QJsonObject{{QStringLiteral("kind"), QStringLiteral("plaintext")},
+                                                                                   {QStringLiteral("value"), documentation}})
+                                                          : documentation);
+            const auto kind = o.value(QStringLiteral("kind"));
+            static const QStringList kinds = {QStringLiteral(""),          QStringLiteral("text"),        QStringLiteral("method"),
+                                              QStringLiteral("function"),  QStringLiteral("constructor"), QStringLiteral("field"),
+                                              QStringLiteral("variable"),  QStringLiteral("class"),       QStringLiteral("interface"),
+                                              QStringLiteral("module"),    QStringLiteral("property"),    QStringLiteral("unit"),
+                                              QStringLiteral("value"),     QStringLiteral("enum"),        QStringLiteral("keyword"),
+                                              QStringLiteral("snippet"),   QStringLiteral("color"),       QStringLiteral("file"),
+                                              QStringLiteral("reference"), QStringLiteral("folder"),      QStringLiteral("enum"),
+                                              QStringLiteral("constant"),  QStringLiteral("struct"),      QStringLiteral("event"),
+                                              QStringLiteral("operator"),  QStringLiteral("type")};
+            item.kind = kind.isDouble() ? kinds.value(kind.toInt()) : kind.toString();
             item.insertText = o.value(QStringLiteral("insertText")).toString();
+            item.snippet = o.value(QStringLiteral("insertTextFormat")).toInt(1) == 2;
+            const auto edit = o.value(QStringLiteral("textEdit")).toObject();
+            if (!edit.isEmpty()) {
+                item.textEdit = edit;
+                item.insertText = edit.value(QStringLiteral("newText")).toString();
+            }
+            item.sortText = o.value(QStringLiteral("sortText")).toString(item.label);
             item.additionalEdits = o.value(QStringLiteral("additionalTextEdits")).toArray();
             items.append(item);
         }
-        const bool accepted = s->completion()->setItems(int64_t(cmd.value(QStringLiteral("req")).toDouble(-1)), items);
+        std::stable_sort(items.begin(), items.end(), [](const auto &a, const auto &b) { return a.sortText < b.sortText; });
+        const bool accepted = s->completion()->setItems(int64_t(cmd.value(QStringLiteral("req")).toDouble(-1)), items,
+                                                        cmd.value(QStringLiteral("isIncomplete")).toBool());
         QJsonObject f;
         f.insert(QStringLiteral("stale"), !accepted); // an answer to an older request is normal, not an error
         return Reply::success(f);
@@ -227,7 +335,51 @@ void registerViewFeatureCommands(Bridge &bridge)
         QToolTip::showText(view->mapToGlobal(where), cmd.value(QStringLiteral("markup")).toString(), view);
         return Reply::success();
     });
+    bridge.registerCommand(QStringLiteral("editor.showAssistance"), [&bridge](const QJsonObject &cmd) {
+        Reply fail;
+        View *view = nullptr;
+        const auto state = stateOf(bridge, cmd, fail, &view);
+        if (!state) {
+            return fail;
+        }
+        if (cmd.contains(QStringLiteral("version")) &&
+            cmd.value(QStringLiteral("version")).toInteger(-1) != documentVersion(view->document())) {
+            return Reply::success(QJsonObject{{QStringLiteral("stale"), true}});
+        }
+        if (cmd.value(QStringLiteral("kind")) == QStringLiteral("hover") &&
+            cmd.value(QStringLiteral("req")).toInteger(-1) != state->hoverRequest()) {
+            return Reply::success(QJsonObject{{QStringLiteral("stale"), true}});
+        }
+        Cursor position;
+        QString error;
+        if (!readPosition(cmd.value(QStringLiteral("position")), view->document(), position, error)) {
+            return Reply::failure(TKDE_E_INVALID_ARG, error);
+        }
+        if (cmd.value(QStringLiteral("kind")) == QStringLiteral("signatureHelp") && position != view->cursorPosition()) {
+            return Reply::success(QJsonObject{{QStringLiteral("stale"), true}});
+        }
+        const auto result = cmd.value(QStringLiteral("result")).toObject();
+        const auto markup = cmd.value(QStringLiteral("kind")) == QStringLiteral("signatureHelp")
+                                ? signatureMarkup(result)
+                                : assistanceMarkup(result.value(QStringLiteral("contents")));
+        if (result.isEmpty()) {
+            QToolTip::hideText();
+            return Reply::success();
+        }
+        const auto where = view->cursorToCoordinate(position);
+        if (where.x() >= 0 && where.y() >= 0) {
+            QToolTip::showText(view->mapToGlobal(where), markup, view);
+        }
+        return Reply::success();
+    });
     if (bridge.debugCommandsEnabled()) {
+        bridge.registerCommand(QStringLiteral("editor.debug.assistanceMarkup"), [](const QJsonObject &cmd) {
+            const auto result = cmd.value(QStringLiteral("result"));
+            return Reply::success(
+                QJsonObject{{QStringLiteral("markup"), cmd.value(QStringLiteral("kind")) == QStringLiteral("signatureHelp")
+                                                           ? signatureMarkup(result.toObject())
+                                                           : assistanceMarkup(result)}});
+        });
         // Test hooks: accept a completion item without a popup, and read the model state.
         bridge.registerCommand(QStringLiteral("editor.debug.acceptCompletion"), [&bridge](const QJsonObject &cmd) {
             Reply fail;
@@ -255,6 +407,7 @@ void registerViewFeatureCommands(Bridge &bridge)
             QJsonObject f;
             f.insert(QStringLiteral("req"), double(s->completion()->currentRequest()));
             f.insert(QStringLiteral("items"), s->completion()->itemCount());
+            f.insert(QStringLiteral("labels"), s->completion()->labels());
             return Reply::success(f);
         });
     }
