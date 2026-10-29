@@ -14,6 +14,14 @@ for the plan.
 > Status: development preview. Editing, LSP assistance and build/run/test integration
 > are available; see [packaging and installation](docs/packaging.md).
 
+## Documentation
+
+Start with the [user manual](docs/manual/README.md), then the
+[architecture map](docs/architecture.md). Contributors use the
+[dogfooding workflow](docs/dogfooding.md) and [friction log](docs/friction-log.md).
+`make docs` generates the linked manual/reference site at `build/docs/index.html`
+and the Tinox API at `build/api/index.html` (needs Python-Markdown).
+
 ## Layout
 
 | Path | Contents |

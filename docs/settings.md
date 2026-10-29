@@ -26,10 +26,14 @@
 | General | `Session.restore` | restore the open files on start | `Documents.restoreSession` |
 | General | `Editor.autosave`, `Editor.autosaveSeconds` (5-3600) | save modified files periodically | `Documents.tick` |
 | General | `Editor.backup` | keep `name~` when saving | `Documents.save` |
+| Editor | `Editor.formatOnSave` | format Tinox buffers before saving (off by default); failures cancel the save | `EditService` |
 | Editor | `Editor.theme` | colour theme of the editor ("" follows the colour scheme) | `Documents.applyTheme` (all views, new views) |
-| Language Server | `Tools.lspPath`, `Tools.lspArgs`, `Tools.tinoxPath` | the programs and extra arguments | the LSP client and build integration (later issues) |
-| Build | `Build.args`, `Build.saveBefore`, `Build.showOutput` | build behaviour | build integration (later issue) |
+| Language Server | `Tools.lspPath`, `Tools.lspArgs`, `Tools.tinoxPath` | the programs and extra arguments | `LanguageService` and `BuildService` |
+| Build | `Build.args`, `Build.saveBefore`, `Build.showOutput` | build behaviour | `BuildService` |
 | Appearance | `Appearance.toolbar` | show the tool bar | `MainWindow` (redraws on the store key) |
+
+The Semantic Colours page adds optional `#RRGGBB` overrides for each supported token type;
+empty values follow the theme. For the user workflow, see [manual/settings.md](manual/settings.md).
 
 Adding a preference = one line in `Preferences.standard()` and a reader (store key or `settings.changed`).
 

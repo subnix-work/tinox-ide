@@ -193,7 +193,8 @@ namespace tinox.ide.build
             {
                 steps.push(TaskStep::events("test", [this.tinox(), "test", "--format", "json"]))
             }
-            for file in files { steps.push(TaskStep::events("test", [this.tinox(), "test", "--format", "json", file])) }
+            // File first: older Tinox silently ignores a file following flags (subnix-work/tinox#585).
+            for file in files { steps.push(TaskStep::events("test", [this.tinox(), "test", file, "--format", "json"])) }
             this.tests.clearResults()
             this.start(false, steps)
         }

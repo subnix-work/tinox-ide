@@ -13,7 +13,7 @@ its line and column.
 | Stop | Shift+F5 | SIGTERM to the whole process group, SIGKILL after one second |
 | Select Run Configuration… / Edit Run Configurations… | | see below |
 | Run All Tests | Ctrl+F5 | `tinox test --format json` |
-| Run Tests in Selected File | | `tinox test --format json <file>` for the file of the selected tree row |
+| Run Tests in Selected File | | `tinox test <file> --format json` for the file of the selected tree row |
 | Run Failed Tests | | the files that contain failed tests |
 | Discover Tests | | `tinox test --list --message-format=json`, nothing is compiled or run |
 | Rerun Tests on Save | | checkable; saving a `.tnx` file runs all tests (watch mode) |
@@ -21,10 +21,14 @@ its line and column.
 `tinox test` takes a file but no method filter, so "run one" runs the file of the selected test
 and updates every test in it.
 
+The selected file is deliberately passed before options: older Tinox silently ignores
+a file after flags ([tinox#585](https://github.com/subnix-work/tinox/issues/585)).
+The real self-hosting smoke checks that unrelated files are not run.
+
 ## Preferences used
 
 Settings → Build: *Extra arguments for tinox* (added to build, check and the build of Run),
-*Save all files before building* (task chaining: every task saves first), *Show the output panel
+*Save all files before building* (requests Save All before starting; wait for any asynchronous format-on-save work to finish), *Show the output panel
 when a build starts*. Settings → Language Server → *Tinox compiler* names the executable; a bare
 name is searched in `PATH` and the usual tool folders.
 

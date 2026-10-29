@@ -13,7 +13,7 @@ OUT := build/tinox-ide
 PREFIX ?= /usr/local
 LIBDIR ?= lib
 
-.PHONY: all bridge ide run example docs test test-bridge test-asan test-tsan fuzz bench fmt clean check-env install-resources install test-packaging release
+.PHONY: all bridge ide run example docs test test-bridge test-asan test-tsan fuzz bench fmt clean check-env install-resources install test-packaging release dogfood test-dogfood test-manual
 
 all: ide
 
@@ -31,6 +31,7 @@ run: ide
 test: bridge
 	scripts/test-check-env.sh
 	scripts/test-syntax.sh
+	TINOX=$(TINOX) scripts/test-manual.sh
 	python3 scripts/check-docs.py
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
 	$(TINOX) test
@@ -48,10 +49,11 @@ bench: bridge
 example: bridge
 	$(TINOX) run examples/shell/Main.tnx
 
-# API documentation of the Tinox side, from the doc comments, to build/api/index.html
+# Generated Tinox API plus linked user manual and architecture site (Python-Markdown).
 docs:
 	mkdir -p build/api
 	$(TINOX) doc --out build/api/index.html
+	python3 scripts/build-docs.py
 
 # The whole bridge suite on Qt's offscreen platform: unit tests per namespace, the ABI contract
 # against the real bridge and the mock, header checks. No display needed.
@@ -101,3 +103,15 @@ test-packaging: ide
 # Reproducible source archive from a clean tagged commit (no publishing).
 release:
 	scripts/release.sh
+
+# Start the IDE on itself; bootstrap the bridge/binary before entering the contributor loop.
+dogfood: ide
+	TINOXIDE_OPEN="$(CURDIR)" ./$(OUT)
+
+# Automated self-hosting acceptance: real IDE, isolated copy, offscreen.
+test-dogfood: bridge
+	TINOX=$(TINOX) scripts/test-dogfood.sh
+
+# Execute the exact user-manual tutorial (no Qt needed).
+test-manual:
+	TINOX=$(TINOX) scripts/test-manual.sh

@@ -40,8 +40,9 @@ namespace tinox.ide
      *   - MainWindow: the widgets, a function of the store
      *
      * Feature modules (workspace, editor, lsp, build, settings) add commands to the registry,
-     * read and write the store, and talk to each other over the bus; none of them calls another
-     * directly. See docs/ide-core.md.
+     * read and write the store, and announce changes over the bus. This composition root also
+     * passes shared document/language/navigation services explicitly into their integrations.
+     * See docs/ide-core.md for ownership and threading.
      */
     class IdeApp
     {

@@ -11,7 +11,16 @@
 * `main` is always buildable. Work happens on `feature/<short-name>` branches
   and lands through a pull request that references its issue (`Refs #N`,
   `Closes #N`).
-* Run `make test` before pushing. CI (issue #34) runs the same targets.
+* From M2 on, edit the IDE inside Tinox IDE: `make dogfood` opens this checkout.
+  Follow [the self-hosting loop](docs/dogfooding.md). Record a forced external-editor
+  fallback as friction, then return to the IDE; bootstrap/recovery and automated
+  harnesses may run outside it.
+* Run `make test` before every commit. Also run `make test-dogfood` for self-hosting
+  changes and `make docs` when changing documentation. Packaging CI builds/smokes
+  Flatpak; the full compiler/bridge/sanitizer matrix remains issue #34.
+* Every IDE pain point gets an owning issue and a row in the
+  [friction log](docs/friction-log.md). Review the log at each milestone before
+  advancing it; record unresolved constraints explicitly.
 * Commit messages and code (comments, identifiers, docs) are in English.
   Explain the why in the commit body.
 

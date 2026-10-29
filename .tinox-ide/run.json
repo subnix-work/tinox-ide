@@ -1,0 +1,28 @@
+{
+  "selected": "IDE",
+  "configurations": [
+    {
+      "name": "IDE",
+      "file": "src/Main.tnx",
+      "args": "",
+      "env": [],
+      "cwd": ""
+    },
+    {
+      "name": "IDE smoke",
+      "file": "src/Main.tnx",
+      "args": "",
+      "env": [
+        "TINOXIDE_SMOKE=1"
+      ],
+      "cwd": ""
+    },
+    {
+      "name": "Project (full check)",
+      "file": "",
+      "args": "",
+      "env": [],
+      "cwd": ""
+    }
+  ]
+}
