@@ -1,0 +1,600 @@
+module tinox.ide.build
+
+import tinox.core.json
+import tinox.core.semaphore.Mutex
+import tinox.ide.app.BusMessage
+import tinox.ide.app.CommandContext
+import tinox.ide.app.FileSystem
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.MainWindow
+import tinox.ide.app.Store
+import tinox.ide.editor.Documents
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.EventLoop
+import tinox.ide.settings.Arguments
+import tinox.ide.settings.ToolProbe
+import tinox.ide.ui.Dialogs
+import tinox.ide.ui.ItemView
+import tinox.ide.ui.Js
+import tinox.ide.ui.Model
+import tinox.ide.ui.Node
+import tinox.ide.ui.Row
+import tinox.ide.ui.Ui
+
+namespace tinox.ide.build
+{
+    /**
+     * Build, check, run and test through the `tinox` tool. A task is a list of steps (for Run:
+     * build, then the program); each step is one TaskRun whose output a poller on the logic task
+     * streams into the Build tab with ANSI colours. Diagnostics come from the JSON event stream
+     * and, for everything else, from text lines. Store keys: build.active, build.activity,
+     * tests.summary, tests.failed, tests.watch. See docs/build.md.
+     */
+    class BuildService
+    {
+        /** The window, store and registry. */
+        var window: MainWindow
+        /** Saves files before a task and opens error locations. */
+        var documents: Documents
+        /** Asks which run configuration to use. */
+        var dialogs: Dialogs
+        /** The tests and their results. */
+        var tests: TestExplorer
+        /** The run configurations of the open workspace. */
+        var configs: RunConfigs
+        /** The build problems tree. */
+        var model: Model
+        /** Problems of the current or last task in report order. */
+        var problems: List<BuildProblem>
+        /** Whether the problems tree needs drawing. */
+        var problemsDirty: Bool
+        /** The steps of the current task. */
+        var steps: List<TaskStep>
+        /** The index of the step that runs. */
+        var index: Int64
+        /** The process of the running step; only meaningful while `active`. */
+        var run: TaskRun
+        /** A task is running. */
+        var active: Bool
+        /** The user pressed Stop. */
+        var cancelled: Bool
+        /** The label of the task ("Build", "Run", "Tests"). */
+        var title: String
+        /** The executable the last successful build reported. */
+        var artifact: String
+        /** The directory the running step uses. */
+        var directory: String
+        /** The incomplete last line of stdout. */
+        var partialOut: String
+        /** The incomplete last line of stderr. */
+        var partialErr: String
+        /** Text waiting to be written to the Build tab. */
+        var pending: String
+        /** Whether the next write replaces the log. */
+        var clearLog: Bool
+        /** The `test-run-finished` event said something failed. */
+        var testsFailed: Bool
+        /** Bottom tab index of the Build log. */
+        var outputTab: Int64
+        /** Bottom tab index of the build problems. */
+        var problemsTab: Int64
+        /** Bottom tab index of the test explorer. */
+        var testsTab: Int64
+
+        /** Creates the service and registers its tabs, commands and menu before the window starts. */
+        fnc install(window: MainWindow, documents: Documents, dialogs: Dialogs) -> BuildService
+        {
+            const tests: TestExplorer = TestExplorer::create(window, documents)
+            const service: BuildService = BuildService { window: window, documents: documents, dialogs: dialogs, tests: tests, configs: RunConfigs::load(""), model: Model::create(window.events, ["Message", "Location", "Code"], false), problems: [], problemsDirty: false, steps: [], index: 0, run: TaskRun { mutex: Mutex::new(), out: "", err: "", stopping: false, done: true, status: 0, failure: "" }, active: false, cancelled: false, title: "", artifact: "", directory: "", partialOut: "", partialErr: "", pending: "", clearLog: false, testsFailed: false, outputTab: window.bottomPanels.len() + 2, problemsTab: window.bottomPanels.len() + 3, testsTab: window.bottomPanels.len() + 4 }
+            window.addBottomPanel((s: Store) => Ui::log("buildOutput").inTab("Build", "run-build"))
+            window.addBottomPanel((s: Store) => Ui::treeView("buildProblems").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Build Problems", "dialog-error"))
+            window.addBottomPanel((s: Store) => Ui::treeView("tests").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Tests", "checkmark"))
+            service.registerCommands()
+            window.addBuildMenu(["build.build", "build.check", "build.run", "build.stop", "-", "build.selectConfig", "build.editConfigs", "-", "tests.runAll", "tests.runFile", "tests.runFailed", "tests.discover", "tests.watch"])
+            window.events.onPoll((events: EventLoop) => service.poll())
+            window.bus.subscribe("workspace.opened", (m: BusMessage) => service.workspaceChanged(m.str("path")))
+            window.bus.subscribe("workspace.closed", (m: BusMessage) => service.workspaceChanged(""))
+            window.bus.subscribe("editor.saved", (m: BusMessage) => service.saved(m.str("path")))
+            window.store.set("build.activity", "")
+            return service
+        }
+
+        /** Attaches the trees after the window is mounted. */
+        fn bind() -> Nothing
+        {
+            this.model.attach(this.window.mount.idOf("buildProblems"))
+            this.window.mount.onActivated("buildProblems", (id: String) => this.visit(id))
+            this.window.mount.onSelection("buildProblems", (ids: List<String>) => this.selected(ids))
+            this.tests.bind()
+        }
+
+        /** The commands of the Build menu. */
+        fn registerCommands() -> Nothing
+        {
+            const store: Store = this.window.store
+            const idle: fnc(Store) -> Bool = (s: Store) => s.getBool("workspace.open") && !s.getBool("build.active")
+            this.window.registry.registerAll([
+                IdeCommand::create("build.build", "&Build").icon("run-build").shortcut("F7").category("Build").enabledWhen(idle).run((c: CommandContext) => this.build("build")),
+                IdeCommand::create("build.check", "&Check").icon("dialog-ok-apply").shortcut("Shift+F7").category("Build").enabledWhen(idle).run((c: CommandContext) => this.build("check")),
+                IdeCommand::create("build.run", "&Run").icon("media-playback-start").shortcut("F5").category("Build").enabledWhen(idle).run((c: CommandContext) => this.runProgram()),
+                IdeCommand::create("build.stop", "&Stop").icon("process-stop").shortcut("Shift+F5").category("Build").enabledWhen((s: Store) => s.getBool("build.active")).run((c: CommandContext) => this.stop()),
+                IdeCommand::create("build.selectConfig", "Select Run &Configuration…").icon("configure").category("Build").enabledWhen((s: Store) => s.getBool("workspace.open")).run((c: CommandContext) => this.selectConfig()),
+                IdeCommand::create("build.editConfigs", "&Edit Run Configurations…").icon("document-edit").category("Build").enabledWhen((s: Store) => s.getBool("workspace.open")).run((c: CommandContext) => this.editConfigs()),
+                IdeCommand::create("tests.runAll", "Run &All Tests").icon("games-solve").shortcut("Ctrl+F5").category("Build").enabledWhen(idle).run((c: CommandContext) => this.runTests([])),
+                IdeCommand::create("tests.runFile", "Run Tests in &Selected File").icon("games-solve").category("Build").enabledWhen(idle).run((c: CommandContext) => this.runSelectedTests()),
+                IdeCommand::create("tests.runFailed", "Run &Failed Tests").icon("view-refresh").category("Build").enabledWhen((s: Store) => idle(s) && s.getInt("tests.failed") > 0).run((c: CommandContext) => this.runTests(this.tests.failedFiles())),
+                IdeCommand::create("tests.discover", "&Discover Tests").icon("edit-find").category("Build").enabledWhen(idle).run((c: CommandContext) => this.discover()),
+                IdeCommand::create("tests.watch", "Rerun Tests on Sa&ve").icon("media-playlist-repeat").category("Build").checkable(true).run((c: CommandContext) => store.setBool("tests.watch", c.checked))
+            ])
+        }
+
+        /** The tinox executable: the preference when it is a path, else the first one found, else the bare name. */
+        fn tinox() -> String
+        {
+            const configured: String = this.window.store.get("pref.Tools.tinoxPath")
+            if (configured.contains("/")) { return configured }
+            var name: String = configured
+            if (name == "") { name = "tinox" }
+            const found: String = ToolProbe::find(name)
+            if (found != "") { return found }
+            return name
+        }
+
+        /** The workspace root. */
+        fn root() -> String
+        {
+            return this.window.store.get("workspace.path")
+        }
+
+        /** A project was opened or closed: its run configurations replace the previous ones and the results are dropped. */
+        fn workspaceChanged(path: String) -> Nothing
+        {
+            this.configs = RunConfigs::load(path)
+            if (!this.active)
+            {
+                this.problemsDirty = this.problemsDirty || this.problems.len() > 0
+                this.problems = []
+                if (this.tests.cases.len() > 0 || this.tests.errors.len() > 0) { this.tests.clearAll() }
+                this.window.store.set("tests.summary", "")
+                this.window.store.setInt("tests.failed", 0)
+            }
+        }
+
+        /** Build or check the project (or the selected configuration's file) and show what it reports. */
+        fn build(kind: String) -> Nothing
+        {
+            this.start(kind == "build", [this.buildStep(kind)])
+        }
+
+        /** The step that compiles the current configuration. */
+        fn buildStep(kind: String) -> TaskStep
+        {
+            var argv: List<String> = [this.tinox(), kind]
+            const file: String = this.configs.current().file
+            if (file != "") { argv.push(this.absolute(file)) }
+            for extra in Arguments::parse(this.window.store.get("pref.Build.args")) { argv.push(extra) }
+            argv.push("--message-format=json")
+            return TaskStep::events(kind, argv)
+        }
+
+        /** Builds, then starts the program with the selected configuration. */
+        fn runProgram() -> Nothing
+        {
+            const config: RunConfig = this.configs.current()
+            this.start(true, [this.buildStep("build"), TaskStep::program(config, Arguments::parse(config.args))])
+        }
+
+        /** Runs the tests of these files, all tests for an empty list. */
+        fn runTests(files: List<String>) -> Nothing
+        {
+            var steps: List<TaskStep> = []
+            if (files.len() == 0)
+            {
+                steps.push(TaskStep::events("test", [this.tinox(), "test", "--format", "json"]))
+            }
+            for file in files { steps.push(TaskStep::events("test", [this.tinox(), "test", "--format", "json", file])) }
+            this.tests.clearResults()
+            this.start(false, steps)
+        }
+
+        /** The tests in the file of the selected row; all of them when nothing is selected. */
+        fn runSelectedTests() -> Nothing
+        {
+            const file: String = this.tests.selectedFile()
+            if (file == "") { this.runTests([]) }
+            else { this.runTests([file]) }
+        }
+
+        /** Lists the tests without running them. */
+        fn discover() -> Nothing
+        {
+            this.tests.clearAll()
+            this.start(false, [TaskStep::events("list", [this.tinox(), "test", "--list", "--message-format=json"])])
+        }
+
+        /** A file was saved: with watch mode on, run the tests again. */
+        fn saved(path: String) -> Nothing
+        {
+            if (this.window.store.getBool("tests.watch") && !this.active && this.root() != "" && path.endsWith(".tnx"))
+            {
+                this.runTests([])
+            }
+        }
+
+        /** Makes a path absolute against the workspace root. */
+        fn absolute(path: String) -> String
+        {
+            return ProblemParser::resolve(path, this.root())
+        }
+
+        /** Starts a task. `showBuild` selects the Build tab, otherwise the Tests tab shows the result. */
+        fn start(showBuild: Bool, steps: List<TaskStep>) -> Nothing
+        {
+            const store: Store = this.window.store
+            if (this.active)
+            {
+                store.set("status.message", "A task is already running")
+                return
+            }
+            if (this.root() == "")
+            {
+                store.set("status.message", "Open a folder first")
+                return
+            }
+            if (store.getBool("pref.Build.saveBefore")) { this.documents.saveAll() }
+            this.steps = steps
+            this.index = 0
+            this.cancelled = false
+            this.testsFailed = false
+            this.artifact = ""
+            this.partialOut = ""
+            this.partialErr = ""
+            this.pending = ""
+            this.clearLog = true
+            this.problems = []
+            this.problemsDirty = true
+            this.title = "Build"
+            if (steps[0].kind == "test" || steps[0].kind == "list") { this.title = "Tests" }
+            if (steps.len() > 1) { this.title = "Run" }
+            this.active = true
+            store.setBool("build.active", true)
+            store.set("build.activity", this.title + " running…")
+            store.set("status.message", this.title + " started")
+            this.window.registry.refresh()
+            if (this.title == "Tests") { this.window.showBottomTab(this.testsTab) }
+            else if (store.getBool("pref.Build.showOutput")) { this.window.showBottomTab(this.outputTab) }
+            this.begin()
+        }
+
+        /** Starts the process of the current step. */
+        fn begin() -> Nothing
+        {
+            const step: TaskStep = this.steps[this.index]
+            var argv: List<String> = step.argv
+            var directory: String = this.root()
+            if (step.cwd != "") { directory = this.absolute(step.cwd) }
+            if (step.kind == "run")
+            {
+                argv = [this.artifact]
+                for argument in step.argv { argv.push(argument) }
+            }
+            this.directory = directory
+            this.write("\x1b[1m$ " + Js::join(argv, " ") + "\x1b[0m\n")
+            this.partialOut = ""
+            this.partialErr = ""
+            this.run = TaskRun::start(argv, directory, step.env)
+        }
+
+        /** Stops the running task, including every process the step started. */
+        fn stop() -> Nothing
+        {
+            if (this.active)
+            {
+                this.cancelled = true
+                this.run.stop()
+                this.window.store.set("build.activity", "Stopping…")
+            }
+        }
+
+        /** Runs on the logic task between events: moves output into the UI and advances finished steps. */
+        fn poll() -> Nothing
+        {
+            if (this.active)
+            {
+                const done: Bool = this.run.finished()
+                const chunks: List<String> = this.run.drain()
+                this.consume(chunks[0], chunks[1])
+                if (done) { this.stepFinished() }
+            }
+            this.flush()
+        }
+
+        /** Splits fresh output into lines and handles each. */
+        fn consume(stdout: String, stderr: String) -> Nothing
+        {
+            if (stdout != "")
+            {
+                const lines: List<String> = (this.partialOut + stdout).split("\n")
+                var i: Int64 = 0
+                while (i < lines.len() - 1)
+                {
+                    this.outLine(lines[i])
+                    i = i + 1
+                }
+                this.partialOut = lines[lines.len() - 1]
+            }
+            if (stderr != "")
+            {
+                const lines: List<String> = (this.partialErr + stderr).split("\n")
+                var i: Int64 = 0
+                while (i < lines.len() - 1)
+                {
+                    this.errLine(lines[i])
+                    i = i + 1
+                }
+                this.partialErr = lines[lines.len() - 1]
+            }
+        }
+
+        /** One line of stdout: a JSON event of the tool or plain program output. */
+        fn outLine(line: String) -> Nothing
+        {
+            const step: TaskStep = this.steps[this.index]
+            if (step.json && line.startsWith("{"))
+            {
+                try
+                {
+                    this.event(Json::parse(line))
+                    return
+                }
+                catch (e: String) { }
+            }
+            this.write(line + "\n")
+            this.report(ProblemParser::parseText(line, this.directory))
+        }
+
+        /** One line of stderr: progress, warnings, or the program's own error output. */
+        fn errLine(line: String) -> Nothing
+        {
+            this.write(line + "\n")
+            this.report(ProblemParser::parseText(line, this.directory))
+        }
+
+        /** Handles one event of the JSON stream. */
+        fn event(event: JsonValue) -> Nothing
+        {
+            const reason: String = RunConfig::text(event, "reason")
+            if (reason == "compiler-message")
+            {
+                const found: BuildProblem = ProblemParser::fromDiagnostic(event.getField("diagnostic"), this.directory)
+                this.write(BuildService::color(found) + found.text() + "\x1b[0m\n")
+                this.report(found)
+            }
+            else if (reason == "build-finished")
+            {
+                if (event.getField("artifact").isString()) { this.artifact = event.getField("artifact").getString() }
+            }
+            else if (reason.startsWith("test-"))
+            {
+                this.tests.handle(event)
+                this.testLine(reason, event)
+            }
+        }
+
+        /** The ANSI colour of a problem's severity. */
+        fnc color(found: BuildProblem) -> String
+        {
+            if (found.severity == "error") { return "\x1b[31m" }
+            if (found.severity == "warning") { return "\x1b[33m" }
+            return "\x1b[36m"
+        }
+
+        /** Echoes a test event to the Build tab. */
+        fn testLine(reason: String, event: JsonValue) -> Nothing
+        {
+            const name: String = RunConfig::text(event, "class") + "::" + RunConfig::text(event, "method")
+            if (reason == "test-passed")
+            {
+                this.write("\x1b[32mPASS\x1b[0m " + name + " (" + event.getField("duration_ms").getInt().toString() + " ms)\n")
+            }
+            else if (reason == "test-failed")
+            {
+                this.write("\x1b[31mFAIL\x1b[0m " + name + "\n" + RunConfig::text(event, "message") + "\n")
+            }
+            else if (reason == "test-collection-error")
+            {
+                this.write("\x1b[31mERROR\x1b[0m " + RunConfig::text(event, "message") + "\n")
+                this.report(ProblemParser::parseText(RunConfig::text(event, "message"), this.directory))
+            }
+            else if (reason == "test-run-finished")
+            {
+                this.testsFailed = !event.getField("success").getBool()
+                this.write(this.tests.summary() + "\n")
+            }
+        }
+
+        /** Remembers a problem unless the same one was already reported by the other output form. */
+        fn report(found: BuildProblem) -> Nothing
+        {
+            if (found.message == "" || (found.line == 0 && found.path == "")) { return }
+            for known in this.problems
+            {
+                if (known.same(found)) { return }
+            }
+            this.problems.push(found)
+            this.problemsDirty = true
+        }
+
+        /** Queues text for the Build tab. */
+        fn write(text: String) -> Nothing
+        {
+            this.pending = this.pending + text
+        }
+
+        /** Sends queued text, the problems and the tests to their views. */
+        fn flush() -> Nothing
+        {
+            if (this.pending != "" || this.clearLog)
+            {
+                this.window.mount.appendAnsi("buildOutput", this.pending, this.clearLog)
+                this.pending = ""
+                this.clearLog = false
+            }
+            if (this.problemsDirty) { this.drawProblems() }
+            this.tests.flush()
+        }
+
+        /** The step ended: next step, or the end of the task. */
+        fn stepFinished() -> Nothing
+        {
+            if (this.partialOut != "") { this.outLine(this.partialOut) }
+            if (this.partialErr != "") { this.errLine(this.partialErr) }
+            this.partialOut = ""
+            this.partialErr = ""
+            const status: Int64 = this.run.exitStatus()
+            const step: TaskStep = this.steps[this.index]
+            if (this.run.error() != "") { this.write("\x1b[31m" + this.run.error() + "\x1b[0m\n") }
+            const failed: Bool = status != 0
+            if (!this.cancelled && !failed && this.index + 1 < this.steps.len() && (this.steps[this.index + 1].kind != "run" || this.artifact != ""))
+            {
+                this.index = this.index + 1
+                this.begin()
+                return
+            }
+            if (!this.cancelled && !failed && this.index + 1 < this.steps.len())
+            {
+                this.write("\x1b[31mThe build reported no executable to run\x1b[0m\n")
+                this.finish(step.kind, 1)
+                return
+            }
+            if (!this.cancelled && failed && step.kind != "run" && step.kind != "test" && this.problems.len() == 0)
+            {
+                this.write("\x1b[31m" + step.kind + " failed with exit status " + status.toString() + "\x1b[0m\n")
+            }
+            this.finish(step.kind, status)
+        }
+
+        /** Ends the task: state, status bar, notification. */
+        fn finish(kind: String, status: Int64) -> Nothing
+        {
+            const store: Store = this.window.store
+            var errors: Int64 = 0
+            for found in this.problems
+            {
+                if (found.severity == "error") { errors = errors + 1 }
+            }
+            var failed: Bool = status != 0
+            if (kind == "test" && this.testsFailed) { failed = true }
+            var message: String = ""
+            if (this.cancelled) { message = this.title + " stopped" }
+            else if (kind == "run") { message = "Program exited with status " + status.toString() }
+            else if (kind == "list") { message = this.tests.cases.len().toString() + " tests found" }
+            else if (kind == "test") { message = this.tests.summary() }
+            else if (failed) { message = this.title + " failed: " + errors.toString() + " errors" }
+            else { message = this.title + " succeeded" }
+            this.active = false
+            store.setBool("build.active", false)
+            store.set("build.activity", "")
+            store.set("status.message", message)
+            this.write("\n" + message + "\n")
+            if (this.cancelled) { this.tests.interrupted() }
+            this.flush()
+            this.window.registry.refresh()
+            if (this.cancelled || kind == "list") { return }
+            if (failed && errors > 0 && kind != "test") { this.window.showBottomTab(this.problemsTab) }
+            var event: String = "buildFinished"
+            if (kind == "test")
+            {
+                event = "testsFinished"
+                if (failed) { event = "testsFailed" }
+            }
+            else if (failed && kind != "run") { event = "buildFailed" }
+            Bridge::post(Command::named("notify.send").str("event", event).str("title", "Tinox IDE: " + this.title).str("text", message).build())
+        }
+
+        /** Rebuilds the problems tree: files in first-report order, problems in report order. */
+        fn drawProblems() -> Nothing
+        {
+            this.problemsDirty = false
+            var files: List<String> = []
+            for found in this.problems
+            {
+                if (!files.contains(found.path)) { files.push(found.path) }
+            }
+            var rows: List<Row> = []
+            for file in files
+            {
+                var label: String = file
+                if (file == "") { label = "(no location)" }
+                var children: List<Row> = []
+                var i: Int64 = 0
+                while (i < this.problems.len())
+                {
+                    if (this.problems[i].path == file) { children.push(this.problems[i].row("bp:" + i.toString())) }
+                    i = i + 1
+                }
+                rows.push(Row::create("file:" + file, label + " (" + children.len().toString() + ")").icon("text-x-generic").children(children))
+            }
+            this.model.reset(rows)
+            for file in files { ItemView::of(this.window.mount, "buildProblems").expand("file:" + file, true) }
+        }
+
+        /** Single click or Enter on a problem row. */
+        fn selected(ids: List<String>) -> Nothing
+        {
+            if (ids.len() > 0) { this.visit(ids[0]) }
+        }
+
+        /** Opens the file of a problem at its line and column (the compiler counts from one). */
+        fn visit(id: String) -> Nothing
+        {
+            if (!id.startsWith("bp:")) { return }
+            const n: Int64 = id.substring(3, id.len()).toInt()
+            if (n < 0 || n >= this.problems.len()) { return }
+            const found: BuildProblem = this.problems[n]
+            if (found.path == "" || found.line <= 0) { return }
+            this.documents.openAt(found.path, found.line - 1, TestExplorer::zero(found.column))
+        }
+
+        /** Lets the user choose a run configuration. */
+        fn selectConfig() -> Nothing
+        {
+            var ids: List<String> = []
+            var texts: List<String> = []
+            for config in this.configs.items
+            {
+                ids.push(config.name)
+                texts.push(config.name)
+            }
+            ids.push("")
+            texts.push("Cancel")
+            this.dialogs.ask("Run Configuration", "Selected: " + this.configs.selected, ids, texts, (id: String) => this.chosen(id))
+        }
+
+        /** Applies and stores the choice. */
+        fn chosen(name: String) -> Nothing
+        {
+            if (name != "" && this.configs.pick(name))
+            {
+                this.persist()
+                this.window.store.set("status.message", "Run configuration: " + name)
+            }
+        }
+
+        /** Writes the configurations of the workspace; a failure is shown instead of thrown. */
+        fn persist() -> Nothing
+        {
+            try { this.configs.save(this.root()) }
+            catch (e: String) { this.dialogs.error("Run Configurations", "Cannot save " + RunConfigs::path(this.root()) + ":\n" + e) }
+        }
+
+        /** Opens `.tinox-ide/run.json`, creating it with the current configurations first. */
+        fn editConfigs() -> Nothing
+        {
+            const path: String = RunConfigs::path(this.root())
+            if (!FileSystem::exists(path)) { this.persist() }
+            if (FileSystem::exists(path)) { this.documents.openAt(path, 0, 0) }
+        }
+    }
+}

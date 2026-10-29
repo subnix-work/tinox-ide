@@ -133,3 +133,9 @@ its success message. Normal application INFO lines remain visible.
 distinct default colours, retained moving ranges during typing, live per-type
 colour overrides and shutdown cleanup. Like the other LSP smokes it uses
 `test-gui-smoke.sh` to reject unexpected stderr through teardown.
+
+## Build and test tasks
+
+`tests/BuildTest.tnx` runs the real `tinox` tool against throw-away projects (needs `tinox` on
+`PATH`); it covers the diagnostic parsers, run configurations, the test explorer, build errors, Run,
+Stop, discovery, run-failed and watch mode. See [build.md](build.md).

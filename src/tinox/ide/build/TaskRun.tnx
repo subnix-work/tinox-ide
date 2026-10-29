@@ -1,0 +1,154 @@
+module tinox.ide.build
+
+import tinox.core.process.InteractiveProcess
+import tinox.core.process.Process
+import tinox.core.semaphore.Mutex
+import tinox.core.time.Time
+
+namespace tinox.ide.build
+{
+    /**
+     * One child process and the task that reads it. The reader owns the process (no Qt, no IDE
+     * state); the logic task collects what arrived with drain() from an EventLoop poller.
+     */
+    class TaskRun
+    {
+        /** Guards every field below. */
+        var mutex: Mutex
+        /** Stdout received since the last drain. */
+        var out: String
+        /** Stderr received since the last drain. */
+        var err: String
+        /** Stop requested: the whole process group gets SIGTERM, and SIGKILL after a grace period. */
+        var stopping: Bool
+        /** The child has ended and the pipes are drained. */
+        var done: Bool
+        /** Exit status, -signal when killed, 127 when it could not start. */
+        var status: Int64
+        /** Why the child could not be run, or "". */
+        var failure: String
+
+        /** Starts the child in its own process group; `env` entries are KEY=value. */
+        fnc start(argv: List<String>, directory: String, env: List<String>) -> TaskRun
+        {
+            const run: TaskRun = TaskRun { mutex: Mutex::new(), out: "", err: "", stopping: false, done: false, status: 0, failure: "" }
+            spawn TaskRun::serve(run, argv, directory, env)
+            return run
+        }
+
+        /** Takes the output that arrived since the last call as [stdout, stderr]. */
+        fn drain() -> List<String>
+        {
+            Mutex::lock(this.mutex)
+            const chunks: List<String> = [this.out, this.err]
+            this.out = ""
+            this.err = ""
+            Mutex::unlock(this.mutex)
+            return chunks
+        }
+
+        /** Asks the process group to end. */
+        fn stop() -> Nothing
+        {
+            Mutex::lock(this.mutex)
+            this.stopping = true
+            Mutex::unlock(this.mutex)
+        }
+
+        /** Whether stop() was called. */
+        fn wasStopped() -> Bool
+        {
+            Mutex::lock(this.mutex)
+            const stopping: Bool = this.stopping
+            Mutex::unlock(this.mutex)
+            return stopping
+        }
+
+        /** Whether the child ended and all its output was handed to drain() or is waiting there. */
+        fn finished() -> Bool
+        {
+            Mutex::lock(this.mutex)
+            const done: Bool = this.done
+            Mutex::unlock(this.mutex)
+            return done
+        }
+
+        /** The exit status once finished. */
+        fn exitStatus() -> Int64
+        {
+            Mutex::lock(this.mutex)
+            const status: Int64 = this.status
+            Mutex::unlock(this.mutex)
+            return status
+        }
+
+        /** The reason the child could not be started, or "". */
+        fn error() -> String
+        {
+            Mutex::lock(this.mutex)
+            const failure: String = this.failure
+            Mutex::unlock(this.mutex)
+            return failure
+        }
+
+        /** Appends output, dropping what exceeds 16 MiB so a runaway child cannot exhaust memory. */
+        fn push(stdout: String, stderr: String) -> Nothing
+        {
+            Mutex::lock(this.mutex)
+            if (this.out.len() + stdout.len() <= 16777216) { this.out = this.out + stdout }
+            if (this.err.len() + stderr.len() <= 16777216) { this.err = this.err + stderr }
+            Mutex::unlock(this.mutex)
+        }
+
+        /** Reads both pipes until the child ends; SIGTERM, then after one second SIGKILL, to the whole group on stop(). */
+        fnc serve(run: TaskRun, argv: List<String>, directory: String, env: List<String>) -> Int64
+        {
+            const proc: InteractiveProcess = InteractiveProcess::startPiped(argv, directory, env)
+            var termSent: Int64 = 0
+            try
+            {
+                var ended: Bool = false
+                while (!ended)
+                {
+                    const mask: Int64 = InteractiveProcess::waitReadable(proc, 20)
+                    var stdout: String = ""
+                    var stderr: String = ""
+                    if (mask % 2 == 1) { stdout = InteractiveProcess::readOutput(proc, 0) }
+                    if ((mask / 2) % 2 == 1) { stderr = InteractiveProcess::readStderr(proc, 0) }
+                    if (stdout != "" || stderr != "") { run.push(stdout, stderr) }
+                    if (run.wasStopped())
+                    {
+                        if (termSent == 0)
+                        {
+                            InteractiveProcess::signal(proc, 15)
+                            termSent = Time::now()
+                        }
+                        else if (Time::now() - termSent > 1000)
+                        {
+                            InteractiveProcess::signal(proc, 9)
+                        }
+                    }
+                    if (mask == 4)
+                    {
+                        ended = !InteractiveProcess::isAlive(proc)
+                        if (!ended) { Process::sleep(2) }
+                    }
+                }
+            }
+            catch (e: String)
+            {
+                Mutex::lock(run.mutex)
+                run.failure = e
+                Mutex::unlock(run.mutex)
+            }
+            var code: Int64 = InteractiveProcess::exitCode(proc)
+            if (code < -1000) { code = 127 }
+            InteractiveProcess::kill(proc)
+            Mutex::lock(run.mutex)
+            run.status = code
+            run.done = true
+            Mutex::unlock(run.mutex)
+            return 0
+        }
+    }
+}

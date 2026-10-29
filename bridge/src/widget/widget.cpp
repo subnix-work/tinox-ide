@@ -1,6 +1,7 @@
 #include "widget.h"
 
 #include "../bridge.h"
+#include "ansidecoder.h"
 #include "tinoxkde.h"
 
 #include <KConfigGroup>
@@ -1412,6 +1413,13 @@ Reply focusWidget(Bridge &b, const QJsonObject &cmd)
     return Reply::success();
 }
 
+// Keeps the colour state of a stream-mode log next to its widget.
+struct AnsiDecoderHolder : QObject
+{
+    explicit AnsiDecoderHolder(QObject *parent) : QObject(parent) {}
+    AnsiDecoder decoder;
+};
+
 Reply appendText(Bridge &b, const QJsonObject &cmd)
 {
     Reply fail;
@@ -1423,7 +1431,22 @@ Reply appendText(Bridge &b, const QJsonObject &cmd)
     if (!edit) {
         return Reply::failure(TKDE_E_INVALID_ARG, QStringLiteral("widget.append needs a QPlainTextEdit"));
     }
-    edit->appendPlainText(cmd.value(QStringLiteral("text")).toString());
+    const QString text = cmd.value(QStringLiteral("text")).toString();
+    if (!cmd.value(QStringLiteral("ansi")).toBool() && !cmd.value(QStringLiteral("clear")).toBool()) {
+        edit->appendPlainText(text);
+        return Reply::success();
+    }
+    // Stream mode: text goes in as written (no implicit newline), SGR colours are decoded.
+    auto *decoder = static_cast<AnsiDecoderHolder *>(edit->findChild<QObject *>(QStringLiteral("tkdeAnsi"), Qt::FindDirectChildrenOnly));
+    if (!decoder) {
+        decoder = new AnsiDecoderHolder(edit);
+        decoder->setObjectName(QStringLiteral("tkdeAnsi"));
+    }
+    if (cmd.value(QStringLiteral("clear")).toBool()) {
+        edit->clear();
+        decoder->decoder.reset();
+    }
+    decoder->decoder.append(edit, text);
     return Reply::success();
 }
 

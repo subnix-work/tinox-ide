@@ -1,0 +1,49 @@
+module tinox.ide.build
+
+namespace tinox.ide.build
+{
+    /** One discovered @Test method and what the last run said about it. */
+    class TestCase
+    {
+        /** The source file of the test class. */
+        var file: String
+        /** The test class. */
+        var className: String
+        /** The test method. */
+        var method: String
+        /** The text of @Test. */
+        var description: String
+        /** One-based line of the method. */
+        var line: Int64
+        /** One-based column of the method. */
+        var column: Int64
+        /** "idle", "running", "passed" or "failed". */
+        var status: String
+        /** The failure message, "" otherwise. */
+        var message: String
+        /** Duration of the last run in milliseconds. */
+        var millis: Int64
+
+        /** The stable row id. */
+        fn id() -> String
+        {
+            return this.file + "#" + this.className + "::" + this.method
+        }
+
+        /** The name shown in the tree. */
+        fn title() -> String
+        {
+            if (this.description != "") { return this.description }
+            return this.className + "::" + this.method
+        }
+
+        /** Breeze icon for the status. */
+        fn icon() -> String
+        {
+            if (this.status == "passed") { return "dialog-ok-apply" }
+            if (this.status == "failed") { return "dialog-error" }
+            if (this.status == "running") { return "media-playback-start" }
+            return "media-record"
+        }
+    }
+}

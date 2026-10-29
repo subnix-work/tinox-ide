@@ -3,7 +3,7 @@ bridge/build/
 bridge/build-asan/
 bridge/build-tsan/
 bridge/build-fuzz/
-build/
+/build/
 .tinox/
 .tinox-build/
 *.o

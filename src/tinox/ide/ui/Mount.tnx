@@ -251,6 +251,12 @@ namespace tinox.ide.ui
             Bridge::post(Command::named("widget.append").target(this.idOf(key)).str("text", text).build())
         }
 
+        /** Streams text into a log node as written: no implicit newline, ANSI colours decoded; `clear` empties the log first. */
+        fn appendAnsi(key: String, text: String, clear: Bool) -> Nothing
+        {
+            Bridge::post(Command::named("widget.append").target(this.idOf(key)).str("text", text).bool("ansi", true).bool("clear", clear).build())
+        }
+
         /** Saves the window geometry, dock layout and splitter sizes under `group` in the application's config. */
         fn saveState(group: String) -> Nothing
         {
