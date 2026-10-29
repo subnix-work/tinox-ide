@@ -11,18 +11,21 @@ src/tinox/ide/kde/            the bindings to the bridge (Bridge, Command, Event
 src/tinox/ide/ui/             typed widgets, actions, models, editor wrappers                      [ui-api.md]
 src/tinox/ide/app/            this document: bus, store, commands, logging, errors, main window
 src/tinox/ide/IdeApp.tnx      the composition root: creates the parts above and the feature modules, connects them
-src/tinox/ide/settings/       typed access to the user's KConfig (Settings); the preferences dialog (#22) joins it
+src/tinox/ide/settings/       typed access to the user's KConfig (Settings); live preferences and configuration dialog
 src/tinox/ide/workspace/      project folder, tinox.toml model, file tree, file operations, watching, git status   [workspace.md]
-src/tinox/ide/editor/         (#21) open documents, tabs, dirty tracking, session restore
-src/tinox/ide/lsp/            (#24-#29) language server client and its features
-src/tinox/ide/build/          (#30) build, run, check, test, output
+src/tinox/ide/editor/         open documents, tabs, dirty tracking, session restore
+src/tinox/ide/lsp/            language server client and its features
+src/tinox/ide/build/          build, run, check, test, output
 src/tinox/ide/examples/       runnable examples of the UI API
 ```
 
-Dependencies point downwards: `app` uses `ui` and `kde`; feature modules use `app` (registry, store,
-bus), `ui` and `kde`; only `IdeApp` knows the feature modules (importing one class of `app` therefore does
-not pull the whole program into a build, which keeps compile times of tests down); **feature modules do not call each other**: they publish on the bus and
-read the store.
+Dependencies generally point downwards: `app` uses `ui` and `kde`, and feature modules
+use those shared layers. `IdeApp` is the composition root: it creates services and
+passes shared document/language/navigation owners into integrations explicitly.
+The bus and store carry workspace/editor/settings announcements and UI state;
+there is no hidden global service lookup. For example, `BuildService` receives
+`Documents`, and `EditService` receives the shared `LanguageService` and navigation
+service. Keep that ownership wiring visible when adding cross-feature behaviour.
 
 ## The parts
 

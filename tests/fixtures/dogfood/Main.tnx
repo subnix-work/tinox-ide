@@ -1,0 +1,116 @@
+import tinox.core.process.Process
+import tinox.ide.IdeApp
+import tinox.ide.app.FileSystem
+import tinox.ide.build.RunConfig
+import tinox.ide.build.TaskStep
+import tinox.ide.kde.App
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Command
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.ItemView
+
+class Main
+{
+    fnc main() -> Int32
+    {
+        return App::run("tinoxide", "Tinox IDE Dogfooding", (events: EventLoop) => Main::logic(events))
+    }
+
+    fnc logic(events: EventLoop) -> Int32
+    {
+        const results: List<Bool> = []
+        events.onType("core.ready", (event: Event) => Main::check(events, results))
+        events.run()
+        if (results.len() != 1 || !results[0]) { return 1 }
+        return 0
+    }
+
+    fnc expect(ok: Bool, message: String) -> Nothing
+    {
+        if (!ok) { throw message }
+    }
+
+    fnc wait(app: IdeApp, predicate: fnc(IdeApp) -> Bool, milliseconds: Int64) -> Bool
+    {
+        const start: Int64 = Bridge::nowNs()
+        while (!predicate(app) && (Bridge::nowNs() - start) / 1000000 < milliseconds) { app.events.pump(10) }
+        return predicate(app)
+    }
+
+    fnc task(app: IdeApp, command: String, milliseconds: Int64) -> Nothing
+    {
+        Main::expect(app.registry.execute(command), "command unavailable: " + command)
+        Main::expect(app.build.active, "task did not start: " + command)
+        Main::expect(Main::wait(app, (a: IdeApp) => !a.build.active, milliseconds), "task timed out: " + command)
+        Main::expect(app.build.run.exitStatus() == 0, command + " failed: " + app.store.get("status.message"))
+    }
+
+    fnc check(events: EventLoop, results: List<Bool>) -> Nothing
+    {
+        const app: IdeApp = IdeApp::start(events)
+        try
+        {
+            const root: String = Process::env("TINOX_DOGFOOD_ROOT")
+            Main::expect(root.startsWith("/tmp/tinoxide-dogfood-"), "dogfooding requires an isolated temporary checkout")
+            app.workspace.open(root)
+            app.preferences.set("Tools.tinoxPath", Process::env("TINOX_DOGFOOD_COMPILER"))
+            app.preferences.set("Editor.backup", "false")
+            app.preferences.set("Editor.autosave", "false")
+            app.preferences.set("Editor.formatOnSave", "false")
+            Main::expect(app.registry.execute("nav.quickOpen"), "quick open unavailable")
+            app.navigation.picker.refill("src/Main.tnx")
+            Main::expect(app.navigation.picker.items.len() > 0, "quick open did not index the IDE sources")
+            app.navigation.picker.pick(root + "/src/Main.tnx")
+            Main::expect(app.documents.isOpen(root + "/src/Main.tnx"), "quick open did not open the IDE entry point")
+            app.language.start()
+            Main::expect(Main::wait(app, (a: IdeApp) => a.language.client.state == "ready", 15000), "language server did not initialize on the IDE workspace")
+            const file = app.documents.open(root + "/src/Main.tnx")
+            const original: String = file.doc.text()
+            file.doc.setText(original + "\n// Dogfooding: edited inside the IDE before rebuilding it.\n")
+            const saved: List<Bool> = []
+            app.documents.saveWith(file, (ok: Bool) => saved.push(ok))
+            Main::expect(Main::wait(app, (a: IdeApp) => saved.len() == 1, 10000), "save did not settle")
+            Main::expect(saved[0] && FileSystem::read(file.path) == file.doc.text(), "KTextEditor edit was not saved")
+            Main::expect(app.preferences.set("Appearance.toolbar", "false") == "", "preference was refused")
+            Main::expect(!app.store.getBool("pref.Appearance.toolbar"), "preference did not apply")
+            app.preferences.set("Appearance.toolbar", "true")
+            const config: RunConfig = RunConfig::project("IDE smoke")
+            // Full-project Check repeatedly checks shared graphs (tinox#559); check the real entry and its imports.
+            config.file = "src/Main.tnx"
+            config.env = ["TINOXIDE_SMOKE=1", "XDG_CONFIG_HOME=" + root + "/child-config"]
+            app.build.configs.items = [config]
+            app.build.configs.selected = config.name
+            Main::task(app, "build.check", 120000)
+            Main::expect(app.build.problems.len() == 0, "checking the IDE reported problems")
+            Main::task(app, "build.run", 180000)
+            Main::expect(app.store.get("status.message") == "Program exited with status 0", "rebuilt IDE did not exit cleanly")
+            Main::expect(app.build.artifact != "" && FileSystem::exists(app.build.artifact), "Run did not produce the IDE executable")
+            // File-scoped discovery has no UI command yet (tinox-ide#63); use the same task runner.
+            app.build.tests.clearAll()
+            app.build.start(false, [TaskStep::events("list", [app.build.tinox(), "test", root + "/tests/HostCommandTest.tnx", "--list", "--message-format=json"])])
+            Main::expect(Main::wait(app, (a: IdeApp) => !a.build.active, 30000), "file-scoped discovery timed out")
+            Main::expect(app.build.run.exitStatus() == 0, "file-scoped discovery failed")
+            Main::expect(app.build.tests.cases.len() == 3, "file-scoped discovery traversed other test files")
+            var testFile: String = ""
+            for test in app.build.tests.cases
+            {
+                if (test.file.endsWith("/HostCommandTest.tnx")) { testFile = test.file }
+            }
+            Main::expect(testFile != "", "the IDE's HostCommand tests were not discovered")
+            ItemView::of(app.window.mount, "tests").choose(["file:" + testFile], "file:" + testFile)
+            Main::task(app, "tests.runFile", 120000)
+            Main::expect(app.build.tests.cases.len() == 3 && app.build.tests.count("passed") == 3 && app.build.tests.count("failed") == 0, "selected-file test results were not shown")
+            Main::expect(events.failureCount() == 0, "an IDE event handler failed")
+            println("dogfooding: opened the IDE sources, quick-opened Main, initialized LSP, edited/saved, applied settings, checked, rebuilt/ran the IDE and passed its three HostCommand tests")
+            results.push(true)
+        }
+        catch (error: String)
+        {
+            printStderr("dogfooding failed: " + error)
+            results.push(false)
+        }
+        if (app.build.active) { app.build.stop() }
+        app.quit()
+    }
+}
