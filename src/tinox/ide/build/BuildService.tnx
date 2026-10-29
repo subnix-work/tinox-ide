@@ -283,7 +283,12 @@ namespace tinox.ide.build
             this.write("\x1b[1m$ " + Js::join(argv, " ") + "\x1b[0m\n")
             this.partialOut = ""
             this.partialErr = ""
-            this.run = TaskRun::start(argv, directory, step.env)
+            const host: Bool = Bridge::env("FLATPAK_ID") != ""
+            argv = HostCommand::wrap(argv, directory, step.env, host)
+            var childEnv: List<String> = step.env
+            // Host environment overrides belong to the command, not the DBus launcher.
+            if (host) { childEnv = [] }
+            this.run = TaskRun::start(argv, directory, childEnv)
         }
 
         /** Stops the running task, including every process the step started. */

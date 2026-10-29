@@ -11,7 +11,8 @@ thread; the two talk through queues. See [docs/adr](docs/adr) for the
 architecture, [docs/abi.md](docs/abi.md) for the C ABI, [docs/bridge-core.md](docs/bridge-core.md) for how the bridge works, [docs/bindings.md](docs/bindings.md) for its Tinox bindings and the [epic](https://github.com/subnix-work/tinox-ide/issues/1)
 for the plan.
 
-> Status: bootstrapping. Nothing here is usable as an IDE yet.
+> Status: development preview. Editing, LSP assistance and build/run/test integration
+> are available; see [packaging and installation](docs/packaging.md).
 
 ## Layout
 

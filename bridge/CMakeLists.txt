@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(tinoxkde VERSION 1.0.0 LANGUAGES C CXX)
 
+# Application version is independent of the additive bridge ABI / SONAME.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../tinox.toml" _version_line REGEX "^version = ")
+list(GET _version_line 0 _version_line)
+string(REGEX REPLACE "^version = \"([^\"]+)\".*" "\\1" TINOX_IDE_VERSION "${_version_line}")
+configure_file(src/version.h.in generated/version.h @ONLY)
+
 set(QT_MIN_VERSION "6.6.0")
 set(KF_MIN_VERSION "6.5.0")
 
@@ -40,7 +46,7 @@ add_library(tinoxkde SHARED
 target_include_directories(tinoxkde PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}>)
-target_include_directories(tinoxkde PRIVATE src common)
+target_include_directories(tinoxkde PRIVATE src common "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(tinoxkde PRIVATE Qt6::Core Qt6::Widgets Qt6::Xml KF6::Parts KF6::CoreAddons KF6::I18n KF6::Crash KF6::DBusAddons KF6::TextEditor KF6::SyntaxHighlighting KF6::ConfigCore KF6::ConfigWidgets KF6::XmlGui KF6::WidgetsAddons KF6::Notifications PkgConfig::GC)
 set_target_properties(tinoxkde PROPERTIES
     VERSION ${PROJECT_VERSION}
@@ -50,6 +56,25 @@ set_target_properties(tinoxkde PROPERTIES
 
 install(TARGETS tinoxkde LIBRARY DESTINATION ${KDE_INSTALL_LIBDIR})
 install(FILES include/tinoxkde.h DESTINATION ${KDE_INSTALL_INCLUDEDIR})
+
+# Install the separately compiled Tinox executable and its freedesktop/KDE resources.
+# Plain bridge builds remain possible without a Tinox binary.
+set(TKDE_IDE_BINARY "" CACHE FILEPATH "Built Tinox IDE executable to install")
+if(TKDE_IDE_BINARY)
+    find_program(PATCHELF_EXECUTABLE patchelf REQUIRED)
+    install(PROGRAMS "${TKDE_IDE_BINARY}" DESTINATION ${KDE_INSTALL_BINDIR} RENAME tinox-ide)
+    file(RELATIVE_PATH TKDE_RELATIVE_LIBDIR "${KDE_INSTALL_FULL_BINDIR}" "${KDE_INSTALL_FULL_LIBDIR}")
+    configure_file(install-rpath.cmake.in install-rpath.cmake @ONLY)
+    install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/install-rpath.cmake")
+endif()
+set(_resources "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+install(FILES "${_resources}/org.subnix.tinoxide.desktop" DESTINATION ${KDE_INSTALL_APPDIR})
+install(FILES "${_resources}/org.subnix.tinoxide.metainfo.xml" DESTINATION ${KDE_INSTALL_METAINFODIR})
+install(FILES "${_resources}/icons/org.subnix.tinoxide.svg" DESTINATION ${KDE_INSTALL_ICONDIR}/hicolor/scalable/apps)
+install(FILES "${_resources}/syntax/tinox.xml" DESTINATION ${KDE_INSTALL_DATADIR}/org.kde.syntax-highlighting/syntax)
+install(FILES "${_resources}/mime/tinox.xml" DESTINATION ${KDE_INSTALL_MIMEDIR} RENAME org.subnix.tinoxide.xml)
+install(FILES "${_resources}/notifications/tinoxide.notifyrc" DESTINATION ${KDE_INSTALL_KNOTIFYRCDIR})
+install(FILES ../LICENSE-MIT ../LICENSE-APACHE DESTINATION ${KDE_INSTALL_DATADIR}/licenses/tinox-ide)
 
 # The headless mock of the bridge (no Qt, no KDE): same ABI, scripted by tests.
 add_library(tinoxkde-mock SHARED mock/mock.cpp)
@@ -64,7 +89,7 @@ set_target_properties(tinoxkde-mock PROPERTIES
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON
     AUTOMOC OFF)
-install(TARGETS tinoxkde-mock LIBRARY DESTINATION ${KDE_INSTALL_LIBDIR})
+# The mock is a development/testing tool and is not installed with the application.
 
 # `make fuzz`: libFuzzer target for the command parser and all commands (clang, docs/testing.md)
 if(TKDE_FUZZ)

@@ -1,0 +1,140 @@
+{
+  "app-id": "org.subnix.tinoxide",
+  "runtime": "org.kde.Platform",
+  "runtime-version": "6.10",
+  "sdk": "org.kde.Sdk",
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.llvm21",
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
+  "command": "tinox-ide",
+  "build-options": {
+    "prepend-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm21/bin",
+    "env": {
+      "TINOX_PATH": "/app/share/tinox-build/source/crates/tinox-core",
+      "TINOX_HOME": "/app/share/tinox-build/home",
+      "TINOX_CFLAGS": "-I/app/include",
+      "LIBRARY_PATH": "/app/lib",
+      "TINOX_TLS": "0"
+    },
+    "no-debuginfo": true
+  },
+  "finish-args": [
+    "--share=ipc",
+    "--share=network",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
+    "--filesystem=host",
+    "--talk-name=org.freedesktop.Flatpak"
+  ],
+  "cleanup": [
+    "/include",
+    "/lib/pkgconfig",
+    "/lib/*.a",
+    "/lib/*.la"
+  ],
+  "modules": [
+    {
+      "name": "patchelf",
+      "buildsystem": "autotools",
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0.tar.bz2",
+          "sha256": "1952b2a782ba576279c211ee942e341748fdb44997f704dd53def46cd055470b"
+        }
+      ],
+      "cleanup": [
+        "*"
+      ]
+    },
+    {
+      "name": "gc",
+      "buildsystem": "autotools",
+      "config-opts": [
+        "--disable-static",
+        "--disable-docs"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/ivmai/bdwgc/releases/download/v8.2.8/gc-8.2.8.tar.gz",
+          "sha256": "7649020621cb26325e1fb5c8742590d92fb48ce5c259b502faf7d9fb5dabb160"
+        }
+      ],
+      "cleanup": [
+        "/bin",
+        "/share"
+      ]
+    },
+    {
+      "name": "tinox-toolchain",
+      "buildsystem": "simple",
+      "cleanup": [
+        "*"
+      ],
+      "build-commands": [
+        "mkdir -p /app/share/tinox-build/source",
+        "cp -a . /app/share/tinox-build/source/",
+        "cd /app/share/tinox-build/source && CARGO_HOME=$PWD/cargo CARGO_BUILD_JOBS=4 cargo build --offline --locked --release -p tinox",
+        "install -Dm755 /app/share/tinox-build/source/target/release/tinox /app/bin/tinox-build",
+        "python3 prepare-json.py json-response.json /app/share/tinox-build/home/.tinox/repository/central/tinox.core/json/1.1.0"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://codeload.github.com/subnix-work/tinox/tar.gz/099e8cdcf762c7e4e04cc0bcd9a9078995c1f25b",
+          "sha256": "962edb5cc65934c02d9ec56ef714f2d8709a2f0ca1308e16747d4adbd7de3214",
+          "archive-type": "tar-gzip"
+        },
+        "cargo-sources.json",
+        {
+          "type": "file",
+          "url": "https://central.tinox-lang.de/api/v1/tinox.core/json/1.1.0",
+          "dest-filename": "json-response.json",
+          "sha256": "3c104ec7bca18e48ebe8a7ad47600423b4c83d8409e77eafdc64466b51e27369"
+        },
+        {
+          "type": "file",
+          "path": "prepare-json.py"
+        }
+      ]
+    },
+    {
+      "name": "tinox-ide",
+      "buildsystem": "simple",
+      "build-commands": [
+        "cmake -S bridge -B bridge/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/app -DKDE_INSTALL_LIBDIR=lib -DTKDE_IDE_BINARY=/run/build/tinox-ide/build/tinox-ide",
+        "cmake --build bridge/build -j2",
+        "mkdir -p build",
+        "tinox-build build -o build/tinox-ide",
+        "cmake --install bridge/build",
+        "install -Dm755 packaging/host-tool /app/bin/tinox",
+        "install -Dm755 packaging/host-tool /app/bin/tinox-lsp",
+        "rm /app/bin/tinox-build"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "..",
+          "skip": [
+            ".git",
+            ".flatpak-builder",
+            "build",
+            "bridge/build",
+            "bridge/build-*",
+            ".tinox",
+            ".tinox-build",
+            "packaging/src",
+            "packaging/pkg",
+            "packaging/tinox-ide",
+            "*.log",
+            "*.ll",
+            "*.pkg.tar.*"
+          ]
+        }
+      ]
+    }
+  ]
+}

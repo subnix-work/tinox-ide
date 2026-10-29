@@ -1,0 +1,36 @@
+name: Packaging
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: packaging-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  flatpak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install builder and KDE SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive -y flathub org.kde.Sdk//6.10 org.kde.Platform//6.10 org.freedesktop.Sdk.Extension.llvm21//25.08 org.freedesktop.Sdk.Extension.rust-stable//25.08
+      - name: Build Flatpak offline from pinned inputs
+        run: flatpak-builder --user --force-clean --repo=build/flatpak-repo build/flatpak packaging/org.subnix.tinoxide.json
+      - name: Install and smoke-test the runtime application
+        run: |
+          flatpak install --user --noninteractive -y "$PWD/build/flatpak-repo" org.subnix.tinoxide
+          dbus-run-session -- flatpak run --env=QT_QPA_PLATFORM=offscreen --env=TKDE_NO_KCRASH=1 --env=TINOXIDE_SMOKE=1 org.subnix.tinoxide
+      - name: Export bundle
+        run: flatpak build-bundle build/flatpak-repo build/org.subnix.tinoxide.flatpak org.subnix.tinoxide
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tinox-ide-flatpak-x86_64
+          path: build/org.subnix.tinoxide.flatpak
+          if-no-files-found: error

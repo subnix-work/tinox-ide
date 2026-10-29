@@ -1,13 +1,14 @@
 #include "bridge.h"
 
 #include "tinoxkde.h"
+#include "version.h"
 
 #include "action/action.h"
 #include "dialog/dialog.h"
 #include "editor/editor.h"
 #include "model/model.h"
-#include "widget/widget.h"
 #include "terminal/terminal.h"
+#include "widget/widget.h"
 
 #include <KAboutData>
 #include <KCoreAddons>
@@ -16,6 +17,7 @@
 #include <KLocalizedString>
 
 #include <QApplication>
+#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QMetaObject>
@@ -137,10 +139,11 @@ size_t Bridge::objectCount() const
 void Bridge::setupKde(const QString &appName, const QString &displayName)
 {
     KLocalizedString::setApplicationDomain("tinox-ide");
-    KAboutData about(appName, displayName, QStringLiteral("0.1.0"), i18n("Native IDE for the Tinox language"), KAboutLicense::MIT,
+    KAboutData about(appName, displayName, QStringLiteral(TINOX_IDE_VERSION), i18n("Native IDE for the Tinox language"), KAboutLicense::MIT,
                      i18n("(c) 2026 Tino Gohl"));
     about.setDesktopFileName(QStringLiteral("org.subnix.tinoxide"));
     KAboutData::setApplicationData(about);
+    m_app->setWindowIcon(QIcon::fromTheme(QStringLiteral("org.subnix.tinoxide")));
     if (!qEnvironmentVariableIsSet("TKDE_NO_KCRASH")) {
         KCrash::initialize();
     }

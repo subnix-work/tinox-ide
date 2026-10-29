@@ -10,8 +10,10 @@
 TINOX ?= $(shell command -v tinox 2>/dev/null || echo ../tinox/target/release/tinox)
 BUILD_DIR := bridge/build
 OUT := build/tinox-ide
+PREFIX ?= /usr/local
+LIBDIR ?= lib
 
-.PHONY: all bridge ide run example docs test test-bridge test-asan test-tsan fuzz bench fmt clean check-env install-resources
+.PHONY: all bridge ide run example docs test test-bridge test-asan test-tsan fuzz bench fmt clean check-env install-resources install test-packaging release
 
 all: ide
 
@@ -86,3 +88,16 @@ check-env:
 
 install-resources:
 	scripts/install-resources.sh
+
+# Stage with DESTDIR=/path; never run the compiler as root.
+install:
+	test -x $(OUT)
+	cmake -S bridge -B $(BUILD_DIR) -DCMAKE_INSTALL_PREFIX=$(PREFIX) -DKDE_INSTALL_LIBDIR=$(LIBDIR) -DTKDE_IDE_BINARY=$(CURDIR)/$(OUT)
+	cmake --install $(BUILD_DIR)
+
+test-packaging: ide
+	scripts/test-packaging.sh
+
+# Reproducible source archive from a clean tagged commit (no publishing).
+release:
+	scripts/release.sh

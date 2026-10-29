@@ -54,7 +54,7 @@ pkg() {
         arch:ninja) echo ninja ;;                     debian:ninja) echo ninja-build ;;                  fedora:ninja) echo ninja-build ;;
         arch:clang) echo clang ;;                     debian:clang) echo clang ;;                        fedora:clang) echo clang ;;
         arch:pkgconf) echo pkgconf ;;                 debian:pkgconf) echo pkg-config ;;                 fedora:pkgconf) echo pkgconf-pkg-config ;;
-        arch:gc) echo boehm-gc ;;                     debian:gc) echo libgc-dev ;;                       fedora:gc) echo gc-devel ;;
+        arch:gc) echo gc ;;                     debian:gc) echo libgc-dev ;;                       fedora:gc) echo gc-devel ;;
         arch:gdb) echo gdb ;;                         debian:gdb) echo gdb ;;                            fedora:gdb) echo gdb ;;
         *) echo "$1" ;;
     esac
