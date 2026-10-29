@@ -44,6 +44,8 @@ runs:
         echo "$GITHUB_WORKSPACE/tinox/target/release" >> "$GITHUB_PATH"
         echo "TINOX=$GITHUB_WORKSPACE/tinox/target/release/tinox" >> "$GITHUB_ENV"
         echo "TINOX_LSP=$GITHUB_WORKSPACE/tinox/target/release/tinox-lsp" >> "$GITHUB_ENV"
+        # the IDE's own dependency (tinox.core:json) comes from the package registry into ~/.tinox
+        "$GITHUB_WORKSPACE/tinox/target/release/tinox" install
         echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
         echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
         echo "QT_QPA_PLATFORM=offscreen" >> "$GITHUB_ENV"
