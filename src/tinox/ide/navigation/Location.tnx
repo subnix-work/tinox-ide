@@ -1,0 +1,89 @@
+module tinox.ide.navigation
+
+import tinox.core.bytes.Bytes
+import tinox.core.json
+import tinox.ide.ui.Position
+import tinox.ide.ui.Range
+
+namespace tinox.ide.navigation
+{
+    /** A navigable local LSP location and optional symbol name. */
+    class Location
+    {
+        /** Absolute local path. */
+        var path: String
+        /** Selection range, in UTF-16. */
+        var range: Range
+        /** Symbol or reference label. */
+        var name: String
+        /** Outer symbol range used by breadcrumbs. */
+        var extent: Range
+
+        /** Reads Location or LocationLink. Remote and malformed file URIs are rejected. */
+        fnc parse(item: JsonValue) -> Location
+        {
+            var uri: String = item.getField("uri").getString()
+            var range: JsonValue = item.getField("range")
+            if (uri == "") { uri = item.getField("targetUri").getString()
+                range = item.getField("targetSelectionRange") }
+            const span: Range = Location::span(range)
+            return Location { path: Location::path(uri), range: span, extent: span, name: "" }
+        }
+
+        /** Strict nonnegative integer range parsing, without silently coercing bad replies. */
+        fnc span(value: JsonValue) -> Range
+        {
+            for point in [value.getField("start"), value.getField("end")]
+            {
+                if (!point.getField("line").isInt() || !point.getField("character").isInt() || point.getField("line").getInt() < 0 || point.getField("character").getInt() < 0) { throw "Invalid LSP location range" }
+            }
+            const range: Range = Range::parse(value)
+            if (range.end.line < range.start.line || (range.end.line == range.start.line && range.end.character < range.start.character)) { throw "Reversed LSP range" }
+            return range
+        }
+
+        /** Percent-decodes local file URIs as bytes, preserving non-ASCII names. */
+        fnc path(uri: String) -> String
+        {
+            if (!uri.startsWith("file:///")) { throw "Navigation supports local file URIs only" }
+            const bytes: Bytes = Bytes::fromText(uri.substring(7, uri.len()))
+            var result: List<Int64> = []
+            var i: Int64 = 0
+            while (i < bytes.len())
+            {
+                var byte: Int64 = bytes.get(i)
+                if (byte == 37)
+                {
+                    if (i + 2 >= bytes.len()) { throw "Truncated URI escape" }
+                    byte = Location::hex(bytes.get(i + 1)) * 16 + Location::hex(bytes.get(i + 2))
+                    i = i + 2
+                }
+                if (byte == 0 || byte == 35 || byte == 63) {
+                    // Encoded '#' and '?' are legal filename bytes; only NUL is forbidden.
+                    if (byte == 0) { throw "NUL in file URI" }
+                }
+                result.push(byte)
+                i = i + 1
+            }
+            if (uri.contains("?") || uri.contains("#")) { throw "File URI has query or fragment" }
+            return Bytes::fromList(result).toText()
+        }
+
+        /** One hexadecimal URI digit. */
+        fnc hex(byte: Int64) -> Int64
+        {
+            if (byte >= 48 && byte <= 57) { return byte - 48 }
+            if (byte >= 65 && byte <= 70) { return byte - 55 }
+            if (byte >= 97 && byte <= 102) { return byte - 87 }
+            throw "Invalid URI escape"
+        }
+
+        /** Whether a cursor is within the outer symbol range. */
+        fn encloses(position: Position) -> Bool
+        {
+            const start: Position = this.extent.start
+            const end: Position = this.extent.end
+            return (position.line > start.line || (position.line == start.line && position.character >= start.character)) && (position.line < end.line || (position.line == end.line && (position.character < end.character || (this.extent.isEmpty() && position.character == end.character))))
+        }
+    }
+}

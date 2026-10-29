@@ -13,6 +13,7 @@
 
 #include <QEvent>
 #include <QJsonArray>
+#include <QMouseEvent>
 #include <QTextDocument>
 #include <QToolTip>
 #include <algorithm>
@@ -159,6 +160,27 @@ public:
             m_bridge.emitEvent(QStringLiteral("editor.focusChanged"), f, m_id);
         });
         view->registerTextHintProvider(&m_hover);
+        view->installEventFilter(this);
+        for (QWidget *child : view->findChildren<QWidget *>()) {
+            child->installEventFilter(this);
+        }
+    }
+
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::MouseButtonRelease) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->button() == Qt::LeftButton && mouse->modifiers() == Qt::ControlModifier) {
+                auto *widget = qobject_cast<QWidget *>(watched);
+                const QPoint point = widget->mapTo(m_view, mouse->position().toPoint());
+                const Cursor cursor = m_view->coordinatesToCursor(point);
+                if (cursor.isValid()) {
+                    m_bridge.emitEvent(QStringLiteral("editor.definitionRequested"), {{QStringLiteral("position"), toJson(cursor)}}, m_id);
+                    return true;
+                }
+            }
+        }
+        return QObject::eventFilter(watched, event);
     }
 
     // No unregistering here: the state is a child of the view and dies while the view is being

@@ -54,6 +54,47 @@ static Obj infoOf(int64_t doc)
     return query(cmd("editor.info", Obj{{"target", double(doc)}}));
 }
 
+static void testWorkspaceEdit()
+{
+    const int64_t first = newDoc(QStringLiteral("Alpha"));
+    const int64_t second = newDoc(QStringLiteral("Alpha Alpha"));
+    const int64_t view = newView(first);
+    const auto entry = [](int64_t document, int version, int end, const char *text) {
+        return Obj{{"target", double(document)},
+                   {"version", version},
+                   {"edits", QJsonArray{Obj{{"range", range(0, 0, 0, end)}, {"newText", text}}}}};
+    };
+    // Invalid second document cannot change the valid first one.
+    EXPECT(!query(cmd("editor.workspaceEdit", Obj{{"documents", QJsonArray{entry(first, 0, 5, "Beta"), entry(second, 0, 99, "Beta")}}}))
+                .value("ok")
+                .toBool());
+    EXPECT_EQ(textOf(first), QStringLiteral("Alpha"));
+    EXPECT_EQ(textOf(second), QStringLiteral("Alpha Alpha"));
+    EXPECT(!query(cmd("editor.workspaceEdit", Obj{{"documents", QJsonArray{entry(first, 0, 5, "Beta"), entry(second, 1, 5, "Beta")}}}))
+                .value("ok")
+                .toBool());
+    EXPECT_EQ(textOf(first), QStringLiteral("Alpha"));
+    EXPECT(!query(cmd("editor.workspaceEdit", Obj{{"documents", QJsonArray{entry(first, 0, 5, "Beta"), entry(first, 0, 5, "Beta")}}}))
+                .value("ok")
+                .toBool());
+    EXPECT(query(cmd("editor.workspaceEdit", Obj{{"documents", QJsonArray{entry(first, 0, 5, "Beta"), entry(second, 0, 5, "Beta")}}}))
+               .value("ok")
+               .toBool());
+    EXPECT_EQ(textOf(first), QStringLiteral("Beta"));
+    EXPECT_EQ(textOf(second), QStringLiteral("Beta Alpha"));
+    EXPECT(query(cmd("editor.undo", Obj{{"target", double(view)}})).value("ok").toBool());
+    EXPECT_EQ(textOf(first), QStringLiteral("Alpha"));
+    // Batch inverse is itself atomic and preserves ordinary editor undo.
+    const int version = infoOf(first).value("version").toInt();
+    EXPECT(query(cmd("editor.workspaceEdit", Obj{{"documents", QJsonArray{entry(first, version, 5, "Old"), entry(second, 1, 4, "Alpha")}}}))
+               .value("ok")
+               .toBool());
+    EXPECT_EQ(textOf(second), QStringLiteral("Alpha Alpha"));
+    tkde_release(view);
+    tkde_release(first);
+    tkde_release(second);
+}
+
 static void testTextEditsAndUndo()
 {
     int64_t doc = newDoc(QStringLiteral("héllo\nworld"));
@@ -639,6 +680,7 @@ static void driver(QString dir)
     GcAttach gc;
     EXPECT(!waitFor("core.ready").isEmpty());
     EXPECT(query(cmd("core.capabilities")).value(QStringLiteral("namespaces")).toArray().contains(QStringLiteral("editor")));
+    testWorkspaceEdit();
     testTextEditsAndUndo();
     testUserTypingHasUtf16Ranges();
     testFilesEncodingAndEndOfLine(dir);

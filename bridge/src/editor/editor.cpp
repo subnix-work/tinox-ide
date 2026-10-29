@@ -21,6 +21,7 @@
 #include <QJsonArray>
 #include <QKeyEvent>
 #include <QMainWindow>
+#include <QSet>
 #include <QTimer>
 #include <QUrl>
 
@@ -455,6 +456,12 @@ Reply applyEdits(Bridge &b, const QJsonObject &cmd)
                                   QStringLiteral("edits %1 and %2 overlap").arg(edits[i - 1].order).arg(edits[i].order));
         }
     }
+    if (cmd.value(QStringLiteral("validateOnly")).toBool()) {
+        return Reply::success();
+    }
+    if (!doc->isReadWrite()) {
+        return Reply::failure(TKDE_E_FAILED, QStringLiteral("document is read-only"));
+    }
     {
         DocState::ApiScope scope(DocState::of(doc));
         Document::EditingTransaction transaction(doc);
@@ -467,6 +474,61 @@ Reply applyEdits(Bridge &b, const QJsonObject &cmd)
     QJsonObject f;
     f.insert(QStringLiteral("edits"), int(edits.size()));
     return Reply::success(f);
+}
+
+// Validates the complete WorkspaceEdit before any buffer changes. Qt dispatch cannot
+// interleave user input between validation and application of this synchronous command.
+Reply workspaceEdit(Bridge &b, const QJsonObject &cmd)
+{
+    if (!cmd.value(QStringLiteral("documents")).isArray()) {
+        return Reply::failure(TKDE_E_INVALID_ARG, QStringLiteral("documents must be an array"));
+    }
+    QSet<Document *> seen;
+    std::vector<QJsonObject> commands;
+    QHash<Document *, QString> original;
+    for (const auto &entry : cmd.value(QStringLiteral("documents")).toArray()) {
+        QJsonObject edit = entry.toObject();
+        Reply fail;
+        Document *doc = documentOf(b, edit, fail);
+        if (!doc) {
+            return fail;
+        }
+        if (seen.contains(doc)) {
+            return Reply::failure(TKDE_E_INVALID_ARG, QStringLiteral("duplicate document"));
+        }
+        seen.insert(doc);
+        original.insert(doc, doc->text());
+        const auto version = edit.value(QStringLiteral("version"));
+        if (!version.isDouble() || version.toDouble() != double(DocState::of(doc)->version())) {
+            return Reply::failure(TKDE_E_FAILED, QStringLiteral("workspace edit is stale"));
+        }
+        if (!doc->isReadWrite()) {
+            return Reply::failure(TKDE_E_FAILED, QStringLiteral("document is read-only"));
+        }
+        edit.insert(QStringLiteral("validateOnly"), true);
+        const Reply checked = applyEdits(b, edit);
+        if (!checked.ok) {
+            return checked;
+        }
+        edit.remove(QStringLiteral("validateOnly"));
+        commands.push_back(edit);
+    }
+    for (const auto &edit : commands) {
+        const Reply applied = applyEdits(b, edit);
+        if (!applied.ok) {
+            return applied;
+        }
+    }
+    QJsonArray inverse;
+    for (const auto &edit : commands) {
+        Reply fail;
+        Document *doc = documentOf(b, edit, fail);
+        inverse.append(QJsonObject{{QStringLiteral("target"), edit.value(QStringLiteral("target"))},
+                                   {QStringLiteral("version"), double(DocState::of(doc)->version())},
+                                   {QStringLiteral("edits"), QJsonArray{QJsonObject{{QStringLiteral("range"), toJson(doc->documentRange())},
+                                                                                    {QStringLiteral("newText"), original.value(doc)}}}}});
+    }
+    return Reply::success({{QStringLiteral("inverse"), inverse}});
 }
 
 Reply undoRedo(Bridge &b, const QJsonObject &cmd, const char *action)
@@ -772,6 +834,7 @@ void registerCommands(Bridge &bridge)
     doc("editor.setText", setText);
     doc("editor.getText", getText);
     doc("editor.edit", applyEdits);
+    doc("editor.workspaceEdit", workspaceEdit);
     bridge.registerCommand(QStringLiteral("editor.undo"), [&bridge](const QJsonObject &cmd) { return undoRedo(bridge, cmd, "edit_undo"); });
     bridge.registerCommand(QStringLiteral("editor.redo"), [&bridge](const QJsonObject &cmd) { return undoRedo(bridge, cmd, "edit_redo"); });
     doc("editor.setCursor", setCursor);

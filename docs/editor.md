@@ -78,3 +78,20 @@ including multiline replacement, undo and redo.
 * The end of line has no public config key: `setEol` and the `set_eol` select action of a view
   are used.
 * `TKDE_DEBUG_COMMANDS=1` adds `editor.debug.*` test hooks (typing, palette, completion state).
+
+### Workspace edits
+
+`editor.workspaceEdit` takes `documents: [{target, version, edits}]`. Each entry
+uses the same original-range edit format as `editor.edit`. All document IDs,
+versions, ranges, replacement strings, overlaps and writable states are checked
+before any text changes. Duplicate document IDs are rejected. A stale target
+rejects the entire batch. Qt cannot dispatch user input within this synchronous
+command. Every changed document receives one normal undo transaction and its
+usual versioned change event. The reply contains `inverse`, an equally shaped
+batch captured before returning, with the resulting versions and full-buffer
+reverse edits. Applying it restores all buffers together, refusing intervening
+changes. This command changes editor buffers; saving remains explicit.
+
+Ctrl+left-click on text emits `editor.definitionRequested {position}` on the view
+ID, with a UTF-16 position. View observers registered with `EditorView.onEvent`
+receive these events without replacing document/completion/cursor handlers.

@@ -1,0 +1,31 @@
+module tinox.ide.navigation
+import tinox.ide.lsp.LspClient
+import tinox.ide.lsp.RpcFuture
+import tinox.ide.ui.Position
+namespace tinox.ide.navigation
+{
+    /** A correlated feature request with the exact session and buffer it reads. */
+    class NavigationRequest
+    {
+        /** Request kind. */
+        var kind: String
+        /** Source URI. */
+        var uri: String
+        /** Original request cursor, for the documented cross-file symbol fallback. */
+        var position: Position
+        /** Exact identifier for definition symbol fallback, empty for normal requests. */
+        var token: String
+        /** Qualified declaration owner when available. */
+        var owner: String
+        /** Source version; -1 for workspace symbol search. */
+        var version: Int64
+        /** Owner session, preventing late results after restart. */
+        var client: LspClient
+        /** Result future. */
+        var future: RpcFuture
+        /** Versions of all synchronized buffers captured when issuing rename. */
+        var versions: Map<String, Int64>
+        /** Search generation, used to discard old palette requests. */
+        var generation: Int64
+    }
+}

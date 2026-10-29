@@ -34,6 +34,7 @@ test: bridge
 	$(TINOX) test
 	TINOX=$(TINOX) scripts/test-example.sh
 	TINOX=$(TINOX) scripts/test-diagnostics.sh
+	TINOX=$(TINOX) scripts/test-navigation.sh
 
 bench: bridge
 	QT_QPA_PLATFORM=offscreen $(BUILD_DIR)/bin/bench_queue
