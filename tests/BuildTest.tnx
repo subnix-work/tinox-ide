@@ -113,6 +113,58 @@ class BuildTest
         return listed && running && done && files.len() == 1 && files[0] == "/w/tests/AT.tnx" && summary && detail && found.line == 22 && found.column == 9 && tests.cases[1].status == "idle" && tests.errors.len() == 0
     }
 
+    @Test("a file-scoped discovery replaces only that file's tests; a cancelled or empty one puts the earlier tests back")
+    fn testScopedDiscovery() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        const tests: TestExplorer = app.build.tests
+        tests.handle(BuildTest::testEvent("test-discovered", "testAdd", 10, ""))
+        tests.handle(BuildTest::testEvent("test-discovered", "testBreak", 20, ""))
+        tests.handle(Json::parse("{\"reason\":\"test-discovered\",\"class\":\"Other\",\"column\":5,\"description\":\"x\",\"file\":\"/w/tests/Other.tnx\",\"line\":3,\"method\":\"testOther\"}"))
+        // the tool names files relative to the project, the editor has them absolute
+        tests.beginDiscovery("/w/tests/AT.tnx")
+        const dropped: Bool = tests.cases.len() == 1 && tests.cases[0].method == "testOther" && tests.scope == "/w/tests/AT.tnx" && app.store.get("tests.scope") == "/w/tests/AT.tnx"
+        tests.handle(BuildTest::testEvent("test-discovered", "testNew", 5, ""))
+        tests.endDiscovery(true)
+        const replaced: Bool = tests.cases.len() == 2 && tests.countIn("tests/AT.tnx") == 1 && tests.cases[1].method == "testNew" && tests.seen == 1 && !tests.discovering
+
+        // cancelled: the tests are back, with their scope, and the half-found ones are gone
+        tests.beginDiscovery("")
+        const cleared: Bool = tests.cases.len() == 0 && tests.scope == "all tests"
+        tests.handle(BuildTest::testEvent("test-discovered", "testHalf", 1, ""))
+        tests.endDiscovery(false)
+        const restored: Bool = tests.cases.len() == 2 && tests.cases[1].method == "testNew" && tests.scope == "/w/tests/AT.tnx" && app.store.get("tests.scope") == "/w/tests/AT.tnx"
+        // ending twice does nothing
+        tests.endDiscovery(false)
+        return dropped && replaced && cleared && restored && tests.cases.len() == 2 && BuildService::scopeText("all tests").contains("all tests") && BuildService::scopeText("/w/x.tnx").contains("/w/x.tnx")
+    }
+
+    @Test("Discover Tests in Current File lists only the file of the editor, file first, and says so")
+    fn testDiscoverFileCommand() -> Bool
+    {
+        const app: IdeApp = IdeAppTest::start()
+        const root: String = BuildTest::workspace(app, "class Main\n{\n}\n")
+        IdeAppTest::commands()
+        // a tests directory and a test file in the workspace; the editor shows it
+        const file: String = TempProject::file(root, "AT.tnx", "class AT\n{\n}\n")
+        const doc: Int64 = MockBridge::createObject()
+        const view: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("editor.openDocument", "{\"id\":" + doc.toString() + "}", "")
+        MockBridge::onCommand("editor.createView", "{\"id\":" + view.toString() + "}", "")
+        MockBridge::onCommand("editor.getText", "{\"text\":\"x\",\"version\":0}", "")
+        MockBridge::onCommand("editor.info", "{\"version\":0}", "")
+        app.documents.open(file)
+        app.registry.execute("tests.discoverFile")
+        const started: Bool = app.build.active && app.build.steps.len() == 1 && app.build.steps[0].kind == "list"
+        const argv: List<String> = app.build.steps[0].argv
+        // file first: the tool ignores a file after flags (subnix-work/tinox#585)
+        const scoped: Bool = argv.len() == 5 && argv[1] == "test" && argv[2] == file && argv[3] == "--list" && app.build.tests.scope == file
+        app.build.stop()
+        BuildTest::finish(app)
+        // cancelled: the scope label is back to what it was
+        return started && scoped && !app.build.active && app.build.tests.scope == "" && app.store.get("tests.scope") == ""
+    }
+
     @Test("a failing build streams its output, lists the error with line and column, and clicking it opens the file there")
     fn testBuildError() -> Bool
     {

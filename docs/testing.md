@@ -144,6 +144,9 @@ the session ends with the program. It is skipped when gdb is not installed; see 
 (main window, quick open, settings) and moves the focus with the Focus commands; `make test-atspi` reads the
 accessibility tree over AT-SPI with a real display. See [accessibility.md](accessibility.md).
 
+`scripts/test-discovery.sh` lists the tests of `tests/HostCommandTest.tnx` of this repository through Discover Tests in
+Current File (3 tests, without traversing the whole suite) and runs them with Run Tests in Selected File.
+
 ## Build and test tasks
 
 `tests/BuildTest.tnx` runs the real `tinox` tool against throw-away projects (needs `tinox` on

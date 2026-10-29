@@ -1,0 +1,77 @@
+import tinox.core.process.Process
+import tinox.ide.IdeApp
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.App
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.ItemView
+
+class Main
+{
+    fnc main() -> Int32
+    {
+        return App::run("tinoxide", "Tinox Test Discovery Smoke", (events: EventLoop) => Main::logic(events))
+    }
+
+    fnc logic(events: EventLoop) -> Int32
+    {
+        const results: List<Bool> = []
+        events.onType("core.ready", (event: Event) => Main::check(events, results))
+        events.run()
+        if (results.len() != 1 || !results[0]) { return 1 }
+        return 0
+    }
+
+    fnc expect(ok: Bool, message: String) -> Nothing
+    {
+        if (!ok) { throw message }
+    }
+
+    fnc wait(app: IdeApp, predicate: fnc(IdeApp) -> Bool, timeout: Int64) -> Bool
+    {
+        const start: Int64 = Bridge::nowNs()
+        while (!predicate(app) && (Bridge::nowNs() - start) / 1000000 < timeout) { app.events.pump(20) }
+        return predicate(app)
+    }
+
+    fnc check(events: EventLoop, results: List<Bool>) -> Nothing
+    {
+        const app: IdeApp = IdeApp::start(events)
+        try
+        {
+            // the workspace is this repository: a connected source graph, the case #63 is about
+            const root: String = Process::env("TINOX_DISCOVERY_ROOT")
+            const path: String = root + "/tests/HostCommandTest.tnx"
+            app.store.set("workspace.path", root)
+            app.store.setBool("workspace.open", true)
+            app.build.workspaceChanged(root)
+            const file: OpenFile = app.documents.open(path)
+            app.events.pump(100)
+
+            const start: Int64 = Bridge::nowNs()
+            app.registry.execute("tests.discoverFile")
+            Main::expect(app.build.active, "discovery did not start")
+            Main::expect(app.store.get("tests.scope") == path, "the scope is not shown: " + app.store.get("tests.scope"))
+            Main::expect(Main::wait(app, (a: IdeApp) => !a.build.active, 120000), "file discovery did not finish")
+            const millis: Int64 = (Bridge::nowNs() - start) / 1000000
+            Main::expect(app.build.tests.cases.len() == 3, "found " + app.build.tests.cases.len().toString() + " tests instead of 3: " + app.store.get("status.message"))
+            Main::expect(app.store.get("status.message") == "3 tests found in " + path, "message: " + app.store.get("status.message"))
+
+            // Run Tests in Selected File works on what the discovery found
+            ItemView::of(app.window.mount, "tests").choose(["file:" + path], "file:" + path)
+            Main::expect(app.build.tests.selectedFile() == path, "the file row is not selected")
+            app.registry.execute("tests.runFile")
+            Main::expect(Main::wait(app, (a: IdeApp) => !a.build.active, 120000), "the run did not finish")
+            Main::expect(app.build.tests.count("passed") == 3, "passed: " + app.build.tests.count("passed").toString() + " " + app.build.tests.summary())
+            println("discovery: tests/HostCommandTest.tnx listed in " + millis.toString() + " ms (3 tests, file-scoped) and run through Run Tests in Selected File")
+            results.push(true)
+        }
+        catch (e: String)
+        {
+            printStderr("discovery smoke failed: " + e)
+            results.push(false)
+        }
+        app.quit()
+    }
+}

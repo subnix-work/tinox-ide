@@ -42,6 +42,7 @@ test: bridge
 	TINOX=$(TINOX) scripts/test-semantics.sh
 	TINOX=$(TINOX) scripts/test-debug.sh
 	TINOX=$(TINOX) scripts/test-accessibility.sh
+	TINOX=$(TINOX) scripts/test-discovery.sh
 
 # The accessibility tree of the real IDE over AT-SPI, as Orca reads it (needs a display; opens a window).
 test-atspi: bridge
