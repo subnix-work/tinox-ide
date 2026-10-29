@@ -1,0 +1,40 @@
+module tinox.ide.editing
+
+import tinox.ide.editor.OpenFile
+import tinox.ide.lsp.LspClient
+import tinox.ide.lsp.RpcFuture
+import tinox.ide.ui.Range
+
+namespace tinox.ide.editing
+{
+    /** An editing operation pinned to its originating native buffer and server generation. */
+    class EditRequest
+    {
+        /** format, selection, save, actions, organize or resolve. */
+        var kind: String
+        /** Original open document, including identity after close/reopen. */
+        var file: OpenFile
+        /** Original path, detecting Save As and rename. */
+        var path: String
+        /** Native version at invocation. */
+        var version: Int64
+        /** Source text at invocation, for UTF-16 edit validation. */
+        var text: String
+        /** Selection or cursor range. */
+        var range: Range
+        /** Session that issued the request. */
+        var client: LspClient
+        /** Request result, unused until sent is true. */
+        var future: RpcFuture
+        /** Whether buffer synchronization completed and the request was sent. */
+        var sent: Bool
+        /** Bound for waiting on initialization/document synchronization. */
+        var deadline: Int64
+        /** Native versions of every open target at invocation. */
+        var versions: Map<String, Int64>
+        /** Code-action menu generation. */
+        var generation: Int64
+        /** Save barriers waiting for the same operation. */
+        var callbacks: List<fnc(Bool) -> Nothing>
+    }
+}

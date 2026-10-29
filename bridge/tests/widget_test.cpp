@@ -183,7 +183,9 @@ static void testOrderedContainers()
         }
         return a;
     };
+    drainEvents();
     Obj m = mountTree(tree("QTabWidget", "tabs", {}, labels({"a", "b", "c"}), {}));
+    EXPECT(waitFor("widget.currentChanged", 100).isEmpty());
     const int64_t id = int64_t(m.value(QStringLiteral("id")).toDouble());
     auto titles = [&] {
         QStringList l;
@@ -211,6 +213,8 @@ static void testOrderedContainers()
                .value(QStringLiteral("ok"))
                .toBool());
     EXPECT_EQ(titles(), QStringLiteral("c,B!,d"));
+    // Reconciliation must not look like the user selecting intermediate tabs.
+    EXPECT(waitFor("widget.currentChanged", 100).isEmpty());
     tkde_release(id);
 
     Obj s = mountTree(tree("QSplitter", "sp", {}, labels({"x", "y", "z"}, false)));

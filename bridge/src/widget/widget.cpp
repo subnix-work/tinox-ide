@@ -994,6 +994,8 @@ std::unique_ptr<Node> build(Bridge &bridge, const QJsonObject &json)
     n->widget = t.make();
     n->widget->setObjectName(n->key); // QMainWindow::saveState identifies docks and toolbars by it
     n->id = bridge.registerObject(n->widget);
+    // Initial child insertion is a programmatic change, including tab/stack index signals.
+    QSignalBlocker blocker(n->widget.data());
     const QString kind = layoutKind(n->layout);
     if (kind == QLatin1String("box")) {
         n->widget->setLayout(new QBoxLayout(QBoxLayout::TopToBottom));
@@ -1113,6 +1115,8 @@ void update(Bridge &bridge, Node &n, const QJsonObject &json)
         n.place = json.value(QStringLiteral("place")).toObject();
         return;
     }
+    // Keep structural child reconciliation silent too: remove/insert tabs emits intermediate indices.
+    QSignalBlocker blocker(n.widget.data());
     n.place = json.value(QStringLiteral("place")).toObject();
     const QJsonObject layout = json.value(QStringLiteral("layout")).toObject();
     if (layout != n.layout) {

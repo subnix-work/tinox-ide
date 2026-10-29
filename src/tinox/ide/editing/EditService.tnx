@@ -1,0 +1,377 @@
+module tinox.ide.editing
+
+import tinox.core.json
+import tinox.core.time.Time
+import tinox.ide.app.CommandContext
+import tinox.ide.app.FileSystem
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.Store
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.lsp.LanguageService
+import tinox.ide.lsp.RpcFuture
+import tinox.ide.navigation.Location
+import tinox.ide.navigation.NavigationService
+import tinox.ide.navigation.WorkspaceChange
+import tinox.ide.navigation.WorkspaceEdits
+import tinox.ide.search.Picker
+import tinox.ide.search.PickItem
+import tinox.ide.ui.Js
+import tinox.ide.ui.Position
+import tinox.ide.ui.Range
+import tinox.ide.ui.TextEdit
+import tinox.ide.ui.Utf16
+
+namespace tinox.ide.editing
+{
+    /** Nonblocking formatting, pre-save formatting and explicitly selected code actions. */
+    class EditService
+    {
+        /** Shared language server and document ownership. */
+        var language: LanguageService
+        /** Focused split-view selection and shared workspace transactions. */
+        var navigation: NavigationService
+        /** Outstanding editing requests and save continuations. */
+        var pending: List<EditRequest>
+        /** Code-action chooser, opened only by the user. */
+        var picker: Picker
+        /** Choices belonging to the currently displayed response. */
+        var actions: List<EditAction>
+        /** False before the UI/bridge lifetime ends; poll hooks then become inert. */
+        var running: Bool
+        /** Rejects responses and choices from older menus. */
+        var generation: Int64
+
+        /** Installs commands and the asynchronous save barrier before mounting the window. */
+        fnc create(language: LanguageService, navigation: NavigationService) -> EditService
+        {
+            const service: EditService = EditService { language: language, navigation: navigation, pending: [], picker: Picker::create(language.window.events), actions: [], running: true, generation: 0 }
+            const has: fnc(Store) -> Bool = (s: Store) => s.getBool("editor.hasActive")
+            language.window.registry.registerAll([
+                IdeCommand::create("lsp.format", "&Format Document").shortcut("Ctrl+Shift+I").icon("format-indent-more").category("Edit").enabledWhen(has).run((c: CommandContext) => service.format(false)),
+                IdeCommand::create("lsp.formatSelection", "Format &Selection").category("Edit").enabledWhen(has).run((c: CommandContext) => service.format(true)),
+                IdeCommand::create("lsp.codeActions", "Code &Actions…").shortcut("Alt+Return").icon("hint").category("Edit").enabledWhen(has).run((c: CommandContext) => service.codeActions(false)),
+                IdeCommand::create("lsp.organizeImports", "&Organize Imports").category("Edit").enabledWhen(has).run((c: CommandContext) => service.codeActions(true))
+            ])
+            language.window.addEditMenu(["lsp.format", "lsp.formatSelection", "lsp.codeActions", "lsp.organizeImports"])
+            language.documents.beforeSave = (file: OpenFile, done: fnc(Bool) -> Nothing) => service.beforeSave(file, done)
+            language.window.events.onPoll((events: EventLoop) => service.poll())
+            language.window.store.setBool("editing.actionsAvailable", false)
+            language.window.redrawOn("editing.actionsAvailable")
+            return service
+        }
+
+        /** Connects the light-bulb button after the widget tree exists. */
+        fn bind() -> Nothing
+        {
+            this.language.window.mount.onClick("codeActions", (event: Event) => this.codeActions(false))
+        }
+
+        /** Starts document or selection formatting from the focused editor pane. */
+        fn format(selection: Bool) -> Nothing
+        {
+            const file: OpenFile = this.language.documents.current()
+            var range: Range = Range::create(0, 0, 0, 0)
+            var kind: String = "format"
+            if (selection)
+            {
+                const view = this.navigation.activeView(file)
+                if (!view.hasSelection()) { throw "Select text to format first" }
+                range = view.selection()
+                kind = "selection"
+            }
+            this.enqueue(kind, file, range)
+        }
+
+        /** A disabled preference or non-Tinox file passes straight through to the ordinary save. */
+        fn beforeSave(file: OpenFile, done: fnc(Bool) -> Nothing) -> Nothing
+        {
+            if (!this.running) { done(false)
+                return }
+            if (!this.language.preferences.getBool("Editor.formatOnSave") || FileSystem::extension(file.path) != "tnx") { done(true)
+                return }
+            try
+            {
+                const version: Int64 = file.doc.version()
+                for request in this.pending
+                {
+                    if (request.kind == "save" && request.file.doc.id() == file.doc.id() && request.path == file.path && request.version == version)
+                    {
+                        request.callbacks.push(done)
+                        return
+                    }
+                }
+                const queued: EditRequest = this.enqueue("save", file, Range::create(0, 0, 0, 0))
+                queued.callbacks.push(done)
+            }
+            catch (error: String) { this.language.window.store.set("status.message", "Save cancelled: " + error)
+                done(false) }
+        }
+
+        /** Opens code actions at the cursor/selection or asks only for source.organizeImports. */
+        fn codeActions(organize: Bool) -> Nothing
+        {
+            const file: OpenFile = this.language.documents.current()
+            const view = this.navigation.activeView(file)
+            var range: Range = Range::of(view.cursor(), view.cursor())
+            if (view.hasSelection()) { range = view.selection() }
+            var kind: String = "actions"
+            if (organize) { kind = "organize" }
+            this.generation = this.generation + 1
+            this.picker.close()
+            this.actions = []
+            this.enqueue(kind, file, range)
+        }
+
+        /** Captures native snapshots immediately; dispatch waits for the shared LSP client to catch up. */
+        fn enqueue(kind: String, file: OpenFile, range: Range) -> EditRequest
+        {
+            if (!this.running) { throw "Language editing is shutting down" }
+            if (FileSystem::extension(file.path) != "tnx") { throw "Language editing commands require a Tinox file" }
+            if (!this.language.enabled) { throw "Language server is not running" }
+            this.language.opened(file.path)
+            if (!this.language.connected) { throw "Language server is unavailable; check Language Server settings" }
+            const snapshot = file.doc.snapshot()
+            var versions: Map<String, Int64> = Map::new()
+            for other in this.language.documents.files { versions.set(other.path, other.doc.version()) }
+            const request: EditRequest = EditRequest { kind: kind, file: file, path: file.path, version: snapshot.getField("version").getInt(), text: snapshot.getField("text").getString(), range: range, client: this.language.client, future: RpcFuture::create(0, 0), sent: false, deadline: Time::now() + 5000, versions: versions, generation: this.generation, callbacks: [] }
+            this.pending.push(request)
+            return request
+        }
+
+        /** A reply cannot affect a different file, replaced editor, newer version or server generation. */
+        fn current(request: EditRequest) -> Bool
+        {
+            if (!this.language.enabled || !this.language.connected || this.language.client != request.client || request.path != request.file.path || !this.language.documents.isOpen(request.path)) { return false }
+            const file: OpenFile = this.language.documents.file(request.path)
+            return file.doc.id() == request.file.doc.id() && file.doc.version() == request.version
+        }
+
+        /** Pumps requests and the light-bulb state without waiting for server replies. */
+        fn poll() -> Nothing
+        {
+            if (!this.running) { return }
+            this.lightBulb()
+            const pending: List<EditRequest> = this.pending
+            this.pending = []
+            for request in pending
+            {
+                try
+                {
+                    if (!this.current(request)) { throw "Buffer or language-server session changed; invoke the command again" }
+                    if (!request.sent)
+                    {
+                        if (Time::now() >= request.deadline) { throw "Timed out waiting for language-server synchronization" }
+                        if (request.client.state == "initializing") { this.pending.push(request) }
+                        else
+                        {
+                            if (request.client.state != "ready") { throw "Language server is not ready" }
+                            const uri: String = Utf16::uri(request.path)
+                            if (!request.client.documents.contains(uri) || request.client.documents.get(uri).version != request.version) { this.pending.push(request) }
+                            else { this.send(request)
+                                this.pending.push(request) }
+                        }
+                    }
+                    else if (!request.future.done) { this.pending.push(request) }
+                    else { this.complete(request)
+                        this.finish(request, true) }
+                }
+                catch (error: String)
+                {
+                    if (request.sent) { request.client.cancel(request.future) }
+                    var prefix: String = "Language editing: "
+                    if (request.kind == "save") { prefix = "Save cancelled: " }
+                    this.language.window.store.set("status.message", prefix + error)
+                    this.finish(request, false)
+                }
+            }
+        }
+
+        /** Shows the light bulb when the active Tinox buffer has current diagnostics. */
+        fn lightBulb() -> Nothing
+        {
+            var available: Bool = false
+            if (this.language.enabled && this.language.documents.active >= 0)
+            {
+                const path: String = this.language.documents.current().path
+                available = this.language.problems.items.contains(path)
+            }
+            this.language.window.store.setBool("editing.actionsAvailable", available)
+        }
+
+        /** Cancels pending work and makes the permanent poll hook inert before Qt is torn down. */
+        fn shutdown() -> Nothing
+        {
+            if (!this.running) { return }
+            this.running = false
+            this.picker.close()
+            const pending: List<EditRequest> = this.pending
+            this.pending = []
+            this.actions = []
+            for request in pending
+            {
+                if (request.sent) { request.client.cancel(request.future) }
+                this.finish(request, false)
+            }
+        }
+
+        /** Resolves every coalesced save barrier exactly once. */
+        fn finish(request: EditRequest, ok: Bool) -> Nothing
+        {
+            const callbacks: List<fnc(Bool) -> Nothing> = request.callbacks
+            request.callbacks = []
+            for callback in callbacks
+            {
+                try { callback(ok) }
+                catch (error: String) { this.language.window.events.fail("save continuation failed: " + error) }
+            }
+        }
+
+        /** Sends negotiated formatting/codeAction requests with UTF-16 ranges and current diagnostics. */
+        fn send(request: EditRequest) -> Nothing
+        {
+            var method: String = "textDocument/formatting"
+            var capability: String = "documentFormatting"
+            if (request.kind == "selection") { method = "textDocument/rangeFormatting"
+                capability = "documentRangeFormatting" }
+            if (request.kind == "actions" || request.kind == "organize") { method = "textDocument/codeAction"
+                capability = "codeAction" }
+            if (!this.navigation.supported(capability)) { throw "Language server does not support " + method }
+            var fields: List<String> = [Js::field("textDocument", Js::object([Js::strField("uri", Utf16::uri(request.path))]))]
+            if (capability == "codeAction")
+            {
+                var diagnostics: List<String> = []
+                if (this.language.problems.versions.contains(request.path) && this.language.problems.versions.get(request.path) == request.version)
+                {
+                    for item in this.language.problems.items.get(request.path)
+                    {
+                        if (EditService::overlaps(item.range, request.range)) { diagnostics.push(item.toJson()) }
+                    }
+                }
+                var context: List<String> = [Js::field("diagnostics", Js::array(diagnostics)), Js::intField("triggerKind", 1)]
+                if (request.kind == "organize") { context.push(Js::field("only", "[\"source.organizeImports\"]")) }
+                fields.push(Js::field("range", request.range.toJson()))
+                fields.push(Js::field("context", Js::object(context)))
+            }
+            else
+            {
+                fields.push(Js::field("options", "{\"tabSize\":4,\"insertSpaces\":true}"))
+                if (request.kind == "selection") { fields.push(Js::field("range", request.range.toJson())) }
+            }
+            request.future = request.client.request(method, Js::object(fields), 5000)
+            request.sent = true
+        }
+
+        /** Includes a diagnostic containing the cursor or intersecting the selected range. */
+        fnc overlaps(a: Range, b: Range) -> Bool
+        {
+            if (b.isEmpty()) { return !b.start.before(a.start) && !a.end.before(b.start) }
+            return a.start.before(b.end) && b.start.before(a.end)
+        }
+
+        /** Applies formatting once, preserving ordinary native undo; a null/empty result is a no-op. */
+        fn complete(request: EditRequest) -> Nothing
+        {
+            const value: JsonValue = request.future.value()
+            if (request.kind == "actions" || request.kind == "organize") { this.presentActions(request, value)
+                return }
+            if (request.kind == "resolve") { this.applyAction(EditAction { value: value, request: request })
+                return }
+            if (value.isNull()) { return }
+            if (!value.isArray()) { throw "Malformed formatting response" }
+            var edits: List<TextEdit> = []
+            for edit in value.asList()
+            {
+                const range: Range = Location::span(edit.getField("range"))
+                if (!edit.getField("newText").isString()) { throw "Formatting edit has no replacement text" }
+                const start: Int64 = Utf16::offset(request.text, range.start)
+                const end: Int64 = Utf16::offset(request.text, range.end)
+                const text: String = edit.getField("newText").getString()
+                if (request.text.substring(start, end) != text) { edits.push(TextEdit::replace(range, text)) }
+            }
+            if (edits.len() > 0) { WorkspaceEdits::apply([WorkspaceChange { file: request.file, version: request.version, text: request.text, edits: edits }]) }
+        }
+
+        /** Populates a light-bulb menu; organize imports applies its requested source action directly. */
+        fn presentActions(request: EditRequest, value: JsonValue) -> Nothing
+        {
+            if (request.generation != this.generation) { return }
+            if (!value.isNull() && !value.isArray()) { throw "Malformed code-action response" }
+            var actions: List<EditAction> = []
+            // Integer pass indices avoid invalid Bool-list lowering in tinox#580.
+            for rank in [0, 1]
+            {
+                for item in value.asList()
+                {
+                    if (!item.getField("title").isString()) { throw "Code action has no title" }
+                    const preferred: Bool = item.getField("isPreferred").getBool()
+                    if ((rank == 0 && preferred) || (rank == 1 && !preferred)) { actions.push(EditAction { value: item, request: request }) }
+                }
+            }
+            this.actions = actions
+            if (request.kind == "organize")
+            {
+                for action in actions
+                {
+                    if (action.value.getField("kind").getString() == "source.organizeImports") { this.applyAction(action)
+                        return }
+                }
+                this.language.window.store.set("status.message", "Imports are already organized")
+                return
+            }
+            if (actions.len() == 0) { this.language.window.store.set("status.message", "No code actions at this position")
+                return }
+            this.picker.open("Code actions…", (query: String) => this.items(query), (item: PickItem) => this.choose(item.id))
+        }
+
+        /** Filters current menu entries without asking the server again. */
+        fn items(query: String) -> List<PickItem>
+        {
+            var items: List<PickItem> = []
+            var index: Int64 = 0
+            for action in this.actions
+            {
+                const title: String = action.value.getField("title").getString()
+                if (title.toLower().contains(query.toLower())) { items.push(PickItem::create(index.toString(), title, action.value.getField("disabled").getField("reason").getString(), "hint")) }
+                index = index + 1
+            }
+            return items
+        }
+
+        /** Selection is checked against the original source/version before applying or resolving. */
+        fn choose(id: String) -> Nothing
+        {
+            const index: Int64 = id.toInt()
+            if (index < 0 || index >= this.actions.len()) { return }
+            try { this.applyAction(this.actions[index]) }
+            catch (error: String) { this.language.window.store.set("status.message", "Code action: " + error) }
+        }
+
+        /** Applies supported text-only actions atomically; unsupported command/resource actions are explicit. */
+        fn applyAction(action: EditAction) -> Nothing
+        {
+            const request: EditRequest = action.request
+            if (!this.current(request) || request.generation != this.generation) { throw "Code action is stale; request actions again" }
+            const value: JsonValue = action.value
+            if (!value.getField("disabled").isNull()) { throw value.getField("disabled").getField("reason").getString() }
+            if (!value.getField("command").isNull()) { throw "Code actions requiring server commands are not supported" }
+            const edit: JsonValue = value.getField("edit")
+            if (edit.isNull())
+            {
+                if (request.kind == "resolve" || !request.client.capabilities.getField("codeActionProvider").getField("resolveProvider").getBool()) { throw "Code action contains no text edit" }
+                const next: EditRequest = this.enqueue("resolve", request.file, request.range)
+                next.versions = request.versions
+                next.future = request.client.request("codeAction/resolve", Json::stringify(value), 5000)
+                next.sent = true
+                return
+            }
+            const changes: List<WorkspaceChange> = WorkspaceEdits::parse(this.language.documents, edit)
+            for change in changes
+            {
+                if (request.versions.contains(change.file.path) && request.versions.get(change.file.path) != change.version) { throw "A target buffer changed; request actions again" }
+            }
+            if (changes.len() > 0) { WorkspaceEdits::apply(changes) }
+        }
+    }
+}

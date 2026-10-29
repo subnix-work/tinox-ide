@@ -1,0 +1,15 @@
+module tinox.ide.editing
+
+import tinox.core.json
+
+namespace tinox.ide.editing
+{
+    /** One code action with the buffer/version context in which the user requested it. */
+    class EditAction
+    {
+        /** Server action, including edit, kind, disabled reason and opaque resolve data. */
+        var value: JsonValue
+        /** Originating operation and version snapshot. */
+        var request: EditRequest
+    }
+}

@@ -48,6 +48,7 @@ namespace tinox.ide.settings
                 PrefDef::bool("General", "Editor", "autosave", "Save modified files automatically", false),
                 PrefDef::int("General", "Editor", "autosaveSeconds", "Autosave interval in seconds", 30, 5, 3600),
                 PrefDef::bool("General", "Editor", "backup", "Keep a backup copy (name~) when saving", false),
+                PrefDef::bool("Editor", "Editor", "formatOnSave", "Format Tinox files before saving", false),
                 PrefDef::choice("Editor", "Editor", "theme", "Colour theme", "", [""]),
                 PrefDef::path("Language Server", "Tools", "lspPath", "Language server (tinox-lsp)", "tinox-lsp"),
                 PrefDef::text("Language Server", "Tools", "lspArgs", "Extra arguments", ""),

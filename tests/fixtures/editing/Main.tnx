@@ -1,0 +1,132 @@
+import tinox.core.process.Process
+import tinox.ide.IdeApp
+import tinox.ide.app.FileSystem
+import tinox.ide.kde.App
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.ui.Range
+
+class Main
+{
+    fnc main() -> Int32
+    {
+        return App::run("tinoxide", "Tinox Editing Smoke", (events: EventLoop) => Main::logic(events))
+    }
+
+    fnc logic(events: EventLoop) -> Int32
+    {
+        const results: List<Bool> = []
+        events.onType("core.ready", (event: Event) => Main::check(events, results))
+        events.run()
+        if (results.len() != 1 || !results[0]) { return 1 }
+        return 0
+    }
+
+    fnc expect(ok: Bool, message: String) -> Nothing
+    {
+        if (!ok) { throw message }
+    }
+
+    fnc wait(app: IdeApp, predicate: fnc(IdeApp) -> Bool) -> Bool
+    {
+        const start: Int64 = Bridge::nowNs()
+        while (!predicate(app) && (Bridge::nowNs() - start) / 1000000 < 10000) { app.events.pump(10) }
+        return predicate(app)
+    }
+
+    fnc missing(app: IdeApp, path: String) -> Bool
+    {
+        if (app.language.problems.items.contains(path))
+        {
+            for diagnostic in app.language.problems.items.get(path) { if (diagnostic.message.contains("missing import")) { return true } }
+        }
+        return false
+    }
+
+    fnc check(events: EventLoop, results: List<Bool>) -> Nothing
+    {
+        const app: IdeApp = IdeApp::start(events)
+        try
+        {
+            const root: String = Process::env("TINOX_EDITING_ROOT")
+            app.store.set("workspace.path", root)
+            const file = app.documents.open(root + "/Main.tnx")
+            const original: String = file.doc.text()
+            const expected: String = FileSystem::read(root + "/expected.txt")
+            app.language.start()
+            Main::expect(Main::wait(app, (a: IdeApp) => a.language.client.state == "ready" && a.language.reports > 0), "language server did not initialize")
+            app.editing.format(false)
+            Main::expect(Main::wait(app, (a: IdeApp) => a.editing.pending.len() == 0), "formatting timed out")
+            Main::expect(file.doc.text() == expected, "document formatting differs from tinox fmt: " + app.store.get("status.message"))
+            file.views[0].undo()
+            Main::expect(file.doc.text() == original, "format was not one undo step")
+            app.preferences.set("Editor.formatOnSave", "true")
+            const saves: List<Bool> = []
+            app.documents.saveWith(file, (ok: Bool) => saves.push(ok))
+            Main::expect(Main::wait(app, (a: IdeApp) => saves.len() == 1), "format on save timed out")
+            Main::expect(saves[0] && FileSystem::read(file.path) == expected && file.doc.text() == expected, "save did not wait for formatted text: " + app.store.get("status.message"))
+            const version: Int64 = file.doc.version()
+            app.documents.saveWith(file, (ok: Bool) => saves.push(ok))
+            Main::expect(Main::wait(app, (a: IdeApp) => saves.len() == 2), "second save timed out")
+            Main::expect(saves[1] && file.doc.version() == version, "format on save is not idempotent")
+            file.views[0].undo()
+            Main::expect(file.doc.text() == original, "a no-op save broke format undo")
+            app.preferences.set("Editor.formatOnSave", "false")
+            const selectionSource: String = "class Main\n{\n    fnc main() -> Int32\n    {\nprintln(\"a\")\nreturn 0\n    }\n}\n"
+            file.doc.setText(selectionSource)
+            file.views[0].setSelection(Range::create(4, 0, 4, 12))
+            app.editing.format(true)
+            Main::expect(Main::wait(app, (a: IdeApp) => a.editing.pending.len() == 0), "range formatting timed out")
+            Main::expect(file.doc.text().contains("        println(\"a\")\nreturn 0"), "range formatting changed an unselected line: " + app.store.get("status.message"))
+            file.views[0].undo()
+            Main::expect(file.doc.text() == selectionSource, "range formatting undo failed")
+            const missing = app.documents.open(root + "/Missing.tnx")
+            Main::expect(Main::wait(app, (a: IdeApp) => Main::missing(a, missing.path)), "missing-import diagnostic did not arrive")
+            for diagnostic in app.language.problems.items.get(missing.path)
+            {
+                if (diagnostic.message.contains("missing import")) { missing.views[0].setCursor(diagnostic.range.start) }
+            }
+            app.editing.codeActions(false)
+            Main::expect(Main::wait(app, (a: IdeApp) => a.editing.picker.visible), "quick-fix menu did not open: " + app.store.get("status.message"))
+            const reports: Int64 = app.language.reports
+            var choice: String = ""
+            var index: Int64 = 0
+            for action in app.editing.actions
+            {
+                if (action.value.getField("title").getString() == "Import tinox.core.fs") { choice = index.toString() }
+                index = index + 1
+            }
+            Main::expect(choice != "", "missing-import quick fix was not offered")
+            app.editing.picker.pick(choice)
+            Main::expect(missing.doc.text().startsWith("import tinox.core.fs\n"), "quick fix did not insert import")
+            Main::expect(Main::wait(app, (a: IdeApp) => a.language.reports > reports && !Main::missing(a, missing.path)), "quick fix did not clear missing-import diagnostic")
+            app.documents.saveWith(missing, (ok: Bool) => saves.push(ok))
+            Main::expect(saves.len() == 3 && saves[2], "fixed source did not save")
+            const imports = app.documents.open(root + "/Imports.tnx")
+            app.editing.codeActions(true)
+            Main::expect(Main::wait(app, (a: IdeApp) => a.editing.pending.len() == 0), "organize imports timed out")
+            Main::expect(imports.doc.text().startsWith("import tinox.core.fs\nimport tinox.core.process\n") && imports.doc.text().split("import tinox.core.fs").len() == 2, "imports were not sorted and deduplicated: " + app.store.get("status.message"))
+            const importsVersion: Int64 = imports.doc.version()
+            app.editing.codeActions(true)
+            Main::expect(Main::wait(app, (a: IdeApp) => a.editing.pending.len() == 0), "second organize timed out")
+            Main::expect(imports.doc.version() == importsVersion, "organize imports is not idempotent")
+            file.doc.setText("class Main {")
+            app.preferences.set("Editor.formatOnSave", "true")
+            app.documents.saveWith(file, (ok: Bool) => saves.push(ok))
+            Main::expect(Main::wait(app, (a: IdeApp) => saves.len() == 4), "syntax-error save did not settle")
+            Main::expect(!saves[3] && file.doc.text() == "class Main {" && FileSystem::read(file.path) == expected, "syntax error mutated the buffer or disk")
+            const closed: List<Bool> = []
+            app.documents.closeAnswer(missing, "save", (ok: Bool) => closed.push(ok))
+            Main::expect(app.documents.isOpen(missing.path), "close released a buffer before pre-save work")
+            Main::expect(Main::wait(app, (a: IdeApp) => closed.len() == 1), "save and close did not finish")
+            Main::expect(closed[0] && !app.documents.isOpen(missing.path), "save and close did not wait for formatting")
+            Main::expect(events.failureCount() == 0, "an event handler failed")
+            println("editing: CLI-equivalent formatting, selection, idempotent save/undo, import quick fix, organize imports, syntax-error cancellation and save/close passed")
+            results.push(true)
+        }
+        catch (error: String) { printStderr("editing smoke failed: " + error)
+            results.push(false) }
+        app.quit()
+    }
+}

@@ -1,0 +1,258 @@
+import DiagnosticsHarness
+import MockBridge
+import TempProject
+import tinox.core.json
+import tinox.ide.IdeApp
+import tinox.ide.editing.EditRequest
+import tinox.ide.editor.OpenFile
+import tinox.ide.ui.Js
+import tinox.ide.ui.Range
+import tinox.ide.ui.Utf16
+
+class EditingTest
+{
+    fnc start() -> IdeApp
+    {
+        const app = DiagnosticsHarness::start()
+        const mount: Int64 = MockBridge::createObject()
+        MockBridge::onCommand("widget.mount", "{\"id\":" + mount.toString() + ",\"root\":97,\"nodes\":{\"picker\":97,\"query\":98,\"results\":99}}", "")
+        for name in ["widget.hide", "widget.focus"] { MockBridge::onCommand(name, "", "") }
+        MockBridge::onCommand("editor.workspaceEdit", "{\"inverse\":[]}", "")
+        MockBridge::onCommand("editor.getCursor", "{\"position\":{\"line\":0,\"character\":1}}", "")
+        MockBridge::onCommand("editor.getSelection", "{\"range\":null}", "")
+        return app
+    }
+
+    fnc enable(app: IdeApp) -> Nothing
+    {
+        app.language.client.capabilities = Json::parse("{\"documentFormattingProvider\":true,\"documentRangeFormattingProvider\":true,\"codeActionProvider\":{\"resolveProvider\":true}}")
+        DiagnosticsHarness::drain()
+    }
+
+    fnc edits() -> String
+    {
+        return "[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}},\"newText\":\"z\"}]"
+    }
+
+    fnc reply(app: IdeApp, request: EditRequest, result: String) -> Nothing
+    {
+        app.language.client.receive("{\"jsonrpc\":\"2.0\",\"id\":" + request.future.id.toString() + ",\"result\":" + result + "}")
+        app.editing.poll()
+    }
+
+    @Test("formatting is nonblocking, selection ranges reach the server, and empty/unchanged replies create no undo command")
+    fn testFormatting() -> Bool
+    {
+        const app = EditingTest::start()
+        const root = TempProject::create()
+        const path = TempProject::file(root, "Main.tnx", "abc")
+        const file = DiagnosticsHarness::open(app, path, "abc")
+        EditingTest::enable(app)
+        const request = app.editing.enqueue("selection", file, Range::create(0, 0, 0, 2))
+        const nonblocking: Bool = !request.sent && app.editing.pending.len() == 1
+        const messages: List<String> = []
+        app.language.client.sender = (text: String) => messages.push(text)
+        app.editing.poll()
+        const dispatched: Bool = messages[0].contains("textDocument/rangeFormatting") && messages[0].contains("\"range\"")
+        EditingTest::reply(app, request, EditingTest::edits())
+        const applied = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.workspaceEdit")
+        const again = app.editing.enqueue("format", file, Range::create(0, 0, 0, 0))
+        app.editing.poll()
+        EditingTest::reply(app, again, "[]")
+        const empty: Bool = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.workspaceEdit") == ""
+        const unchanged = app.editing.enqueue("format", file, Range::create(0, 0, 0, 0))
+        app.editing.poll()
+        EditingTest::reply(app, unchanged, EditingTest::edits().replace("\"z\"", "\"a\""))
+        const noOp: Bool = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.workspaceEdit") == ""
+        app.language.shutdown()
+        TempProject::remove(root)
+        return nonblocking && dispatched && applied.contains("\"version\":0") && applied.contains("\"target\":" + file.doc.id().toString()) && empty && noOp && app.events.failureCount() == 0
+    }
+
+    @Test("stale, closed, timed out and failed formatter requests never apply edits or write the file")
+    fn testFailures() -> Bool
+    {
+        const app = EditingTest::start()
+        const root = TempProject::create()
+        const path = TempProject::file(root, "Main.tnx", "abc")
+        const file = DiagnosticsHarness::open(app, path, "abc")
+        EditingTest::enable(app)
+        const stale = app.editing.enqueue("format", file, Range::create(0, 0, 0, 0))
+        app.editing.poll()
+        MockBridge::onCommand("editor.info", "{\"version\":1}", "")
+        app.editing.poll()
+        const cancelled: Bool = stale.future.code == -32800 && app.editing.pending.len() == 0
+        MockBridge::onCommand("editor.info", "{\"version\":0}", "")
+        app.store.setBool("pref.Editor.formatOnSave", true)
+        const saved: List<Bool> = []
+        app.documents.saveWith(file, (ok: Bool) => saved.push(ok))
+        app.editing.poll()
+        const failed = app.editing.pending[0]
+        failed.future.resolve(Json::parse("null"), -32603, "syntax errors")
+        app.editing.poll()
+        const refused: Bool = saved.len() == 1 && !saved[0] && app.store.get("status.message").contains("Save cancelled")
+        const timeout = app.editing.enqueue("format", file, Range::create(0, 0, 0, 0))
+        timeout.deadline = 0
+        app.editing.poll()
+        const timedOut: Bool = app.editing.pending.len() == 0
+        app.documents.saveWith(file, (ok: Bool) => saved.push(ok))
+        app.documents.discard(file)
+        app.editing.poll()
+        const closed: Bool = saved.len() == 2 && !saved[1]
+        const calls = DiagnosticsHarness::drain()
+        app.language.shutdown()
+        TempProject::remove(root)
+        return cancelled && refused && timedOut && closed && DiagnosticsHarness::last(calls, "editor.workspaceEdit") == "" && DiagnosticsHarness::last(calls, "editor.saveDocument") == ""
+    }
+
+    @Test("Save and close waits for formatting, saves afterwards, and coalesced saves each settle once")
+    fn testSaveBarrier() -> Bool
+    {
+        const app = EditingTest::start()
+        const root = TempProject::create()
+        const path = TempProject::file(root, "Main.tnx", "abc")
+        const file = DiagnosticsHarness::open(app, path, "abc")
+        EditingTest::enable(app)
+        app.store.setBool("pref.Editor.formatOnSave", true)
+        const done: List<Bool> = []
+        app.editing.beforeSave(file, (ok: Bool) => done.push(ok))
+        app.documents.closeAnswer(file, "save", (ok: Bool) => done.push(ok))
+        const waiting: Bool = app.documents.isOpen(path) && done.len() == 0 && app.editing.pending.len() == 1
+        app.editing.poll()
+        const request = app.editing.pending[0]
+        EditingTest::reply(app, request, EditingTest::edits())
+        const calls = DiagnosticsHarness::drain()
+        var edited: Bool = false
+        var ordered: Bool = false
+        for call in calls
+        {
+            if (call.contains("\"cmd\":\"editor.workspaceEdit\"")) { edited = true }
+            if (call.contains("\"cmd\":\"editor.saveDocument\"")) { ordered = edited }
+        }
+        const closed: Bool = !app.documents.isOpen(path) && done.len() == 2 && done[0] && done[1]
+        app.language.shutdown()
+        TempProject::remove(root)
+        return waiting && ordered && closed && app.events.failureCount() == 0
+    }
+
+    @Test("quick fixes include current diagnostics, preferred actions sort first, imports apply atomically and stale menus are refused")
+    fn testQuickFix() -> Bool
+    {
+        const app = EditingTest::start()
+        const root = TempProject::create()
+        const path = TempProject::file(root, "Main.tnx", "abc")
+        const file = DiagnosticsHarness::open(app, path, "abc")
+        EditingTest::enable(app)
+        DiagnosticsHarness::publish(app.language, path, "0", "[" + DiagnosticsHarness::item("missing import for 'Watcher'", "1", "7") + "]")
+        const messages: List<String> = []
+        app.language.client.sender = (text: String) => messages.push(text)
+        app.editing.codeActions(false)
+        app.editing.poll()
+        const request = app.editing.pending[0]
+        const context: Bool = messages[0].contains("missing import") && messages[0].contains("\"triggerKind\":1") && app.store.getBool("editing.actionsAvailable")
+        const edit: String = "{\"changes\":{" + Js::field(Utf16::uri(path), EditingTest::edits()) + "}}"
+        const action: String = "{\"title\":\"Import tinox.core.fs\",\"kind\":\"quickfix\",\"isPreferred\":true,\"edit\":" + edit + "}"
+        const disabled: String = "{\"title\":\"Unavailable\",\"disabled\":{\"reason\":\"not applicable\"}}"
+        EditingTest::reply(app, request, "[" + disabled + "," + action + "]")
+        const preferred: Bool = app.editing.picker.visible && app.editing.actions[0].value.getField("title").getString() == "Import tinox.core.fs"
+        DiagnosticsHarness::drain()
+        app.editing.choose("0")
+        const applied: Bool = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.workspaceEdit").contains("\"version\":0")
+        MockBridge::onCommand("editor.info", "{\"version\":1}", "")
+        app.editing.choose("0")
+        const stale: Bool = app.store.get("status.message").contains("stale") && DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.workspaceEdit") == ""
+        app.language.shutdown()
+        TempProject::remove(root)
+        return context && preferred && applied && stale && app.events.failureCount() == 0
+    }
+
+    @Test("organize imports requests only its source action, lazy actions resolve edits, and command actions are rejected explicitly")
+    fn testOrganizeAndResolve() -> Bool
+    {
+        const app = EditingTest::start()
+        const root = TempProject::create()
+        const path = TempProject::file(root, "Main.tnx", "abc")
+        const file = DiagnosticsHarness::open(app, path, "abc")
+        EditingTest::enable(app)
+        const messages: List<String> = []
+        app.language.client.sender = (text: String) => messages.push(text)
+        app.editing.codeActions(true)
+        app.editing.poll()
+        const request = app.editing.pending[0]
+        const only: Bool = messages[0].contains("source.organizeImports")
+        const edit: String = "{\"changes\":{" + Js::field(Utf16::uri(path), EditingTest::edits()) + "}}"
+        const action: String = "{\"title\":\"Organize imports\",\"kind\":\"source.organizeImports\",\"edit\":" + edit + "}"
+        EditingTest::reply(app, request, "[" + action + "]")
+        const organized: Bool = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.workspaceEdit") != "" && !app.editing.picker.visible
+        app.editing.codeActions(false)
+        app.editing.poll()
+        const menu = app.editing.pending[0]
+        EditingTest::reply(app, menu, "[{\"title\":\"Lazy fix\",\"data\":{\"opaque\":1}}]")
+        app.editing.choose("0")
+        const resolve = app.editing.pending[0]
+        const resolving: Bool = messages[messages.len() - 1].contains("codeAction/resolve") && messages[messages.len() - 1].contains("opaque")
+        EditingTest::reply(app, resolve, action)
+        const resolved: Bool = DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.workspaceEdit") != ""
+        app.editing.actions[0].value = Json::parse("{\"title\":\"Command\",\"command\":{\"command\":\"server.command\"}}")
+        app.editing.choose("0")
+        const explicit: Bool = app.store.get("status.message").contains("not supported")
+        app.language.shutdown()
+        TempProject::remove(root)
+        return only && organized && resolving && resolved && explicit && app.events.failureCount() == 0
+    }
+    @Test("Save As and quit review wait for the save barrier and a formatter failure cannot retarget a file")
+    fn testSaveAsAndQuit() -> Bool
+    {
+        const app = EditingTest::start()
+        const root = TempProject::create()
+        const path = TempProject::file(root, "Main.tnx", "abc")
+        const file = DiagnosticsHarness::open(app, path, "abc")
+        EditingTest::enable(app)
+        app.store.setBool("pref.Editor.formatOnSave", true)
+        const target: String = root + "/New.tnx"
+        app.documents.saveAs(file, true, target)
+        const deferred: Bool = file.path == path && app.editing.pending.len() == 1
+        app.editing.poll()
+        app.editing.pending[0].future.resolve(Json::parse("null"), -32603, "cannot format")
+        app.editing.poll()
+        const cancelled: Bool = file.path == path && DiagnosticsHarness::last(DiagnosticsHarness::drain(), "editor.saveDocument") == ""
+        app.documents.saveAs(file, true, target)
+        app.editing.poll()
+        EditingTest::reply(app, app.editing.pending[0], "[]")
+        const retargeted: Bool = file.path == target
+        const reviewed: List<Bool> = []
+        app.documents.reviewAnswer(file, "save", 1, (ok: Bool) => reviewed.push(ok))
+        const waiting: Bool = reviewed.len() == 0
+        app.editing.poll()
+        EditingTest::reply(app, app.editing.pending[0], "[]")
+        const quitReady: Bool = reviewed.len() == 1 && reviewed[0]
+        app.language.shutdown()
+        TempProject::remove(root)
+        return deferred && cancelled && retargeted && waiting && quitReady && app.events.failureCount() == 0
+    }
+
+    @Test("shutdown cancels save barriers and subsequent polls cannot touch the retired UI")
+    fn testShutdown() -> Bool
+    {
+        const app = EditingTest::start()
+        const root = TempProject::create()
+        const path = TempProject::file(root, "Main.tnx", "abc")
+        const file = DiagnosticsHarness::open(app, path, "abc")
+        EditingTest::enable(app)
+        app.store.setBool("pref.Editor.formatOnSave", true)
+        const saved: List<Bool> = []
+        app.documents.saveWith(file, (ok: Bool) => saved.push(ok))
+        app.editing.poll()
+        const future = app.editing.pending[0].future
+        app.editing.shutdown()
+        DiagnosticsHarness::drain()
+        app.editing.poll()
+        app.editing.shutdown()
+        const inert: Bool = DiagnosticsHarness::drain().len() == 0
+        const cancelled: Bool = future.code == -32800 && saved.len() == 1 && !saved[0] && !app.editing.running
+        app.language.shutdown()
+        TempProject::remove(root)
+        return inert && cancelled && app.events.failureCount() == 0
+    }
+
+}

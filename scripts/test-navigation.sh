@@ -26,7 +26,7 @@ printf '[package]\nname = "navigation-test"\nversion = "0.1.0"\nentry = "Caller.
 if [ -z "${TINOX_LSP:-}" ] && [ -x "$here/../tinox/target/release/tinox-lsp" ]; then
     export TINOX_LSP="$here/../tinox/target/release/tinox-lsp"
 fi
-env QT_QPA_PLATFORM=offscreen TKDE_DEBUG_COMMANDS=1 TKDE_NO_KCRASH=1 \
+scripts/test-gui-smoke.sh navigation env QT_QPA_PLATFORM=offscreen TKDE_DEBUG_COMMANDS=1 TKDE_NO_KCRASH=1 \
     XDG_CONFIG_HOME="$sandbox/config" XDG_DATA_HOME="$sandbox/data" XDG_CACHE_HOME="$sandbox/cache" \
     TINOX_NAVIGATION_ROOT="$sandbox" \
     timeout 150 "${TINOX:-tinox}" run tests/fixtures/navigation/Main.tnx
