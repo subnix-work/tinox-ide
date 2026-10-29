@@ -1,0 +1,211 @@
+module tinox.ide.debug
+
+import tinox.core.json
+import tinox.core.semaphore.Mutex
+import tinox.core.time.Time
+import tinox.ide.lsp.Framing
+import tinox.ide.lsp.RpcFuture
+import tinox.ide.lsp.StdioTransport
+import tinox.ide.ui.Js
+
+namespace tinox.ide.debug
+{
+    /**
+     * Poll-driven Debug Adapter Protocol client. It shares the transport and the Content-Length
+     * framing with the LSP client (docs/lsp-client.md); only the envelope differs: requests carry
+     * a `seq` and a `command`, responses name the `request_seq` and say `success`, and events arrive
+     * unprompted. Only the owning logic task touches the state. Call `poll()` regularly; it never
+     * waits for the adapter.
+     */
+    class DapClient
+    {
+        /** Serializes outgoing JSON; injectable for protocol tests. */
+        var sender: fnc(String) -> Nothing
+        /** Outstanding requests keyed by seq. */
+        var pending: Map<String, RpcFuture>
+        /** Events received and not yet taken. */
+        var queued: List<DapEvent>
+        /** The seq of the last request. */
+        var nextSeq: Int64
+        /** idle, running, closed. */
+        var state: String
+        /** The clock of the last poll, in milliseconds. */
+        var clock: Int64
+        /** The most recent failure of the adapter or its process. */
+        var lastError: String
+        /** The adapter process, when started by `launch`. */
+        var transport: StdioTransport
+        /** Whether a process was started. */
+        var spawned: Bool
+
+        /** A client with an injected sender; feed the adapter's messages to `receive`. */
+        fnc create(sender: fnc(String) -> Nothing) -> DapClient
+        {
+            return DapClient { sender: sender, pending: Map::new(), queued: [], nextSeq: 0, state: "running", clock: Time::now(), lastError: "", transport: StdioTransport { mutex: Mutex::new(), outgoing: [], incoming: [], queued: 0, received: 0, stopping: true, stopped: true, failure: "", stderr: "" }, spawned: false }
+        }
+
+        /** Starts the adapter (for example `tinox dap`) and talks to it over stdio. */
+        fnc launch(argv: List<String>, directory: String) -> DapClient
+        {
+            if (argv.len() == 0 || argv[0] == "") { throw "The debug adapter command must name a program" }
+            const client: DapClient = DapClient::create((json: String) => DapClient::ignore())
+            const transport: StdioTransport = StdioTransport::start(argv, directory)
+            client.transport = transport
+            client.spawned = true
+            client.sender = (json: String) => transport.writeMessage(json)
+            return client
+        }
+
+        /** The sender of a client that is not connected. */
+        fnc ignore() -> Nothing
+        {
+        }
+
+        /** Sends a request. The future settles from `poll`, on a timeout, or when the adapter goes away. */
+        fn request(command: String, arguments: String, timeoutMs: Int64) -> RpcFuture
+        {
+            if (timeoutMs <= 0) { throw "A debug adapter request needs a positive timeout" }
+            Json::parse(arguments)
+            this.nextSeq = this.nextSeq + 1
+            const future: RpcFuture = RpcFuture::create(this.nextSeq, this.clock + timeoutMs)
+            if (this.state != "running")
+            {
+                future.resolve(Json::parse("null"), -1, "The debug adapter is not running")
+                return future
+            }
+            this.pending.set(future.id.toString(), future)
+            try
+            {
+                this.sender("{\"seq\":" + future.id.toString() + ",\"type\":\"request\",\"command\":" + Js::str(command) + ",\"arguments\":" + arguments + "}")
+            }
+            catch (e: String)
+            {
+                this.forget(future.id.toString())
+                future.resolve(Json::parse("null"), -1, e)
+            }
+            return future
+        }
+
+        /** Retires a seq. */
+        fn forget(key: String) -> Nothing
+        {
+            var live: Map<String, RpcFuture> = Map::new()
+            for known in this.pending.keys()
+            {
+                if (known != key) { live.set(known, this.pending.get(known)) }
+            }
+            this.pending = live
+        }
+
+        /** Handles one decoded message of the adapter. */
+        fn receive(text: String) -> Nothing
+        {
+            const message: JsonValue = Json::parse(text)
+            if (!message.isObject()) { throw "A debug adapter message must be an object" }
+            const kind: String = message.getField("type").getString()
+            if (kind == "event")
+            {
+                var body: JsonValue = message.getField("body")
+                if (!body.isObject()) { body = Json::parse("{}") }
+                this.queued.push(DapEvent { name: message.getField("event").getString(), body: body })
+            }
+            else if (kind == "response") { this.answer(message) }
+            else if (kind == "request") { this.refuse(message) }
+        }
+
+        /** Settles the request a response belongs to; a late answer to a settled request is dropped. */
+        fn answer(message: JsonValue) -> Nothing
+        {
+            const seq: JsonValue = message.getField("request_seq")
+            if (!seq.isInt()) { return }
+            const key: String = seq.getInt().toString()
+            if (!this.pending.contains(key)) { return }
+            const future: RpcFuture = this.pending.get(key)
+            this.forget(key)
+            if (message.getField("success").isBool() && message.getField("success").getBool())
+            {
+                var body: JsonValue = message.getField("body")
+                if (!body.isObject()) { body = Json::parse("{}") }
+                future.resolve(body, 0, "")
+            }
+            else
+            {
+                var reason: String = "The debug adapter refused " + message.getField("command").getString()
+                if (message.getField("message").isString()) { reason = message.getField("message").getString() }
+                future.resolve(Json::parse("null"), -1, reason)
+            }
+        }
+
+        /** The adapter asked us for something (runInTerminal, startDebugging): this client does neither. */
+        fn refuse(message: JsonValue) -> Nothing
+        {
+            const seq: Int64 = message.getField("seq").getInt()
+            this.nextSeq = this.nextSeq + 1
+            this.sender("{\"seq\":" + this.nextSeq.toString() + ",\"type\":\"response\",\"request_seq\":" + seq.toString() + ",\"success\":false,\"command\":" + Js::str(message.getField("command").getString()) + ",\"message\":\"not supported by the Tinox IDE\"}")
+        }
+
+        /** The events received since the last call, in order. */
+        fn takeEvents() -> List<DapEvent>
+        {
+            const out: List<DapEvent> = this.queued
+            this.queued = []
+            return out
+        }
+
+        /** Whether the adapter is gone: it exited, failed or was stopped. */
+        fn closed() -> Bool
+        {
+            return this.state == "closed"
+        }
+
+        /** Stops the adapter at once and fails what is outstanding. */
+        fn stop() -> Nothing
+        {
+            this.fail("The debug adapter was stopped")
+            if (this.spawned) { this.transport.stop() }
+        }
+
+        /** Marks the client closed and fails every outstanding request with `reason`. */
+        fn fail(reason: String) -> Nothing
+        {
+            if (this.state == "closed") { return }
+            this.state = "closed"
+            this.lastError = reason
+            for key in this.pending.keys() { this.pending.get(key).resolve(Json::parse("null"), -1, reason) }
+            this.pending = Map::new()
+        }
+
+        /** Reads what the adapter wrote, times out requests and notices the end of the process. */
+        fn poll() -> Nothing
+        {
+            this.pollAt(Time::now())
+        }
+
+        /** `poll` with a caller-provided clock, for tests. */
+        fn pollAt(now: Int64) -> Nothing
+        {
+            this.clock = now
+            if (this.state == "closed") { return }
+            if (this.spawned)
+            {
+                try { for message in this.transport.drain() { this.receive(message) } }
+                catch (e: String) { this.fail(e) }
+                if (this.state != "closed" && this.transport.isStopped())
+                {
+                    var reason: String = this.transport.error()
+                    if (reason == "") { reason = "The debug adapter exited" }
+                    this.fail(reason)
+                }
+            }
+            for key in this.pending.keys()
+            {
+                const future: RpcFuture = this.pending.get(key)
+                if (now >= future.deadline)
+                {
+                    this.forget(key)
+                    future.resolve(Json::parse("null"), -2, "The debug adapter did not answer in time")
+                }
+            }
+        }
+    }
+}

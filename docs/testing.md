@@ -136,6 +136,10 @@ distinct default colours, retained moving ranges during typing, live per-type
 colour overrides and shutdown cleanup. Like the other LSP smokes it uses
 `test-gui-smoke.sh` to reject unexpected stderr through teardown.
 
+`scripts/test-debug.sh` drives the debugger with the real `tinox build --debug` and `tinox dap` (gdb):
+a gutter breakpoint in a sample program is hit, the locals are read, a step and continue follow, and
+the session ends with the program. It is skipped when gdb is not installed; see [debugging.md](debugging.md).
+
 ## Build and test tasks
 
 `tests/BuildTest.tnx` runs the real `tinox` tool against throw-away projects (needs `tinox` on

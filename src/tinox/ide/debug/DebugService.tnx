@@ -1,0 +1,740 @@
+module tinox.ide.debug
+
+import tinox.core.json
+import tinox.ide.app.BusMessage
+import tinox.ide.app.CommandContext
+import tinox.ide.app.IdeCommand
+import tinox.ide.app.MainWindow
+import tinox.ide.app.Store
+import tinox.ide.build.HostCommand
+import tinox.ide.editor.Documents
+import tinox.ide.editor.OpenFile
+import tinox.ide.kde.Bridge
+import tinox.ide.kde.Event
+import tinox.ide.kde.EventLoop
+import tinox.ide.lsp.RpcFuture
+import tinox.ide.ui.ItemView
+import tinox.ide.ui.Js
+import tinox.ide.ui.Model
+import tinox.ide.ui.Node
+import tinox.ide.ui.Row
+import tinox.ide.ui.Ui
+
+namespace tinox.ide.debug
+{
+    /**
+     * Debugging through a Debug Adapter Protocol server (`tinox dap`, which is gdb's built-in
+     * adapter with the Tinox pretty-printers). The service owns the breakpoints (gutter marks of
+     * the open documents), one session at a time, and four bottom tabs: Variables, Call Stack,
+     * Threads and the Debug Console. A session is started by the bus message `debug.launch` that
+     * the build service posts after a `--debug` build. Store keys: debug.active, debug.stopped.
+     * See docs/debugging.md.
+     */
+    class DebugService
+    {
+        /** The window, store, bus and registry. */
+        var window: MainWindow
+        /** Finds the open files, shows the stop location. */
+        var documents: Documents
+        /** The breakpoints of all files. */
+        var breakpoints: BreakpointSet
+        /** Starts the adapter: the command and its working directory. Replaced by tests. */
+        var factory: fnc(List<String>, String) -> DapClient
+        /** The adapter of the running session; only meaningful while `live`. */
+        var client: DapClient
+        /** Requests in flight. */
+        var calls: List<DapCall>
+        /** A session exists (starting, running or stopped). */
+        var live: Bool
+        /** The user asked to end the session; the adapter is being disconnected. */
+        var ending: Bool
+        /** Number of the current session: late answers of an earlier one are dropped. */
+        var generation: Int64
+        /** The thread the views show. */
+        var threadId: Int64
+        /** The frames of that thread. */
+        var frames: List<JsonValue>
+        /** The index of the frame the variables belong to. */
+        var frameIndex: Int64
+        /** The file that carries the execution mark, "" for none. */
+        var markedPath: String
+        /** The file of a run-to-cursor target, "" for none. */
+        var cursorPath: String
+        /** The line of the run-to-cursor target. */
+        var cursorLine: Int64
+        /** Whether the locals of the selected frame were drawn since the program last stopped or a frame was picked. */
+        var drawn: Bool
+        /** The locals of the selected frame as "name = value" lines, as last drawn. */
+        var shown: List<String>
+        /** Row id to variablesReference of the variables tree. */
+        var references: Map<String, Int64>
+        /** Counter for row ids. */
+        var rowCount: Int64
+        /** What the user typed into the console. */
+        var input: String
+        /** Console text waiting to be shown. */
+        var pending: String
+        /** Everything the console showed in this session (without colours), for tests and bug reports. */
+        var transcript: String
+        /** Whether the console is cleared by the next write. */
+        var clearConsole: Bool
+        /** The variables tree. */
+        var variables: Model
+        /** The call stack. */
+        var stack: Model
+        /** The threads. */
+        var threads: Model
+        /** Bottom tab index of the variables. */
+        var variablesTab: Int64
+        /** Bottom tab index of the console. */
+        var consoleTab: Int64
+
+        /** Creates the service and registers its tabs, commands and menu before the window starts. */
+        fnc install(window: MainWindow, documents: Documents) -> DebugService
+        {
+            const service: DebugService = DebugService { window: window, documents: documents, breakpoints: BreakpointSet::create(), factory: (argv: List<String>, directory: String) => DapClient::launch(argv, directory), client: DapClient::create((json: String) => DapClient::ignore()), calls: [], live: false, ending: false, generation: 0, threadId: 0, frames: [], frameIndex: 0, markedPath: "", cursorPath: "", cursorLine: 0, drawn: false, shown: [], references: Map::new(), rowCount: 0, input: "", pending: "", transcript: "", clearConsole: false, variables: Model::create(window.events, ["Name", "Value", "Type"], true), stack: Model::create(window.events, ["Frame", "Location"], false), threads: Model::create(window.events, ["Thread"], false), variablesTab: window.bottomPanels.len() + 2, consoleTab: window.bottomPanels.len() + 5 }
+            window.addBottomPanel((s: Store) => Ui::treeView("debugVariables").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Variables", "debug-run"))
+            window.addBottomPanel((s: Store) => Ui::treeView("debugStack").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Call Stack", "view-list-tree"))
+            window.addBottomPanel((s: Store) => Ui::treeView("debugThreads").bool("uniformRowHeights", true).str("selectionMode", "single").inTab("Threads", "view-list-details"))
+            window.addBottomPanel((s: Store) => Ui::column("debugConsole").add(Ui::log("debugOutput")).add(Ui::lineEdit("debugInput", "").str("placeholder", "Evaluate an expression or run a debugger command")).inTab("Debug Console", "utilities-terminal"))
+            service.registerCommands()
+            var items: List<String> = window.buildMenu
+            for item in ["-", "debug.start", "debug.continue", "debug.pause", "debug.stepOver", "debug.stepInto", "debug.stepOut", "debug.runToCursor", "debug.stop", "-", "debug.toggleBreakpoint", "debug.clearBreakpoints"] { items.push(item) }
+            window.addBuildMenu(items)
+            window.events.onPoll((events: EventLoop) => service.poll())
+            window.bus.subscribe("debug.launch", (m: BusMessage) => service.launch(m))
+            window.bus.subscribe("editor.opened", (m: BusMessage) => service.opened(m.str("path")))
+            window.bus.subscribe("workspace.fileOperation", (m: BusMessage) => service.fileOperation(m.str("kind"), m.str("path"), m.str("oldPath")))
+            window.bus.subscribe("workspace.closed", (m: BusMessage) => service.end("The workspace was closed"))
+            window.store.setBool("debug.active", false)
+            window.store.setBool("debug.stopped", false)
+            return service
+        }
+
+        /** Attaches the models after the window is mounted. */
+        fn bind() -> Nothing
+        {
+            this.variables.attach(this.window.mount.idOf("debugVariables"))
+            this.variables.onFetch((id: String) => this.expand(id))
+            this.stack.attach(this.window.mount.idOf("debugStack"))
+            this.threads.attach(this.window.mount.idOf("debugThreads"))
+            this.window.mount.onActivated("debugStack", (id: String) => this.pickFrame(id))
+            this.window.mount.onActivated("debugThreads", (id: String) => this.pickThread(id))
+            this.window.mount.onText("debugInput", (text: String) => this.typed(text))
+            this.window.mount.onEnter("debugInput", (ev: Event) => this.submit())
+        }
+
+        /** The commands of the Debug entries in the Build menu. */
+        fn registerCommands() -> Nothing
+        {
+            const stopped: fnc(Store) -> Bool = (s: Store) => s.getBool("debug.stopped")
+            const editing: fnc(Store) -> Bool = (s: Store) => s.getBool("workspace.open") && s.getBool("editor.hasActive")
+            this.window.registry.registerAll([
+                IdeCommand::create("debug.start", "Start &Debugging").icon("debug-run").shortcut("Alt+F5").category("Debug").enabledWhen((s: Store) => s.getBool("workspace.open") && !s.getBool("build.active") && !s.getBool("debug.active")).run((c: CommandContext) => this.window.bus.signal("debug.requested")),
+                IdeCommand::create("debug.continue", "&Continue").icon("media-playback-start").shortcut("F6").category("Debug").enabledWhen(stopped).run((c: CommandContext) => this.resume("continue")),
+                IdeCommand::create("debug.pause", "&Pause").icon("media-playback-pause").shortcut("Shift+F6").category("Debug").enabledWhen((s: Store) => s.getBool("debug.active") && !s.getBool("debug.stopped")).run((c: CommandContext) => this.pause()),
+                IdeCommand::create("debug.stepOver", "Step &Over").icon("debug-step-over").shortcut("F10").category("Debug").enabledWhen(stopped).run((c: CommandContext) => this.resume("next")),
+                IdeCommand::create("debug.stepInto", "Step &Into").icon("debug-step-into").shortcut("F11").category("Debug").enabledWhen(stopped).run((c: CommandContext) => this.resume("stepIn")),
+                IdeCommand::create("debug.stepOut", "Step Ou&t").icon("debug-step-out").shortcut("Shift+F11").category("Debug").enabledWhen(stopped).run((c: CommandContext) => this.resume("stepOut")),
+                IdeCommand::create("debug.runToCursor", "Run to Cu&rsor").icon("debug-run-cursor").shortcut("Ctrl+F10").category("Debug").enabledWhen((s: Store) => s.getBool("debug.stopped") && s.getBool("editor.hasActive")).run((c: CommandContext) => this.runToCursor()),
+                IdeCommand::create("debug.stop", "S&top Debugging").icon("debug-stop").shortcut("Alt+Shift+F5").category("Debug").enabledWhen((s: Store) => s.getBool("debug.active")).run((c: CommandContext) => this.end("Debugging stopped")),
+                IdeCommand::create("debug.toggleBreakpoint", "Toggle &Breakpoint").icon("media-record").shortcut("Ctrl+F9").category("Debug").enabledWhen(editing).run((c: CommandContext) => this.toggleAtCursor()),
+                IdeCommand::create("debug.clearBreakpoints", "Remove &All Breakpoints").icon("edit-clear-all").category("Debug").enabledWhen((s: Store) => s.getBool("workspace.open")).run((c: CommandContext) => this.clearBreakpoints())
+            ])
+        }
+
+        // ---------------------------------------------------------------- breakpoints
+
+        /** A file was opened: it shows its breakpoints and reports the user's clicks in the gutter. */
+        fn opened(path: String) -> Nothing
+        {
+            if (this.documents.indexOf(path) < 0) { return }
+            const f: OpenFile = this.documents.file(path)
+            f.doc.onBreakpointToggled((line: Int64, added: Bool) => this.toggled(f.path, line, added))
+            const lines: List<Int64> = this.breakpoints.lines(path)
+            if (lines.len() > 0) { f.doc.setBreakpoints(lines) }
+        }
+
+        /** A file or folder was renamed, moved or deleted in the project tree. */
+        fn fileOperation(kind: String, path: String, oldPath: String) -> Nothing
+        {
+            if (kind == "rename" || kind == "move") { this.breakpoints.rename(oldPath, path) }
+            else if (kind == "delete" || kind == "trash") { this.breakpoints.forget(path) }
+        }
+
+        /** The user clicked a breakpoint into or out of the gutter. */
+        fn toggled(path: String, line: Int64, added: Bool) -> Nothing
+        {
+            this.breakpoints.set(path, line, added)
+            this.sync(path)
+        }
+
+        /** Toggles the breakpoint on the line of the cursor in the current file. */
+        fn toggleAtCursor() -> Nothing
+        {
+            if (this.documents.count() == 0) { return }
+            const f: OpenFile = this.documents.current()
+            const line: Int64 = f.views[0].cursor().line
+            this.refresh(f.path)
+            this.breakpoints.toggle(f.path, line)
+            f.doc.setBreakpoints(this.breakpoints.lines(f.path))
+            this.sync(f.path)
+        }
+
+        /** Removes every breakpoint, in the editors and in the running session. */
+        fn clearBreakpoints() -> Nothing
+        {
+            for path in this.breakpoints.paths()
+            {
+                this.breakpoints.replace(path, [])
+                if (this.documents.indexOf(path) >= 0) { this.documents.file(path).doc.setBreakpoints([]) }
+                this.sync(path)
+            }
+        }
+
+        /** Takes the lines of an open file from its gutter: the editor moved them along with the text. */
+        fn refresh(path: String) -> Nothing
+        {
+            if (this.documents.indexOf(path) >= 0) { this.breakpoints.replace(path, this.documents.file(path).doc.breakpoints()) }
+        }
+
+        /** Tells a running adapter the breakpoints of one file. */
+        fn sync(path: String) -> Nothing
+        {
+            if (!this.live || this.ending || this.client.closed()) { return }
+            this.refresh(path)
+            var lines: List<Int64> = this.breakpoints.lines(path)
+            if (path == this.cursorPath && !lines.contains(this.cursorLine)) { lines.push(this.cursorLine) }
+            var entries: List<String> = []
+            for line in lines { entries.push("{\"line\":" + (line + 1).toString() + "}") }
+            const arguments: String = Js::object([Js::field("source", Js::object([Js::strField("path", path)])), Js::field("breakpoints", Js::array(entries))])
+            this.call("setBreakpoints", arguments, 10000, (f: RpcFuture) => this.breakpointsSet(path, f))
+        }
+
+        /** The adapter answered a setBreakpoints request; a refusal is shown in the console. */
+        fn breakpointsSet(path: String, f: RpcFuture) -> Nothing
+        {
+            if (f.code != 0)
+            {
+                this.say("Cannot set breakpoints in " + path + ": " + f.message + "\n")
+                return
+            }
+            for entry in f.result.getField("breakpoints").asList()
+            {
+                if (entry.getField("verified").isBool() && !entry.getField("verified").getBool() && entry.getField("message").isString())
+                {
+                    this.say(path + ": " + entry.getField("message").getString() + "\n")
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------- session
+
+        /** Starts a session: the build service built the program with debug information. */
+        fn launch(m: BusMessage) -> Nothing
+        {
+            if (this.live)
+            {
+                this.window.store.set("status.message", "A debug session is already running")
+                return
+            }
+            for path in this.documents.paths() { this.refresh(path) }
+            this.generation = this.generation + 1
+            const generation: Int64 = this.generation
+            this.calls = []
+            this.frames = []
+            this.threadId = 0
+            this.ending = false
+            this.clearConsole = true
+            this.pending = ""
+            this.transcript = ""
+            this.live = true
+            this.window.store.setBool("debug.active", true)
+            this.window.store.setBool("debug.stopped", false)
+            this.window.store.set("build.activity", "Debugging…")
+            this.window.registry.refresh()
+            this.window.showBottomTab(this.consoleTab)
+            const root: String = this.window.store.get("workspace.path")
+            const host: Bool = Bridge::env("FLATPAK_ID") != ""
+            const argv: List<String> = HostCommand::wrap([m.str("adapter"), "dap"], root, [], host)
+            this.say("\x1b[1m$ " + m.str("adapter") + " dap\x1b[0m\n")
+            try { this.client = this.factory(argv, root) }
+            catch (e: String)
+            {
+                this.say("\x1b[31m" + e + "\x1b[0m\n")
+                this.finish("Cannot start the debug adapter")
+                return
+            }
+            const request: String = Js::object([Js::strField("clientID", "tinox-ide"), Js::strField("adapterID", "tinox"), Js::boolField("linesStartAt1", true), Js::boolField("columnsStartAt1", true), Js::strField("pathFormat", "path"), Js::boolField("supportsVariableType", true)])
+            this.call("initialize", request, 15000, (f: RpcFuture) => this.initialized(generation, m, f))
+        }
+
+        /** The adapter is up: start the program. gdb answers `launch` only after configurationDone. */
+        fn initialized(generation: Int64, m: BusMessage, f: RpcFuture) -> Nothing
+        {
+            if (generation != this.generation || !this.live) { return }
+            if (f.code != 0)
+            {
+                this.say("\x1b[31mThe debug adapter did not start: " + f.message + "\x1b[0m\n")
+                this.finish("Cannot start the debug adapter")
+                return
+            }
+            var env: List<String> = []
+            for entry in m.payload.getField("env").asList()
+            {
+                const text: String = entry.getString()
+                const at: Int64 = text.indexOf("=")
+                if (at > 0) { env.push(Js::strField(text.substring(0, at), text.substring(at + 1, text.len()))) }
+            }
+            var args: List<String> = []
+            for entry in m.payload.getField("args").asList() { args.push(entry.getString()) }
+            var arguments: List<String> = [Js::strField("program", m.str("program")), Js::field("args", Js::strings(args)), Js::field("env", Js::object(env))]
+            if (m.str("cwd") != "") { arguments.push(Js::strField("cwd", m.str("cwd"))) }
+            this.call("launch", Js::object(arguments), 3600000, (r: RpcFuture) => this.launched(generation, r))
+        }
+
+        /** The answer to `launch`: the program started, or the adapter says why not. */
+        fn launched(generation: Int64, f: RpcFuture) -> Nothing
+        {
+            if (generation != this.generation || !this.live) { return }
+            if (f.code != 0)
+            {
+                this.say("\x1b[31m" + f.message + "\x1b[0m\n")
+                this.end("Cannot start the program")
+            }
+        }
+
+        /** The adapter accepts configuration: send the breakpoints, then let the program run. */
+        fn configure() -> Nothing
+        {
+            for path in this.breakpoints.paths() { this.sync(path) }
+            this.call("configurationDone", "{}", 15000, (f: RpcFuture) => this.configured(f))
+        }
+
+        /** configurationDone failed or not. */
+        fn configured(f: RpcFuture) -> Nothing
+        {
+            if (f.code != 0) { this.say("\x1b[31m" + f.message + "\x1b[0m\n") }
+        }
+
+        /** Ends the session: asks the adapter to stop the program and disconnect, then lets go of it. */
+        fn end(reason: String) -> Nothing
+        {
+            if (!this.live || this.ending) { return }
+            this.ending = true
+            this.window.store.setBool("debug.stopped", false)
+            const generation: Int64 = this.generation
+            if (this.client.closed())
+            {
+                this.finish(reason)
+                return
+            }
+            this.call("disconnect", "{\"terminateDebuggee\":true}", 2000, (f: RpcFuture) => this.disconnected(generation, reason))
+        }
+
+        /** The adapter acknowledged (or did not): stop its process. */
+        fn disconnected(generation: Int64, reason: String) -> Nothing
+        {
+            if (generation != this.generation) { return }
+            this.finish(reason)
+        }
+
+        /** Forgets the session: process, marks, views and state. */
+        fn finish(reason: String) -> Nothing
+        {
+            if (!this.live) { return }
+            this.client.stop()
+            this.live = false
+            this.ending = false
+            this.calls = []
+            this.frames = []
+            this.clearMark()
+            this.shown = []
+            this.variables.reset([])
+            this.stack.reset([])
+            this.threads.reset([])
+            this.say("\n" + reason + "\n")
+            this.cursorPath = ""
+            const store: Store = this.window.store
+            store.setBool("debug.active", false)
+            store.setBool("debug.stopped", false)
+            store.set("build.activity", "")
+            store.set("status.message", reason)
+            this.window.registry.refresh()
+        }
+
+        /** The IDE is quitting: the adapter and the program must not outlive it. */
+        fn shutdown() -> Nothing
+        {
+            if (this.live)
+            {
+                this.client.stop()
+                this.live = false
+            }
+        }
+
+        // ---------------------------------------------------------------- driving
+
+        /** Sends a request and remembers what to do with the answer. */
+        fn call(command: String, arguments: String, timeoutMs: Int64, then: fnc(RpcFuture) -> Nothing) -> Nothing
+        {
+            const future: RpcFuture = this.client.request(command, arguments, timeoutMs)
+            this.calls.push(DapCall { future: future, then: then })
+        }
+
+        /** Runs on the logic task between events: reads the adapter, finishes calls, handles events. */
+        fn poll() -> Nothing
+        {
+            if (this.live)
+            {
+                this.client.poll()
+                var waiting: List<DapCall> = []
+                var ready: List<DapCall> = []
+                for entry in this.calls
+                {
+                    if (entry.future.done) { ready.push(entry) }
+                    else { waiting.push(entry) }
+                }
+                this.calls = waiting
+                for entry in ready
+                {
+                    try { entry.then(entry.future) }
+                    catch (e: String) { this.say("\x1b[31m" + e + "\x1b[0m\n") }
+                }
+                for event in this.client.takeEvents()
+                {
+                    try { this.handle(event) }
+                    catch (e: String) { this.say("\x1b[31m" + e + "\x1b[0m\n") }
+                }
+                if (this.live && !this.ending && this.client.closed())
+                {
+                    this.finish("The debug adapter ended: " + this.client.lastError)
+                }
+            }
+            if (this.pending != "" || this.clearConsole)
+            {
+                this.window.mount.appendAnsi("debugOutput", this.pending, this.clearConsole)
+                this.pending = ""
+                this.clearConsole = false
+            }
+        }
+
+        /** One event of the adapter. */
+        fn handle(event: DapEvent) -> Nothing
+        {
+            if (event.name == "initialized") { this.configure() }
+            else if (event.name == "stopped") { this.stopped(event) }
+            else if (event.name == "continued") { this.running() }
+            else if (event.name == "output")
+            {
+                const category: String = event.str("category")
+                if (category != "telemetry") { this.say(event.str("output")) }
+            }
+            else if (event.name == "exited") { this.say("\x1b[1mThe program exited with status " + event.int("exitCode", 0).toString() + "\x1b[0m\n") }
+            else if (event.name == "terminated") { this.end("The program ended") }
+            else if (event.name == "thread" && this.window.store.getBool("debug.stopped")) { this.fetchThreads() }
+        }
+
+        /** The program stopped: show where, with its stack, threads and variables. */
+        fn stopped(event: DapEvent) -> Nothing
+        {
+            const store: Store = this.window.store
+            this.threadId = event.int("threadId", this.threadId)
+            store.setBool("debug.stopped", true)
+            var reason: String = event.str("reason")
+            if (reason == "") { reason = "stopped" }
+            if (event.str("description") != "") { reason = reason + " (" + event.str("description") + ")" }
+            this.say("\x1b[1mStopped: " + reason + "\x1b[0m\n")
+            store.set("status.message", "Stopped: " + reason)
+            if (this.cursorPath != "")
+            {
+                const path: String = this.cursorPath
+                this.cursorPath = ""
+                this.sync(path)
+            }
+            this.window.registry.refresh()
+            this.fetchThreads()
+            this.fetchStack()
+        }
+
+        /** The program runs again: nothing it showed is valid. */
+        fn running() -> Nothing
+        {
+            this.window.store.setBool("debug.stopped", false)
+            this.window.store.set("status.message", "Running")
+            this.clearMark()
+            this.window.registry.refresh()
+        }
+
+        /** Continue, next, stepIn or stepOut on the current thread. */
+        fn resume(command: String) -> Nothing
+        {
+            if (!this.window.store.getBool("debug.stopped")) { return }
+            this.running()
+            this.call(command, "{\"threadId\":" + this.threadId.toString() + "}", 15000, (f: RpcFuture) => this.resumed(command, f))
+        }
+
+        /** A resume request failed: the program is still stopped. */
+        fn resumed(command: String, f: RpcFuture) -> Nothing
+        {
+            if (f.code != 0)
+            {
+                this.say("\x1b[31m" + command + ": " + f.message + "\x1b[0m\n")
+                this.window.store.setBool("debug.stopped", true)
+                this.window.registry.refresh()
+            }
+        }
+
+        /** Interrupts the running program. */
+        fn pause() -> Nothing
+        {
+            if (this.live && !this.window.store.getBool("debug.stopped"))
+            {
+                this.call("pause", "{\"threadId\":" + this.threadId.toString() + "}", 5000, (f: RpcFuture) => this.resumed("pause", f))
+            }
+        }
+
+        /** Runs until the line of the cursor: a temporary breakpoint that is taken away at the next stop. */
+        fn runToCursor() -> Nothing
+        {
+            if (this.documents.count() == 0 || !this.window.store.getBool("debug.stopped")) { return }
+            const f: OpenFile = this.documents.current()
+            this.cursorPath = f.path
+            this.cursorLine = f.views[0].cursor().line
+            this.sync(f.path)
+            this.resume("continue")
+        }
+
+        // ---------------------------------------------------------------- views
+
+        /** Asks for the threads. */
+        fn fetchThreads() -> Nothing
+        {
+            const generation: Int64 = this.generation
+            this.call("threads", "{}", 10000, (f: RpcFuture) => this.threadsReady(generation, f))
+        }
+
+        /** Draws the threads, the current one in bold. */
+        fn threadsReady(generation: Int64, f: RpcFuture) -> Nothing
+        {
+            if (generation != this.generation || f.code != 0) { return }
+            var rows: List<Row> = []
+            for entry in f.result.getField("threads").asList()
+            {
+                const id: Int64 = entry.getField("id").getInt()
+                var name: String = entry.getField("name").getString()
+                if (name == "") { name = "Thread " + id.toString() }
+                rows.push(Row::create("t:" + id.toString(), name).icon("view-process-all").bold(id == this.threadId))
+            }
+            this.threads.reset(rows)
+        }
+
+        /** Asks for the call stack of the current thread. */
+        fn fetchStack() -> Nothing
+        {
+            const generation: Int64 = this.generation
+            this.call("stackTrace", "{\"threadId\":" + this.threadId.toString() + ",\"levels\":100}", 10000, (f: RpcFuture) => this.stackReady(generation, f))
+        }
+
+        /** Draws the stack and goes to its first frame. */
+        fn stackReady(generation: Int64, f: RpcFuture) -> Nothing
+        {
+            if (generation != this.generation) { return }
+            if (f.code != 0)
+            {
+                this.say("\x1b[31m" + f.message + "\x1b[0m\n")
+                return
+            }
+            this.frames = f.result.getField("stackFrames").asList()
+            var rows: List<Row> = []
+            var i: Int64 = 0
+            while (i < this.frames.len())
+            {
+                const frame: JsonValue = this.frames[i]
+                rows.push(Row::create("f:" + i.toString(), frame.getField("name").getString()).icon("code-function").cell(DebugService::locationOf(frame)))
+                i = i + 1
+            }
+            this.stack.reset(rows)
+            this.selectFrame(0)
+        }
+
+        /** "File.tnx:12" for a frame with a source, "" without. */
+        fnc locationOf(frame: JsonValue) -> String
+        {
+            const path: String = frame.getField("source").getField("path").getString()
+            if (path == "") { return "" }
+            const slash: Int64 = path.lastIndexOf("/")
+            return path.substring(slash + 1, path.len()) + ":" + frame.getField("line").getInt().toString()
+        }
+
+        /** A click on a row of the call stack. */
+        fn pickFrame(id: String) -> Nothing
+        {
+            if (id.startsWith("f:")) { this.selectFrame(id.substring(2, id.len()).toInt()) }
+        }
+
+        /** A click on a row of the thread list: its stack replaces the shown one. */
+        fn pickThread(id: String) -> Nothing
+        {
+            if (!id.startsWith("t:") || !this.window.store.getBool("debug.stopped")) { return }
+            this.threadId = id.substring(2, id.len()).toInt()
+            this.fetchStack()
+            this.fetchThreads()
+        }
+
+        /** Shows the source of a frame and its variables. */
+        fn selectFrame(index: Int64) -> Nothing
+        {
+            if (index < 0 || index >= this.frames.len()) { return }
+            this.frameIndex = index
+            this.drawn = false
+            const frame: JsonValue = this.frames[index]
+            const path: String = frame.getField("source").getField("path").getString()
+            this.clearMark()
+            if (path != "" && frame.getField("line").getInt() > 0)
+            {
+                const line: Int64 = frame.getField("line").getInt() - 1
+                this.documents.openAt(path, line, 0)
+                if (this.documents.indexOf(path) >= 0)
+                {
+                    this.documents.file(path).doc.setExecutionLine(line)
+                    this.markedPath = path
+                }
+            }
+            const generation: Int64 = this.generation
+            this.call("scopes", "{\"frameId\":" + frame.getField("id").getInt().toString() + "}", 10000, (f: RpcFuture) => this.scopesReady(generation, f))
+        }
+
+        /** Removes the execution mark from the file that has it. */
+        fn clearMark() -> Nothing
+        {
+            if (this.markedPath != "" && this.documents.indexOf(this.markedPath) >= 0) { this.documents.file(this.markedPath).doc.setExecutionLine(-1) }
+            this.markedPath = ""
+        }
+
+        /** Loads the arguments and locals of the frame: gdb lists them as two scopes (registers and globals are left out). */
+        fn scopesReady(generation: Int64, f: RpcFuture) -> Nothing
+        {
+            if (generation != this.generation || f.code != 0) { return }
+            var wanted: List<Int64> = []
+            var fallback: Int64 = 0
+            for scope in f.result.getField("scopes").asList()
+            {
+                const reference: Int64 = scope.getField("variablesReference").getInt()
+                const hint: String = scope.getField("presentationHint").getString()
+                const expensive: Bool = scope.getField("expensive").isBool() && scope.getField("expensive").getBool()
+                if (reference > 0 && (hint == "arguments" || hint == "locals")) { wanted.push(reference) }
+                else if (reference > 0 && fallback == 0 && !expensive && hint != "registers" && hint != "globals") { fallback = reference }
+            }
+            if (wanted.len() == 0 && fallback > 0) { wanted.push(fallback) }
+            this.loadScopes(generation, wanted, 0, [])
+        }
+
+        /** Asks for the variables of the scope at `index`; when all are in, draws them. */
+        fn loadScopes(generation: Int64, wanted: List<Int64>, index: Int64, collected: List<JsonValue>) -> Nothing
+        {
+            if (index >= wanted.len())
+            {
+                this.drawLocals(collected)
+                return
+            }
+            this.call("variables", "{\"variablesReference\":" + wanted[index].toString() + "}", 10000, (r: RpcFuture) => this.scopeLoaded(generation, wanted, index, collected, r))
+        }
+
+        /** One scope arrived; the next one is asked for. */
+        fn scopeLoaded(generation: Int64, wanted: List<Int64>, index: Int64, collected: List<JsonValue>, f: RpcFuture) -> Nothing
+        {
+            if (generation != this.generation) { return }
+            var all: List<JsonValue> = collected
+            if (f.code == 0)
+            {
+                for entry in f.result.getField("variables").asList() { all.push(entry) }
+            }
+            this.loadScopes(generation, wanted, index + 1, all)
+        }
+
+        /** Draws the arguments and locals. */
+        fn drawLocals(entries: List<JsonValue>) -> Nothing
+        {
+            this.references = Map::new()
+            this.shown = []
+            this.drawn = true
+            for entry in entries { this.shown.push(entry.getField("name").getString() + " = " + entry.getField("value").getString()) }
+            this.variables.reset(this.variableRows(entries))
+        }
+
+        /** The rows of a list of variables; structured values can be opened. */
+        fn variableRows(entries: List<JsonValue>) -> List<Row>
+        {
+            var rows: List<Row> = []
+            for entry in entries
+            {
+                this.rowCount = this.rowCount + 1
+                const id: String = "v:" + this.rowCount.toString()
+                var row: Row = Row::create(id, entry.getField("name").getString()).cell(entry.getField("value").getString()).cell(entry.getField("type").getString())
+                const reference: Int64 = entry.getField("variablesReference").getInt()
+                if (reference > 0)
+                {
+                    this.references.set(id, reference)
+                    row = row.lazy()
+                }
+                rows.push(row)
+            }
+            return rows
+        }
+
+        /** The user opened a structured variable: its members arrive with the adapter's answer. */
+        fn expand(id: String) -> List<Row>
+        {
+            if (!this.references.contains(id) || !this.window.store.getBool("debug.stopped")) { return [] }
+            const generation: Int64 = this.generation
+            this.call("variables", "{\"variablesReference\":" + this.references.get(id).toString() + "}", 10000, (f: RpcFuture) => this.membersReady(generation, id, f))
+            return []
+        }
+
+        /** Fills an opened variable. */
+        fn membersReady(generation: Int64, id: String, f: RpcFuture) -> Nothing
+        {
+            if (generation != this.generation || f.code != 0) { return }
+            this.variables.setChildren(id, this.variableRows(f.result.getField("variables").asList()))
+        }
+
+        // ---------------------------------------------------------------- console
+
+        /** Queues text for the console. */
+        fn say(text: String) -> Nothing
+        {
+            this.pending = this.pending + text
+            if (this.transcript.len() < 65536) { this.transcript = this.transcript + text }
+        }
+
+        /** Remembers what the user typed. */
+        fn typed(text: String) -> Nothing
+        {
+            this.input = text
+        }
+
+        /** Enter in the console: evaluates the text in the selected frame. */
+        fn submit() -> Nothing
+        {
+            const text: String = this.input.trim()
+            if (text == "") { return }
+            this.say("\x1b[36m> " + text + "\x1b[0m\n")
+            if (!this.live || !this.window.store.getBool("debug.stopped"))
+            {
+                this.say("The program is not stopped.\n")
+                return
+            }
+            var arguments: List<String> = [Js::strField("expression", text), Js::strField("context", "repl")]
+            if (this.frameIndex < this.frames.len()) { arguments.push(Js::field("frameId", this.frames[this.frameIndex].getField("id").getInt().toString())) }
+            this.call("evaluate", Js::object(arguments), 15000, (f: RpcFuture) => this.evaluated(f))
+        }
+
+        /** Prints the value of an expression, or why it has none. */
+        fn evaluated(f: RpcFuture) -> Nothing
+        {
+            if (f.code != 0) { this.say("\x1b[31m" + f.message + "\x1b[0m\n") }
+            else { this.say(f.result.getField("result").getString() + "\n") }
+        }
+    }
+}

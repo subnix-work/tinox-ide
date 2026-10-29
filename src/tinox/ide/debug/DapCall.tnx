@@ -1,0 +1,15 @@
+module tinox.ide.debug
+
+import tinox.ide.lsp.RpcFuture
+
+namespace tinox.ide.debug
+{
+    /** A request in flight and what to do with its answer. */
+    class DapCall
+    {
+        /** The request. */
+        var future: RpcFuture
+        /** Called once with the settled future, on the owning task. */
+        var then: fnc(RpcFuture) -> Nothing
+    }
+}

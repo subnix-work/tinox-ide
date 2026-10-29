@@ -1,0 +1,31 @@
+module tinox.ide.debug
+
+import tinox.core.json
+
+namespace tinox.ide.debug
+{
+    /** An event of the debug adapter: its name ("stopped", "output", …) and body. */
+    class DapEvent
+    {
+        /** The event name. */
+        var name: String
+        /** The body, an empty object when the adapter sent none. */
+        var body: JsonValue
+
+        /** A text field of the body, "" when missing or of another type. */
+        fn str(key: String) -> String
+        {
+            const field: JsonValue = this.body.getField(key)
+            if (field.isString()) { return field.getString() }
+            return ""
+        }
+
+        /** An integer field of the body, `fallback` when missing or of another type. */
+        fn int(key: String, fallback: Int64) -> Int64
+        {
+            const field: JsonValue = this.body.getField(key)
+            if (field.isInt()) { return field.getInt() }
+            return fallback
+        }
+    }
+}

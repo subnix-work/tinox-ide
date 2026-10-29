@@ -5,3 +5,5 @@
 Initial development version: KDE editor, project tree, LSP diagnostics and navigation,
 formatting, semantic highlighting, search, terminal, build/run/test integration.
 Desktop/MIME integration, staged installation, Arch VCS package and Flatpak packaging.
+Debugger integration (issue #31): gutter breakpoints, run to cursor, step over/in/out, continue, variables, call stack,
+threads and a debug console through the Debug Adapter Protocol (`tinox dap`).

@@ -39,6 +39,8 @@ namespace tinox.ide.ui
         var closingHandler: fnc(Document) -> Nothing
         /** Called when the text was read again from a file. */
         var reloadedHandler: fnc(Document) -> Nothing
+        /** Called when the user toggles a breakpoint in the gutter: the line and whether it was added. */
+        var breakpointHandler: fnc(Int64, Bool) -> Nothing
 
         /** Wraps an existing document object and starts listening to its events. */
         fnc wrap(events: EventLoop, id: Int64) -> Document
@@ -52,7 +54,8 @@ namespace tinox.ide.ui
                 urlHandler: (url: String) => Action::ignore(),
                 externalHandler: (reason: String) => Action::ignore(),
                 closingHandler: (closing: Document) => Action::ignore(),
-                reloadedHandler: (reloaded: Document) => Action::ignore()
+                reloadedHandler: (reloaded: Document) => Action::ignore(),
+                breakpointHandler: (line: Int64, added: Bool) => Action::ignore()
             }
             events.onTarget(id, (ev: Event) => doc.deliver(ev))
             return doc
@@ -114,6 +117,10 @@ namespace tinox.ide.ui
             {
                 this.closingHandler(this)
             }
+            else if (ev.type == "editor.breakpointToggled")
+            {
+                this.breakpointHandler(ev.int("line"), ev.bool("added"))
+            }
         }
 
         // ---- handlers (one per kind; setting again replaces)
@@ -158,6 +165,41 @@ namespace tinox.ide.ui
         fn onClosing(handler: fnc(Document) -> Nothing) -> Nothing
         {
             this.closingHandler = handler
+        }
+
+        /** The user clicked a breakpoint into or out of the gutter (needs watchBreakpoints()). */
+        fn onBreakpointToggled(handler: fnc(Int64, Bool) -> Nothing) -> Nothing
+        {
+            this.breakpointHandler = handler
+            Bridge::query(Command::named("editor.watchBreakpoints").target(this.docId).build())
+        }
+
+        // ---- breakpoints
+
+        /** Replaces the breakpoint marks of the gutter with these lines (zero-based); the handler is not called for this. */
+        fn setBreakpoints(lines: List<Int64>) -> Nothing
+        {
+            var parts: List<String> = []
+            for line in lines { parts.push(line.toString()) }
+            Bridge::query(Command::named("editor.setBreakpoints").target(this.docId).raw("lines", Js::array(parts)).build())
+        }
+
+        /** The lines that carry a breakpoint mark now, moved along with the text. */
+        fn breakpoints() -> List<Int64>
+        {
+            const reply: JsonValue = Bridge::query(Command::named("editor.getBreakpoints").target(this.docId).build())
+            var out: List<Int64> = []
+            for item in reply.getField("lines").asList() { out.push(item.getInt()) }
+            return out
+        }
+
+        /** Marks the line the program is stopped at; a negative line removes the mark. */
+        fn setExecutionLine(line: Int64) -> Nothing
+        {
+            var command: Command = Command::named("editor.setExecutionLine").target(this.docId)
+            if (line >= 0) { command = command.int("line", line) }
+            else { command = command.raw("line", "null") }
+            Bridge::query(command.build())
         }
 
         // ---- text

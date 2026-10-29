@@ -1,0 +1,40 @@
+import tinox.ide.debug.BreakpointSet
+
+class BreakpointSetTest
+{
+    @Test("lines stay sorted and unique, toggling adds and removes, empty files are not listed")
+    fn testLines() -> Bool
+    {
+        const set: BreakpointSet = BreakpointSet::create()
+        set.replace("/a.tnx", [9, 3, 3, 7, -1])
+        const first: List<Int64> = set.lines("/a.tnx")
+        const added: Bool = set.toggle("/a.tnx", 5)
+        const removed: Bool = !set.toggle("/a.tnx", 3)
+        set.set("/b.tnx", 1, true)
+        set.set("/b.tnx", 1, false)
+        const lines: List<Int64> = set.lines("/a.tnx")
+        return first.len() == 3 && first[0] == 3 && first[2] == 9 && added && removed && lines.len() == 3 && lines[0] == 5 && lines[1] == 7 && lines[2] == 9 && set.paths().len() == 1 && set.count() == 3 && set.lines("/none").len() == 0
+    }
+
+    @Test("a renamed file takes its breakpoints along")
+    fn testRename() -> Bool
+    {
+        const set: BreakpointSet = BreakpointSet::create()
+        set.replace("/a.tnx", [2, 4])
+        set.rename("/a.tnx", "/c.tnx")
+        return set.lines("/c.tnx").len() == 2 && set.lines("/a.tnx").len() == 0 && set.paths().len() == 1
+    }
+
+    @Test("renaming or deleting a folder moves or drops the breakpoints of the files below it, not of its namesakes")
+    fn testFolders() -> Bool
+    {
+        const set: BreakpointSet = BreakpointSet::create()
+        set.replace("/p/src/A.tnx", [1])
+        set.replace("/p/src2/B.tnx", [2])
+        set.replace("/p/src/deep/C.tnx", [3])
+        set.rename("/p/src", "/p/lib")
+        const moved: Bool = set.has("/p/lib/A.tnx", 1) && set.has("/p/lib/deep/C.tnx", 3) && set.has("/p/src2/B.tnx", 2) && set.lines("/p/src/A.tnx").len() == 0
+        set.forget("/p/lib")
+        return moved && set.paths().len() == 1 && set.count() == 1 && set.has("/p/src2/B.tnx", 2)
+    }
+}

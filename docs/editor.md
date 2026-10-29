@@ -54,6 +54,20 @@ mark types 6..9 and the colours come from the application palette, so they are l
 dark and a light scheme and follow a palette change. `editor.getDiagnostics` `{target, owner?}`
 returns the current (moved) ranges. Hover shows the messages (HTML-escaped).
 
+## Breakpoints and the stop line
+
+Gutter marks for the debugger ([debugging.md](debugging.md)), KTextEditor mark types
+`BreakpointActive` and `Execution`; the user may toggle breakpoints with a click.
+
+| Command | Fields | Result |
+|---|---|---|
+| `editor.watchBreakpoints` | `target` (doc) | from now on clicks raise `editor.breakpointToggled {line, added}` on the document id |
+| `editor.setBreakpoints` | `target`, `lines:[int]` | replaces all breakpoint marks; all or nothing (a line outside the document rejects the list); not reported as an event |
+| `editor.getBreakpoints` | `target` | `lines`, sorted, where the marks are now (they move with the text) |
+| `editor.setExecutionLine` | `target`, `line` (`null` removes) | the single stop-line mark |
+
+`TKDE_DEBUG_COMMANDS=1` adds `editor.debug.toggleBreakpoint {target, line}`, which behaves like a click.
+
 ## Completion and hover
 
 `editor.enableCompletion` `{target (view), triggers?, minWordLength?}` /

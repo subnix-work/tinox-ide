@@ -9,6 +9,7 @@ import tinox.ide.app.Logger
 import tinox.ide.app.MainWindow
 import tinox.ide.app.Store
 import tinox.ide.build.BuildService
+import tinox.ide.debug.DebugService
 import tinox.ide.navigation.NavigationService
 import tinox.ide.editing.EditService
 import tinox.ide.lsp.LanguageService
@@ -81,6 +82,8 @@ namespace tinox.ide
         var terminal: TerminalPanel
         /** Build, run and test tasks with their output, problems and test tree. */
         var build: BuildService
+        /** Breakpoints and debug sessions through the Debug Adapter Protocol. */
+        var debug: DebugService
         /** The preferences with their defaults and checks. */
         var preferences: Preferences
         /** The settings window. */
@@ -118,10 +121,11 @@ namespace tinox.ide
             search.install()
             const terminal: TerminalPanel = TerminalPanel::install(window)
             const build: BuildService = BuildService::install(window, documents, dialogs)
+            const debug: DebugService = DebugService::install(window, documents)
             const language: LanguageService = LanguageService::create(window, documents, preferences)
             const codeNavigation: NavigationService = NavigationService::create(language)
             const editing: EditService = EditService::create(language, codeNavigation)
-            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, language: language, codeNavigation: codeNavigation, editing: editing, terminal: terminal, build: build, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
+            const app: IdeApp = IdeApp { events: events, bus: bus, store: store, logger: logger, errors: errors, actions: actions, registry: registry, window: window, dialogs: dialogs, workspace: workspace, documents: documents, navigation: navigation, search: search, language: language, codeNavigation: codeNavigation, editing: editing, terminal: terminal, build: build, debug: debug, preferences: preferences, settingsDialog: settingsDialog, settings: settings, running: true }
             app.loadSettings()
             app.registerCommands()
             workspace.registerCommands()
@@ -144,6 +148,7 @@ namespace tinox.ide
             search.bind()
             language.problems.bind()
             build.bind()
+            debug.bind()
             codeNavigation.bind()
             editing.bind()
             logger.info("Tinox IDE started")
@@ -214,6 +219,7 @@ namespace tinox.ide
             }
             this.running = false
             this.logger.info("Tinox IDE is quitting")
+            this.debug.shutdown()
             this.editing.shutdown()
             this.language.shutdown()
             this.workspace.shutdown()

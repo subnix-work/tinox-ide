@@ -393,6 +393,54 @@ static void testVersionedDiagnostics()
     tkde_release(doc);
 }
 
+constexpr int kExecutionMark = 16; // KTextEditor::Document::Execution (markType05)
+
+static void testBreakpoints()
+{
+    const int64_t doc = newDoc(QStringLiteral("a\nb\nc\nd"));
+    newView(doc);
+    EXPECT(query(cmd("editor.watchBreakpoints", Obj{{"target", double(doc)}}))["ok"].toBool());
+    drainEvents();
+
+    // a click in the gutter is reported with the line and whether the breakpoint was added
+    EXPECT(query(cmd("editor.debug.toggleBreakpoint", Obj{{"target", double(doc)}, {"line", 2}}))["ok"].toBool());
+    Obj added = waitFor("editor.breakpointToggled", 2000);
+    EXPECT_EQ(added.value(QStringLiteral("line")).toInt(), 2);
+    EXPECT(added.value(QStringLiteral("added")).toBool());
+    EXPECT_EQ(query(cmd("editor.getBreakpoints", Obj{{"target", double(doc)}}))["lines"].toArray().size(), 1);
+
+    // setting the breakpoints from the logic is silent, replaces the old ones and is all or nothing
+    drainEvents();
+    EXPECT(query(cmd("editor.setBreakpoints", Obj{{"target", double(doc)}, {"lines", QJsonArray{0, 3}}}))["ok"].toBool());
+    QJsonArray lines = query(cmd("editor.getBreakpoints", Obj{{"target", double(doc)}}))["lines"].toArray();
+    EXPECT_EQ(lines.size(), 2);
+    EXPECT_EQ(lines.at(0).toInt(), 0);
+    EXPECT_EQ(lines.at(1).toInt(), 3);
+    EXPECT_EQ(errorCode(query(cmd("editor.setBreakpoints", Obj{{"target", double(doc)}, {"lines", QJsonArray{1, 9}}}))),
+              int(TKDE_E_INVALID_ARG));
+    EXPECT_EQ(query(cmd("editor.getBreakpoints", Obj{{"target", double(doc)}}))["lines"].toArray().size(), 2);
+    EXPECT(waitFor("editor.breakpointToggled", 200).isEmpty());
+
+    // breakpoints move with the text
+    EXPECT(query(cmd("editor.edit",
+                     Obj{{"target", double(doc)}, {"edits", QJsonArray{Obj{{"range", range(1, 0, 1, 0)}, {"newText", "x\ny\n"}}}}}))["ok"]
+               .toBool());
+    lines = query(cmd("editor.getBreakpoints", Obj{{"target", double(doc)}}))["lines"].toArray();
+    EXPECT_EQ(lines.at(0).toInt(), 0);
+    EXPECT_EQ(lines.at(1).toInt(), 5);
+
+    // the execution line is one line, cleared by null, and independent of the breakpoints
+    EXPECT(query(cmd("editor.setExecutionLine", Obj{{"target", double(doc)}, {"line", 2}}))["ok"].toBool());
+    EXPECT(query(cmd("editor.setExecutionLine", Obj{{"target", double(doc)}, {"line", 3}}))["ok"].toBool());
+    Obj marks = query(cmd("editor.debug.marks", Obj{{"target", double(doc)}})).value(QStringLiteral("marks")).toObject();
+    EXPECT(marks.contains(QStringLiteral("3")) && !(int(marks.value(QStringLiteral("2")).toDouble()) & kExecutionMark));
+    EXPECT(query(cmd("editor.setExecutionLine", Obj{{"target", double(doc)}, {"line", QJsonValue()}}))["ok"].toBool());
+    marks = query(cmd("editor.debug.marks", Obj{{"target", double(doc)}})).value(QStringLiteral("marks")).toObject();
+    EXPECT(!(int(marks.value(QStringLiteral("3")).toDouble()) & kExecutionMark));
+    EXPECT_EQ(query(cmd("editor.getBreakpoints", Obj{{"target", double(doc)}}))["lines"].toArray().size(), 2);
+    tkde_release(doc);
+}
+
 static void testSemanticTokens()
 {
     const auto doc = newDoc(QStringLiteral("Type method field\n😀value"));
@@ -732,6 +780,7 @@ static void driver(QString dir)
     testDiagnostics();
     testSemanticTokens();
     testVersionedDiagnostics();
+    testBreakpoints();
     testCompletionAndHover();
     testLspAssistance();
     testMultilineChangeReplay();
