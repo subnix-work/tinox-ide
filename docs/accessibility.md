@@ -3,7 +3,8 @@
 Issue #32. Qt Widgets and KDE Frameworks give most of this for free (focus rectangles, the AT-SPI bridge,
 palette-aware widgets, scalable icons); this page lists what the IDE adds on top and what is checked by a
 test. A box is ticked only when a test or a script in this repository shows it. Open items say what is
-missing and how to check them by hand.
+missing and how to check them by hand. `[-]` marks an item that was deliberately not done (issue #32 was
+closed without it); the manual procedure stays valid for anyone who wants to run it.
 
 ## Checklist
 
@@ -32,7 +33,7 @@ missing and how to check them by hand.
 
 ### Screen reader
 
-- [ ] **Orca walkthrough** (open a file, edit, run a build). Orca is not installed on the development machine,
+- [-] **Orca walkthrough** (open a file, edit, run a build). Orca is not installed on the development machine,
   so this was not done. The AT-SPI tree above is what Orca reads; the manual procedure is:
   1. `orca &`, start the IDE (`make run`).
   2. Ctrl+O or **Open Folder…**, move through the tree, open a file: the editor is announced as `Editor: <file>`.
@@ -49,9 +50,9 @@ missing and how to check them by hand.
   log's background, so ANSI blue or black stays readable on dark and high-contrast schemes (`widget_test`).
 - [x] Sizes are device independent (`size(1200, 760)`, `minimumSize`), icons come from the theme (`QIcon::fromTheme`),
   so Qt 6's scale factors apply on X11 and Wayland.
-- [ ] **HiDPI on Wayland and X11 by hand**: `QT_SCALE_FACTOR=2 make run`, and a fractional factor on a Plasma Wayland
+- [-] **HiDPI on Wayland and X11 by hand**: `QT_SCALE_FACTOR=2 make run`, and a fractional factor on a Plasma Wayland
   session; check that nothing is clipped. Not done on a second display here.
-- [ ] **High-contrast system scheme by hand**: choose *Breeze High Contrast* and look at the editor, the trees and
+- [-] **High-contrast system scheme by hand**: choose *Breeze High Contrast* and look at the editor, the trees and
   the logs.
 
 ### KDE HIG and internationalisation
@@ -59,7 +60,7 @@ missing and how to check them by hand.
 - [x] Actions use KDE's standard shortcuts and icons where a standard action exists (`IdeCommand::standard`).
 - [x] The Debug menu is its own menu and its entries have unique mnemonics (set by hand, no script checks it).
 - [ ] Menu entries that open a dialog should end with an ellipsis: not audited.
-- [ ] Mnemonics are not unique across all menus: the File, View, Go and Build menus mix this IDE's actions with
+- [-] Mnemonics are not unique across all menus: the File, View, Go and Build menus mix this IDE's actions with
   KDE standard ones, and several accelerators clash. Needs a pass over the whole menu bar.
 - [x] **Localisation**: the bridge translates the UI strings it is given and `Tr` the messages assembled at run time;
   the catalogs are KDE's (`po/`, German included). `scripts/test-i18n.sh` runs the IDE under `LANGUAGE=de` and checks
