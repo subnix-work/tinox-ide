@@ -27,7 +27,7 @@ class Main
     }
 }
 TNX
-printf '[package]\ncompiler = "2.8.0"\nname = "debug-test"\nversion = "0.1.0"\nentry = "Main.tnx"\n' > "$sandbox/tinox.toml"
+printf '[package]\ncompiler = "2.9.0"\nname = "debug-test"\nversion = "0.1.0"\nentry = "Main.tnx"\n' > "$sandbox/tinox.toml"
 scripts/test-gui-smoke.sh debug env QT_QPA_PLATFORM=offscreen TKDE_DEBUG_COMMANDS=1 TKDE_NO_KCRASH=1 \
     XDG_CONFIG_HOME="$sandbox/config" XDG_DATA_HOME="$sandbox/data" XDG_CACHE_HOME="$sandbox/cache" \
     TINOX_DEBUG_ROOT="$sandbox" \

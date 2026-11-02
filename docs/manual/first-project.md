@@ -13,7 +13,7 @@ commands. Create each folder first, select it, then create the file within it.
 [package]
 name = "hello-tinox"
 version = "0.1.0"
-compiler = "2.8.0"
+compiler = "2.9.0"
 entry = "src/Main.tnx"
 ```
 

@@ -648,8 +648,13 @@ J handle(State &st, const char *json, bool viaQuery)
     }
     std::string raw(json);
     recordLine(st, viaQuery ? "query" : "command", raw);
-    st.commands.push_back(raw);
-    st.commandCv.notify_all();
+    // A translation lookup is not something a test posted: it stays out of the queue the tests read
+    // (it is still recorded and answered), so messages built with Tr:: do not shift the expected commands.
+    const J *nameForQueue = cmd.get("cmd");
+    if (!(viaQuery && nameForQueue->s == "i18n.translate")) {
+        st.commands.push_back(raw);
+        st.commandCv.notify_all();
+    }
     J reply = runCommandLocked(st, cmd, viaQuery);
     if (!viaQuery) {
         const J *req = cmd.get("req");

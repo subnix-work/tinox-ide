@@ -17,7 +17,7 @@ class BuildTest
     fnc workspace(app: IdeApp, main: String) -> String
     {
         const root: String = TempProject::create()
-        TempProject::file(root, "tinox.toml", "[package]\ncompiler = \"2.8.0\"\nname = \"p\"\nversion = \"0.1.0\"\nentry = \"src/Main.tnx\"\n")
+        TempProject::file(root, "tinox.toml", "[package]\ncompiler = \"2.9.0\"\nname = \"p\"\nversion = \"0.1.0\"\nentry = \"src/Main.tnx\"\n")
         TempProject::file(root, "src/Main.tnx", main)
         app.store.set("workspace.path", root)
         app.store.setBool("workspace.open", true)
