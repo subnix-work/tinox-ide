@@ -170,23 +170,35 @@ namespace tinox.ide.workspace
             return manifest
         }
 
-        /** The line without a trailing `# comment` (a `#` inside a quoted string stays). */
+        /**
+         * The line without a trailing `# comment` (a `#` inside a quoted string stays). It looks for the next
+         * quote or `#` with indexOf instead of reading single bytes: string offsets are bytes, so a character
+         * outside ASCII (an em dash in a description) must never be taken apart (subnix-work/tinox#566).
+         */
         fnc withoutComment(line: String) -> String
         {
+            var rest: String = line
+            var offset: Int64 = 0
             var quoted: Bool = false
-            var i: Int64 = 0
-            while (i < line.len())
+            while (rest.indexOf("#") >= 0)
             {
-                const ch: String = line.substring(i, i + 1)
-                if (ch == "\"")
+                const hash: Int64 = rest.indexOf("#")
+                const quote: Int64 = rest.indexOf("\"")
+                if (quote >= 0 && quote < hash)
                 {
                     quoted = !quoted
+                    offset = offset + quote + 1
+                    rest = rest.substring(quote + 1, rest.len())
                 }
-                else if (ch == "#" && !quoted)
+                else if (!quoted)
                 {
-                    return line.substring(0, i)
+                    return line.substring(0, offset + hash)
                 }
-                i = i + 1
+                else
+                {
+                    offset = offset + hash + 1
+                    rest = rest.substring(hash + 1, rest.len())
+                }
             }
             return line
         }

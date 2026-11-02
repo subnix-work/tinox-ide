@@ -112,6 +112,14 @@ class WorkspaceTest
             onDisk.present && onDisk.name == "demo" && onDisk.entry == "src/App.tnx" && onDisk.sourceRoots.len() == 2 && onDisk.sourceRoots[0] == "src" && onDisk.sourceRoots[1] == "tests" && !without.present
     }
 
+    @Test("a manifest with characters outside ASCII, with and without a comment, is read whole")
+    fn testManifestNonAscii() -> Bool
+    {
+        const text: String = "[package]\nname = \"jgrep\"\ndescription = \"grep for JSON — reimplemented in Tinox\"\nauthor = \"Jürgen\"  # über # all\nentry = \"src/Main.tnx\"\n"
+        const m: TinoxManifest = TinoxManifest::parse(text, true)
+        return m.name == "jgrep" && m.description == "grep for JSON — reimplemented in Tinox" && m.entry == "src/Main.tnx" && TinoxManifest::withoutComment("a = \"x # y\" # z ü") == "a = \"x # y\" " && TinoxManifest::withoutComment("a = \"—\"") == "a = \"—\""
+    }
+
     @Test("listing a directory: folders first, then by name without regard to case, ignored entries left out, rows lazy for folders")
     fn testFileTree() -> Bool
     {
