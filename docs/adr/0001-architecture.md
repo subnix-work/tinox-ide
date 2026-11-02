@@ -86,7 +86,7 @@ stderr). A debugger runs as `tinox dap` (gdb's DAP server).
 ### 5. Dependencies
 
 * Qt >= 6.6, KDE Frameworks >= 6.5, ECM >= 6.5, CMake >= 3.20 (checked by
-  `scripts/check-env.sh`), `tinox` >= 2.8.0, libgc (Boehm GC).
+  `scripts/check-env.sh`), `tinox` >= 2.9.0, libgc (Boehm GC).
 * Licensing: the IDE and bridge are MIT OR Apache-2.0. Qt and KDE Frameworks
   are LGPL; they are linked dynamically only. Qt modules that are GPL-only
   (for example Qt Charts) are not used.

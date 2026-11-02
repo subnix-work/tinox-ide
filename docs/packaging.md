@@ -49,11 +49,11 @@ It does not install anything into the running desktop.
 ## Arch Linux
 
 `packaging/PKGBUILD` is a VCS package (`tinox-ide-git`) built from the repository.
-Build Tinox and its core/runtime from upstream commit
-`099e8cdcf762c7e4e04cc0bcd9a9078995c1f25b` or a compatible newer commit;
-the 2.8.0 release archive predates the watcher and piped-process APIs. Follow upstream instructions;
-`tinox` is not currently in Arch's official repositories. Put `tinox` and
-`tinox-lsp` on PATH. `makepkg` declares the Arch build/runtime dependencies and
+Install Tinox 2.9.0 or newer (it contains upstream commit
+`099e8cdcf762c7e4e04cc0bcd9a9078995c1f25b`; the 2.8.0 release predates the watcher
+and piped-process APIs). `tinox` is not in Arch's official repositories; the AUR package
+`tinox-bin` provides the release, or build it from source following upstream instructions.
+Put `tinox` and `tinox-lsp` on PATH. `makepkg` declares the Arch build/runtime dependencies and
 prints an explicit error if the separately installed compiler is missing.
 
 ```sh
@@ -92,8 +92,8 @@ The build-only compiler source tree remains at its compiled-in path under
 `/app/share/tinox-build/source` until the IDE is compiled, then is removed during
 cleanup. This avoids writing the SDK's `/usr` for Tinox's fixed `runtime.c` lookup
 ([tinox#583](https://github.com/subnix-work/tinox/issues/583)). The Flatpak uses the
-normal read-only SDK. It builds Tinox from source because release 2.8.0 lacks
-APIs already needed by the IDE.
+normal read-only SDK. It builds Tinox from a pinned source commit (contained in release 2.9.0)
+because release 2.8.0 lacks APIs already needed by the IDE.
 
 Executable canonicalization temporarily uses coreutils `realpath -e --` through
 a checked argument-vector subprocess: the checked `Fs.realPath` API exists only

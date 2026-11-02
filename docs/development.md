@@ -12,7 +12,7 @@ tests the script itself and runs as part of `make test`.
 | KDE Frameworks | 6.5 | Config, CoreAddons, I18n, Crash, DBusAddons, XmlGui, TextEditor, SyntaxHighlighting, KIO, Notifications, Parts |
 | extra-cmake-modules | 6.5 | `KDEInstallDirs`, `KDECMakeSettings`, `KDECompilerSettings` |
 | CMake | 3.20 | |
-| `tinox` | 2.8.0 plus IDE APIs (see below) | `[native]` section, `extern fn` ABI, `--message-format=json` |
+| `tinox` | 2.9.0 (see below) | `[native]` section, `extern fn` ABI, `--message-format=json` |
 | gettext | any | `msgfmt` compiles the translations (`po/`); without it they are skipped |
 | gdb | 14 (optional) | `tinox dap` needs gdb's built-in DAP server |
 
@@ -59,9 +59,9 @@ cargo build --release -p tinox -p tinox-lsp   # target/release/tinox, tinox-lsp
 ```
 
 `make` uses `tinox` from `PATH`, else `../tinox/target/release/tinox`; override
-with `make TINOX=/path/to/tinox`. The 2.8.0 release archive predates required IDE APIs; use at least upstream
-commit `099e8cdcf762c7e4e04cc0bcd9a9078995c1f25b` (compiler, core sources and runtime
-from the same tree), as pinned by the Flatpak build. Put `tinox-lsp` on `PATH` (or
+with `make TINOX=/path/to/tinox`. Use Tinox 2.9.0 or newer (compiler, core sources and runtime from the same
+release or tree): it contains upstream commit `099e8cdcf762c7e4e04cc0bcd9a9078995c1f25b`,
+the revision the Flatpak build pins. Older releases (2.8.0 and before) lack APIs the IDE needs. Put `tinox-lsp` on `PATH` (or
 `~/.cargo/bin`) for the IDE's language features. The LSP integration test also
 looks at `TINOX_LSP` and `../tinox/target/release/tinox-lsp`; it fails if no server
 is available. Its scripted peer requires Python 3. See [lsp-client.md](lsp-client.md).

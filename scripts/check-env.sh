@@ -8,7 +8,7 @@ set -u
 MIN_QT=6.6
 MIN_KF=6.5
 MIN_CMAKE=3.20
-MIN_TINOX=2.8.0
+MIN_TINOX=2.9.0
 
 QUIET=0
 [ "${1:-}" = "--quiet" ] && QUIET=1
