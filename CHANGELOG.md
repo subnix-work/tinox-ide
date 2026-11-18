@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+Built with Tinox 2.9.6: the manifest, the manual's example and the fixtures of the tests that build real projects name
+compiler 2.9.6 (the compiler rejects a `tinox.toml` that asks for another version), the `tinox.core.json` dependency is
+1.1.8, and the environment check and the documentation require Tinox 2.9.6. No functional changes.
+
 ## 0.1.0 (development)
 
 Initial development version: KDE editor, project tree, LSP diagnostics and navigation,

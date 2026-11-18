@@ -14,7 +14,7 @@ revision requirements for each option:
 | Flatpak | Build/install `packaging/org.subnix.tinoxide.json`, or install a CI bundle | Install Tinox, tinox-lsp, clang and libgc development files on the host |
 | Source checkout | Follow [development.md](../development.md), then `make check-env` and `make ide` | Use a compatible compiler, core sources and runtime from the same Tinox checkout |
 
-Tinox 2.9.0 or newer is required; the 2.8.0 release predates APIs the IDE needs.
+Tinox 2.9.6 or newer is required; the 2.8.0 release predates APIs the IDE needs.
 Installing only a compiler binary without its matching core/runtime is insufficient.
 
 ## Start the application
