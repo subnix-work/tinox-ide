@@ -9,6 +9,7 @@ import tinox.ide.app.EventBus
 import tinox.ide.app.FileSystem
 import tinox.ide.app.IdeCommand
 import tinox.ide.app.MainWindow
+import tinox.ide.app.Services
 import tinox.ide.app.Store
 import tinox.ide.app.Tr
 import tinox.ide.kde.Event
@@ -78,9 +79,9 @@ namespace tinox.ide.editor
         var control: WatchControl
 
         /** The document module for a window. */
-        fnc create(events: EventLoop, bus: EventBus, store: Store, registry: CommandRegistry, dialogs: Dialogs, settings: Settings, logger: Logger, window: MainWindow) -> Documents
+        fnc create(services: Services, window: MainWindow) -> Documents
         {
-            return Documents { events: events, bus: bus, store: store, registry: registry, dialogs: dialogs, settings: settings, logger: logger, window: window, files: [], active: -1, revision: 0, sessionDirty: false, sinceAutosave: 0, beforeSave: (file: OpenFile, done: fnc(Bool) -> Nothing) => done(true), control: WatchControl::create() }
+            return Documents { events: services.events, bus: services.bus, store: services.store, registry: services.registry, dialogs: services.dialogs, settings: services.settings, logger: services.logger, window: window, files: [], active: -1, revision: 0, sessionDirty: false, sinceAutosave: 0, beforeSave: (file: OpenFile, done: fnc(Bool) -> Nothing) => done(true), control: WatchControl::create() }
         }
 
         // ---------------------------------------------------------------- wiring
@@ -968,24 +969,26 @@ namespace tinox.ide.editor
 
         // ---------------------------------------------------------------- timers: autosave and session
 
+        /** Counts a second toward the autosave interval and saves every modified file when it elapses. */
+        fn autosave() -> Nothing
+        {
+            if (!this.settings.getBool("Editor", "autosave", false)) { return }
+            this.sinceAutosave = this.sinceAutosave + 1
+            if (this.sinceAutosave < this.settings.getInt("Editor", "autosaveSeconds", 30)) { return }
+            this.sinceAutosave = 0
+            for f in this.files
+            {
+                if (f.modified && !f.missing)
+                {
+                    this.saveWith(f, (ok: Bool) => this.closed(ok))
+                }
+            }
+        }
+
         /** Once a second: autosave when it is due, and write the session when it changed. */
         fn tick() -> Nothing
         {
-            if (this.settings.getBool("Editor", "autosave", false))
-            {
-                this.sinceAutosave = this.sinceAutosave + 1
-                if (this.sinceAutosave >= this.settings.getInt("Editor", "autosaveSeconds", 30))
-                {
-                    this.sinceAutosave = 0
-                    for f in this.files
-                    {
-                        if (f.modified && !f.missing)
-                        {
-                            this.saveWith(f, (ok: Bool) => this.closed(ok))
-                        }
-                    }
-                }
-            }
+            this.autosave()
             if (this.sessionDirty)
             {
                 this.saveSession()

@@ -50,6 +50,7 @@ class LspProcessTest
     }
 
     @Test("real pipes carry concurrent large Unicode messages on stdin, stdout and stderr; cancelled late replies stay ignored")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testDuplex() -> Bool
     {
         const client: LspClient = LspClient::launch(["python3", "tests/fixtures/lsp_server.py", "--flood"], "", "file:///workspace")

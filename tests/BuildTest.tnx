@@ -38,6 +38,7 @@ class BuildTest
     }
 
     @Test("text lines are parsed with and without column and severity, ANSI is stripped, other lines are no reports")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testTextParser() -> Bool
     {
         const full: BuildProblem = ProblemParser::parseText("src/Main.tnx:5:26: error: expected Int32, found String", "/w")
@@ -89,6 +90,7 @@ class BuildTest
     }
 
     @Test("test events build the tree: results, failed files, the failure message and its location")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testExplorer() -> Bool
     {
         const app: IdeApp = IdeAppTest::start()
@@ -114,6 +116,7 @@ class BuildTest
     }
 
     @Test("a file-scoped discovery replaces only that file's tests; a cancelled or empty one puts the earlier tests back")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testScopedDiscovery() -> Bool
     {
         const app: IdeApp = IdeAppTest::start()
@@ -166,6 +169,7 @@ class BuildTest
     }
 
     @Test("a failing build streams its output, lists the error with line and column, and clicking it opens the file there")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testBuildError() -> Bool
     {
         const app: IdeApp = IdeAppTest::start()

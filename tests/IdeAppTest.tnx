@@ -57,6 +57,7 @@ class IdeAppTest
     }
 
     @Test("starting builds the window with all its docks, the menus, the commands, and shows it")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testStart() -> Bool
     {
         const app: IdeApp = IdeAppTest::start()

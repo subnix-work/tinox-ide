@@ -37,6 +37,7 @@ class DebugServiceTest
     }
 
     @Test("a session walks the protocol: initialize, launch, breakpoints, configurationDone, stop, stack, scopes, variables, step and end")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testSession() -> Bool
     {
         const app: IdeApp = DiagnosticsHarness::start()

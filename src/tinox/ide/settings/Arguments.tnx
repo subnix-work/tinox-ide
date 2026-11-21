@@ -8,6 +8,18 @@ namespace tinox.ide.settings
     /** Quoted argument lists without shell expansion or execution. */
     class Arguments
     {
+        /** Whether the byte separates arguments. */
+        fnc isSpace(byte: Int64) -> Bool
+        {
+            return byte == 32 || byte == 9 || byte == 10 || byte == 13
+        }
+
+        /** Whether the byte opens a quote (none is open) or closes the open one. */
+        fnc togglesQuote(byte: Int64, quote: Int64) -> Bool
+        {
+            return (byte == 34 || byte == 39) && (quote == 0 || quote == byte)
+        }
+
         /** Splits whitespace, single/double quotes and backslash escapes; preserves quoted empty arguments. */
         fnc parse(text: String) -> List<String>
         {
@@ -30,14 +42,14 @@ namespace tinox.ide.settings
                     started = true
                     at = at + escaped
                 }
-                else if ((byte == 34 || byte == 39) && (quote == 0 || quote == byte))
+                else if (Arguments::togglesQuote(byte, quote))
                 {
                     if (quote == 0) { quote = byte }
                     else { quote = 0 }
                     started = true
                     at = at + 1
                 }
-                else if (quote == 0 && (byte == 32 || byte == 9 || byte == 10 || byte == 13))
+                else if (quote == 0 && Arguments::isSpace(byte))
                 {
                     if (started) { arguments.push(value) }
                     value = ""

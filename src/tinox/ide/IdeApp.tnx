@@ -7,6 +7,7 @@ import tinox.ide.app.EventBus
 import tinox.ide.app.IdeCommand
 import tinox.ide.app.Logger
 import tinox.ide.app.MainWindow
+import tinox.ide.app.Services
 import tinox.ide.app.Store
 import tinox.ide.build.BuildService
 import tinox.ide.debug.DebugService
@@ -111,11 +112,12 @@ namespace tinox.ide
             const registry: CommandRegistry = CommandRegistry::create(store, bus, actions)
             const window: MainWindow = MainWindow::create(events, store, bus, registry, actions)
             const dialogs: Dialogs = Dialogs::create(events)
-            const workspace: Workspace = Workspace::create(events, bus, store, registry, actions, dialogs, settings, logger, window.mount)
-            const documents: Documents = Documents::create(events, bus, store, registry, dialogs, settings, logger, window)
+            const services: Services = Services::create(events, bus, store, registry, dialogs, settings, logger)
+            const workspace: Workspace = Workspace::create(services, actions, window.mount)
+            const documents: Documents = Documents::create(services, window)
             const navigation: Navigation = Navigation::create(events, bus, store, registry, settings)
             navigation.openPaths = (s: Store) => documents.paths()
-            const search: FindInFiles = FindInFiles::create(events, bus, store, registry, dialogs, window, documents, logger)
+            const search: FindInFiles = FindInFiles::create(services, window, documents)
             const preferences: Preferences = Preferences::create(settings, store, bus)
             const settingsDialog: SettingsDialog = SettingsDialog::create(events, preferences, actions)
             settingsDialog.themes = (p: Preferences) => documents.themes()

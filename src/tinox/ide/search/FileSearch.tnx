@@ -26,16 +26,16 @@ namespace tinox.ide.search
     class FileSearch
     {
         /** Runs a search; for `spawn`. `regex` makes the pattern a regular expression, otherwise it is plain text. */
-        fnc run(id: Int64, root: String, pattern: String, regex: Bool, caseSensitive: Bool, useRipgrep: Bool, limit: Int64, control: WatchControl) -> Int64
+        fnc run(id: Int64, query: SearchQuery, limit: Int64, control: WatchControl) -> Int64
         {
             var tool: String = "builtin"
             var counter: SearchCounter = SearchCounter::create(id, limit)
             var error: String = ""
-            if (useRipgrep)
+            if (query.useRipgrep)
             {
                 try
                 {
-                    FileSearch::runRipgrep(root, pattern, regex, caseSensitive, control, counter)
+                    FileSearch::runRipgrep(query.root, query.pattern, query.regex, query.caseSensitive, control, counter)
                     tool = "ripgrep"
                 }
                 catch (e: String)
@@ -49,7 +49,7 @@ namespace tinox.ide.search
             {
                 try
                 {
-                    FileSearch::runBuiltin(root, pattern, regex, caseSensitive, control, counter)
+                    FileSearch::runBuiltin(query.root, query.pattern, query.regex, query.caseSensitive, control, counter)
                 }
                 catch (e: String)
                 {
@@ -71,18 +71,11 @@ namespace tinox.ide.search
             return (mask / bit) % 2 == 1
         }
 
-        /** Searches with ripgrep. Throws when it cannot be started. */
-        fnc runRipgrep(root: String, pattern: String, regex: Bool, caseSensitive: Bool, control: WatchControl, counter: SearchCounter) -> Nothing
+        /** The ripgrep command line for a search. */
+        fnc ripgrepArgs(root: String, pattern: String, regex: Bool, caseSensitive: Bool) -> List<String>
         {
             var argv: List<String> = ["rg", "--json", "--no-config", "--no-require-git"]
-            if (caseSensitive)
-            {
-                argv.push("-s")
-            }
-            else
-            {
-                argv.push("-i")
-            }
+            argv.push(caseSensitive ? "-s" : "-i")
             if (!regex)
             {
                 argv.push("-F")
@@ -91,7 +84,26 @@ namespace tinox.ide.search
             argv.push(pattern)
             argv.push("--")
             argv.push(root)
-            const proc: InteractiveProcess = InteractiveProcess::startPiped(argv, "", [])
+            return argv
+        }
+
+        /** The exit code of a finished ripgrep. */
+        fnc exitCodeOf(proc: InteractiveProcess, finished: Bool, control: WatchControl) -> Int64
+        {
+            var code: Int64 = InteractiveProcess::exitCode(proc)
+            // #60: pipe EOF can precede waitpid status. Preserve errors without blocking cancellation.
+            while (finished && code == -9223372036854775808 && !control.stopped)
+            {
+                Process::sleep(1)
+                code = InteractiveProcess::exitCode(proc)
+            }
+            return code
+        }
+
+        /** Searches with ripgrep. Throws when it cannot be started. */
+        fnc runRipgrep(root: String, pattern: String, regex: Bool, caseSensitive: Bool, control: WatchControl, counter: SearchCounter) -> Nothing
+        {
+            const proc: InteractiveProcess = InteractiveProcess::startPiped(FileSearch::ripgrepArgs(root, pattern, regex, caseSensitive), "", [])
             var finished: Bool = false
             var stderr: String = ""
             while (!finished && !control.stopped && !counter.full())
@@ -116,13 +128,7 @@ namespace tinox.ide.search
                     finished = true
                 }
             }
-            var code: Int64 = InteractiveProcess::exitCode(proc)
-            // #60: pipe EOF can precede waitpid status. Preserve errors without blocking cancellation.
-            while (finished && code == -9223372036854775808 && !control.stopped)
-            {
-                Process::sleep(1)
-                code = InteractiveProcess::exitCode(proc)
-            }
+            const code: Int64 = FileSearch::exitCodeOf(proc, finished, control)
             InteractiveProcess::kill(proc)
             if (finished && code == 2 && counter.count == 0)
             {

@@ -11,6 +11,7 @@ import tinox.ide.app.CommandRegistry
 import tinox.ide.app.EventBus
 import tinox.ide.app.IdeCommand
 import tinox.ide.app.Logger
+import tinox.ide.app.Services
 import tinox.ide.app.Store
 import tinox.ide.app.Tr
 import tinox.ide.kde.Bridge
@@ -85,19 +86,19 @@ namespace tinox.ide.workspace
         var watchFiles: Bool
 
         /** The workspace module for this window; call registerCommands(), then bind() once the window exists. */
-        fnc create(events: EventLoop, bus: EventBus, store: Store, registry: CommandRegistry, actions: Actions, dialogs: Dialogs, settings: Settings, logger: Logger, mount: Mount) -> Workspace
+        fnc create(services: Services, actions: Actions, mount: Mount) -> Workspace
         {
             return Workspace {
-                bus: bus,
-                store: store,
-                registry: registry,
+                bus: services.bus,
+                store: services.store,
+                registry: services.registry,
                 actions: actions,
-                dialogs: dialogs,
-                settings: settings,
-                logger: logger,
+                dialogs: services.dialogs,
+                settings: services.settings,
+                logger: services.logger,
                 mount: mount,
-                model: Model::create(events, [], false),
-                ops: FileOps::create(bus),
+                model: Model::create(services.events, [], false),
+                ops: FileOps::create(services.bus),
                 tree: FileTree::create(""),
                 manifest: TinoxManifest::parse("", false),
                 watcher: WorkspaceWatcher::idle(),

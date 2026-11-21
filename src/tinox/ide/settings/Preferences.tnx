@@ -152,37 +152,42 @@ namespace tinox.ide.settings
             return this.get(id).toInt()
         }
 
+        /** Why `text` is not a valid #RRGGBB color, or "" when it is. */
+        fnc checkColor(text: String) -> String
+        {
+            if (text.len() != 7 || !text.startsWith("#")) { return "Enter #RRGGBB or leave empty for the theme" }
+            for i in 1..7
+            {
+                if (!"0123456789abcdefABCDEF".contains(text.substring(i, i + 1))) { return "Enter #RRGGBB or leave empty for the theme" }
+            }
+            return ""
+        }
+
+        /** Why `text` is not a whole number inside the preference's range, or "" when it is. */
+        fnc checkInt(d: PrefDef, text: String) -> String
+        {
+            if (text.trim() == "" || !Preferences::isNumber(text.trim()))
+            {
+                return "Enter a whole number"
+            }
+            const n: Int64 = text.trim().toInt()
+            if (n < d.min || n > d.max)
+            {
+                return "Enter a number from " + d.min.toString() + " to " + d.max.toString()
+            }
+            return ""
+        }
+
         /** Why `text` is not allowed for the preference, or "" when it is. */
         fn check(d: PrefDef, text: String) -> String
         {
-            if (d.kind == "color" && text != "")
+            if (d.kind == "color" && text != "") { return Preferences::checkColor(text) }
+            if (d.kind == "int") { return Preferences::checkInt(d, text) }
+            if (d.kind == "choice" && d.choices.len() > 1 && !d.choices.contains(text))
             {
-                if (text.len() != 7 || !text.startsWith("#")) { return "Enter #RRGGBB or leave empty for the theme" }
-                for i in 1..7
-                {
-                    if (!"0123456789abcdefABCDEF".contains(text.substring(i, i + 1))) { return "Enter #RRGGBB or leave empty for the theme" }
-                }
+                return "Not one of the available choices"
             }
-            if (d.kind == "int")
-            {
-                if (text.trim() == "" || !Preferences::isNumber(text.trim()))
-                {
-                    return "Enter a whole number"
-                }
-                const n: Int64 = text.trim().toInt()
-                if (n < d.min || n > d.max)
-                {
-                    return "Enter a number from " + d.min.toString() + " to " + d.max.toString()
-                }
-            }
-            else if (d.kind == "choice")
-            {
-                if (d.choices.len() > 1 && !d.choices.contains(text))
-                {
-                    return "Not one of the available choices"
-                }
-            }
-            else if (d.kind == "path" && text != "")
+            if (d.kind == "path" && text != "")
             {
                 return ToolProbe::check(text)
             }

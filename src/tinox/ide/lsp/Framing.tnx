@@ -26,6 +26,96 @@ namespace tinox.ide.lsp
             return "Content-Length: " + Bytes::fromText(json).len().toString() + "\r\n\r\n" + json
         }
 
+        /** Index of the CRLFCRLF ending the header block, or -1 while it is incomplete. */
+        fn headerEnd() -> Int64
+        {
+            var i: Int64 = 0
+            while (i + 3 < this.buffer.len())
+            {
+                if (this.buffer.get(i) == 13 && this.buffer.get(i + 1) == 10 && this.buffer.get(i + 2) == 13 && this.buffer.get(i + 3) == 10)
+                {
+                    return i
+                }
+                i = i + 1
+            }
+            return -1
+        }
+
+        /** Rejects header bytes outside printable ASCII. */
+        fn checkAscii(end: Int64) -> Nothing
+        {
+            var h: Int64 = 0
+            while (h < end)
+            {
+                const byte: Int64 = this.buffer.get(h)
+                if (byte > 126 || (byte < 32 && byte != 9 && byte != 10 && byte != 13)) { throw "LSP headers must be ASCII" }
+                h = h + 1
+            }
+        }
+
+        /** Parses a Content-Length value into this.length, enforcing the size limit. */
+        fn readLength(value: String) -> Nothing
+        {
+            if (this.length >= 0 || value == "") { throw "Duplicate or empty Content-Length" }
+            this.length = 0
+            const digits: Bytes = Bytes::fromText(value)
+            var n: Int64 = 0
+            while (n < digits.len())
+            {
+                const digit: Int64 = digits.get(n) - 48
+                if (digit < 0 || digit > 9) { throw "Invalid Content-Length" }
+                this.length = this.length * 10 + digit
+                if (this.length > this.limit) { throw "LSP message exceeds limit" }
+                n = n + 1
+            }
+        }
+
+        /** Rejects a Content-Type whose charset is not UTF-8. */
+        fnc checkContentType(value: String) -> Nothing
+        {
+            for parameter in value.toLower().split(";")
+            {
+                const equal: Int64 = parameter.indexOf("=")
+                if (equal > 0 && parameter.substring(0, equal).trim() == "charset")
+                {
+                    const charset: String = parameter.substring(equal + 1, parameter.len()).trim()
+                    if (charset != "utf-8" && charset != "utf8") { throw "Unsupported LSP charset" }
+                }
+            }
+        }
+
+        /** Parses the header block ending at `end` and consumes it from the buffer. */
+        fn readHeader(end: Int64) -> Nothing
+        {
+            this.checkAscii(end)
+            const header: String = this.buffer.slice(0, end).toText()
+            for line in header.split("\r\n")
+            {
+                const colon: Int64 = line.indexOf(":")
+                if (colon < 1) { throw "Malformed LSP header" }
+                const name: String = line.substring(0, colon).toLower()
+                const value: String = line.substring(colon + 1, line.len()).trim()
+                if (name == "content-length") { this.readLength(value) }
+                if (name == "content-type") { Framing::checkContentType(value) }
+            }
+            if (this.length < 1) { throw "Missing or zero Content-Length" }
+            this.buffer = this.buffer.slice(end + 4, this.buffer.len())
+        }
+
+        /** Reads the next header block; false while the buffer does not hold a complete one. */
+        fn nextHeader() -> Bool
+        {
+            const end: Int64 = this.headerEnd()
+            if (end < 0)
+            {
+                if (this.buffer.len() > 8192) { throw "LSP header exceeds 8192 bytes" }
+                return false
+            }
+            if (end > 8192) { throw "LSP header exceeds 8192 bytes" }
+            this.readHeader(end)
+            return true
+        }
+
         /** Accepts a raw pipe chunk and returns every complete body; malformed headers throw. */
         fn feed(chunk: String) -> List<String>
         {
@@ -34,69 +124,7 @@ namespace tinox.ide.lsp
             var more: Bool = true
             while (more)
             {
-                if (this.length < 0)
-                {
-                    var end: Int64 = -1
-                    var i: Int64 = 0
-                    while (i + 3 < this.buffer.len() && end < 0)
-                    {
-                        if (this.buffer.get(i) == 13 && this.buffer.get(i + 1) == 10 && this.buffer.get(i + 2) == 13 && this.buffer.get(i + 3) == 10)
-                        {
-                            end = i
-                        }
-                        i = i + 1
-                    }
-                    if (end < 0)
-                    {
-                        if (this.buffer.len() > 8192) { throw "LSP header exceeds 8192 bytes" }
-                        return messages
-                    }
-                    if (end > 8192) { throw "LSP header exceeds 8192 bytes" }
-                    var h: Int64 = 0
-                    while (h < end)
-                    {
-                        const byte: Int64 = this.buffer.get(h)
-                        if (byte > 126 || (byte < 32 && byte != 9 && byte != 10 && byte != 13)) { throw "LSP headers must be ASCII" }
-                        h = h + 1
-                    }
-                    const header: String = this.buffer.slice(0, end).toText()
-                    for line in header.split("\r\n")
-                    {
-                        const colon: Int64 = line.indexOf(":")
-                        if (colon < 1) { throw "Malformed LSP header" }
-                        const name: String = line.substring(0, colon).toLower()
-                        const value: String = line.substring(colon + 1, line.len()).trim()
-                        if (name == "content-length")
-                        {
-                            if (this.length >= 0 || value == "") { throw "Duplicate or empty Content-Length" }
-                            this.length = 0
-                            const digits: Bytes = Bytes::fromText(value)
-                            var n: Int64 = 0
-                            while (n < digits.len())
-                            {
-                                const digit: Int64 = digits.get(n) - 48
-                                if (digit < 0 || digit > 9) { throw "Invalid Content-Length" }
-                                this.length = this.length * 10 + digit
-                                if (this.length > this.limit) { throw "LSP message exceeds limit" }
-                                n = n + 1
-                            }
-                        }
-                        if (name == "content-type")
-                        {
-                            for parameter in value.toLower().split(";")
-                            {
-                                const equal: Int64 = parameter.indexOf("=")
-                                if (equal > 0 && parameter.substring(0, equal).trim() == "charset")
-                                {
-                                    const charset: String = parameter.substring(equal + 1, parameter.len()).trim()
-                                    if (charset != "utf-8" && charset != "utf8") { throw "Unsupported LSP charset" }
-                                }
-                            }
-                        }
-                    }
-                    if (this.length < 1) { throw "Missing or zero Content-Length" }
-                    this.buffer = this.buffer.slice(end + 4, this.buffer.len())
-                }
+                if (this.length < 0 && !this.nextHeader()) { return messages }
                 if (this.buffer.len() < this.length) { return messages }
                 messages.push(this.buffer.slice(0, this.length).toText())
                 this.buffer = this.buffer.slice(this.length, this.buffer.len())

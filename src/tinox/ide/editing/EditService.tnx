@@ -148,6 +148,40 @@ namespace tinox.ide.editing
             return file.doc.id() == request.file.doc.id() && file.doc.version() == request.version
         }
 
+        /** Moves a request that has not been sent yet toward sending; it stays pending. */
+        fn advanceUnsent(request: EditRequest) -> Nothing
+        {
+            if (Time::now() >= request.deadline) { throw "Timed out waiting for language-server synchronization" }
+            if (request.client.state == "initializing")
+            {
+                this.pending.push(request)
+                return
+            }
+            if (request.client.state != "ready") { throw "Language server is not ready" }
+            const uri: String = Utf16::uri(request.path)
+            const synchronized: Bool = request.client.documents.contains(uri) && request.client.documents.get(uri).version == request.version
+            if (synchronized) { this.send(request) }
+            this.pending.push(request)
+        }
+
+        /** Advances one request: send it once synchronized, wait for its reply, then complete it. */
+        fn advance(request: EditRequest) -> Nothing
+        {
+            if (!this.current(request)) { throw "Buffer or language-server session changed; invoke the command again" }
+            if (!request.sent)
+            {
+                this.advanceUnsent(request)
+                return
+            }
+            if (!request.future.done)
+            {
+                this.pending.push(request)
+                return
+            }
+            this.complete(request)
+            this.finish(request, true)
+        }
+
         /** Pumps requests and the light-bulb state without waiting for server replies. */
         fn poll() -> Nothing
         {
@@ -157,26 +191,7 @@ namespace tinox.ide.editing
             this.pending = []
             for request in pending
             {
-                try
-                {
-                    if (!this.current(request)) { throw "Buffer or language-server session changed; invoke the command again" }
-                    if (!request.sent)
-                    {
-                        if (Time::now() >= request.deadline) { throw "Timed out waiting for language-server synchronization" }
-                        if (request.client.state == "initializing") { this.pending.push(request) }
-                        else
-                        {
-                            if (request.client.state != "ready") { throw "Language server is not ready" }
-                            const uri: String = Utf16::uri(request.path)
-                            if (!request.client.documents.contains(uri) || request.client.documents.get(uri).version != request.version) { this.pending.push(request) }
-                            else { this.send(request)
-                                this.pending.push(request) }
-                        }
-                    }
-                    else if (!request.future.done) { this.pending.push(request) }
-                    else { this.complete(request)
-                        this.finish(request, true) }
-                }
+                try { this.advance(request) }
                 catch (error: String)
                 {
                     if (request.sent) { request.client.cancel(request.future) }

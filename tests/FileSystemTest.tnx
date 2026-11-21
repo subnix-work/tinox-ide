@@ -24,6 +24,7 @@ class FileSystemTest
     }
 
     @Test("path helpers")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testPaths() -> Bool
     {
         return FileSystem::join("/a/b", "c") == "/a/b/c" && FileSystem::join("/a/b/", "c") == "/a/b/c" && FileSystem::baseName("/a/b/c.txt") == "c.txt" && FileSystem::baseName("/a/b/") == "b" &&
@@ -92,6 +93,7 @@ class FileSystemTest
     }
 
     @Test("ignore rules: names anywhere, directories only, anchored paths, negation, last rule wins")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testIgnoreRules() -> Bool
     {
         const rules: IgnoreRules = IgnoreRules::create("/p")

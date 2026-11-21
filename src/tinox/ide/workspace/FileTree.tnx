@@ -103,11 +103,10 @@ namespace tinox.ide.workspace
             return merged
         }
 
-        /** The icon of a file by its extension (Breeze/mime icon names). */
-        fnc iconFor(name: String) -> String
+        /** The icon of a source or data file by its extension, or "" when it is none of those. */
+        fnc codeIcon(extension: String) -> String
         {
-            const extension: String = FileSystem::extension(name)
-            if (extension == "tnx")
+            if (extension == "tnx" || extension == "sh")
             {
                 return "text-x-script"
             }
@@ -131,9 +130,17 @@ namespace tinox.ide.workspace
             {
                 return "text-x-c++src"
             }
-            if (extension == "sh")
+            return ""
+        }
+
+        /** The icon of a file by its extension (Breeze/mime icon names). */
+        fnc iconFor(name: String) -> String
+        {
+            const extension: String = FileSystem::extension(name)
+            const code: String = FileTree::codeIcon(extension)
+            if (code != "")
             {
-                return "text-x-script"
+                return code
             }
             if (extension == "png" || extension == "jpg" || extension == "svg")
             {

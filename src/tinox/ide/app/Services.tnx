@@ -1,0 +1,33 @@
+module tinox.ide.app
+
+import tinox.ide.kde.EventLoop
+import tinox.ide.settings.Settings
+import tinox.ide.ui.Dialogs
+
+namespace tinox.ide.app
+{
+    /** The shared services every module of the IDE is built from; passed as one value to keep factories small. */
+    class Services
+    {
+        /** The loop events arrive on. */
+        var events: EventLoop
+        /** Publish/subscribe between modules. */
+        var bus: EventBus
+        /** The application state the window is drawn from. */
+        var store: Store
+        /** Every command by id. */
+        var registry: CommandRegistry
+        /** Modal dialogs. */
+        var dialogs: Dialogs
+        /** Persistent user settings. */
+        var settings: Settings
+        /** The application log. */
+        var logger: Logger
+
+        /** The services of one running IDE. */
+        fnc create(events: EventLoop, bus: EventBus, store: Store, registry: CommandRegistry, dialogs: Dialogs, settings: Settings, logger: Logger) -> Services
+        {
+            return Services { events: events, bus: bus, store: store, registry: registry, dialogs: dialogs, settings: settings, logger: logger }
+        }
+    }
+}

@@ -44,6 +44,7 @@ class Main
         return false
     }
 
+    @AllowComplexity("driver of an end-to-end scenario; the assertions belong together")
     fnc check(events: EventLoop, results: List<Bool>) -> Nothing
     {
         const app: IdeApp = IdeApp::start(events)

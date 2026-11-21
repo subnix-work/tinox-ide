@@ -9,6 +9,7 @@ import tinox.ide.app.FileSystem
 import tinox.ide.app.IdeCommand
 import tinox.ide.app.Logger
 import tinox.ide.app.MainWindow
+import tinox.ide.app.Services
 import tinox.ide.app.Store
 import tinox.ide.editor.Documents
 import tinox.ide.kde.Event
@@ -84,9 +85,9 @@ namespace tinox.ide.search
         var replaced: List<ReplacedFile>
 
         /** The search for a window. */
-        fnc create(events: EventLoop, bus: EventBus, store: Store, registry: CommandRegistry, dialogs: Dialogs, window: MainWindow, documents: Documents, logger: Logger) -> FindInFiles
+        fnc create(services: Services, window: MainWindow, documents: Documents) -> FindInFiles
         {
-            return FindInFiles { events: events, bus: bus, store: store, registry: registry, dialogs: dialogs, window: window, documents: documents, logger: logger, model: Model::create(events, ["Match"], false), query: "", replacement: "", caseSensitive: false, useRegex: false, useRipgrep: true, limit: 5000, searchId: 0, control: WatchControl::create(), matches: [], shownFiles: [], fileRows: Map::new(), replaced: [] }
+            return FindInFiles { events: services.events, bus: services.bus, store: services.store, registry: services.registry, dialogs: services.dialogs, window: window, documents: documents, logger: services.logger, model: Model::create(services.events, ["Match"], false), query: "", replacement: "", caseSensitive: false, useRegex: false, useRipgrep: true, limit: 5000, searchId: 0, control: WatchControl::create(), matches: [], shownFiles: [], fileRows: Map::new(), replaced: [] }
         }
 
         // ---------------------------------------------------------------- wiring
@@ -209,7 +210,7 @@ namespace tinox.ide.search
             this.control = WatchControl::create()
             this.store.setBool("search.running", true)
             this.store.set("search.status", "Searching…")
-            spawn FileSearch::run(this.searchId, this.store.get("workspace.path"), this.query, this.useRegex, this.caseSensitive, this.useRipgrep, this.limit, this.control)
+            spawn FileSearch::run(this.searchId, SearchQuery::create(this.store.get("workspace.path"), this.query, this.useRegex, this.caseSensitive, this.useRipgrep), this.limit, this.control)
             this.publish()
         }
 
@@ -353,38 +354,41 @@ namespace tinox.ide.search
             }
         }
 
+        /** Rewrites the matched lines of one file in `lines`; counts[0] counts changed lines, counts[1] skipped ones. True when a line changed. */
+        fn rewriteLines(path: String, lines: List<String>, counts: List<Int64>) -> Bool
+        {
+            var touched: Bool = false
+            for found in this.matches
+            {
+                if (found.path != path) { continue }
+                const at: Int64 = found.line - 1
+                if (at < lines.len() && FileSearch::chomp(lines[at]) == found.text)
+                {
+                    const ending: String = lines[at].substring(found.text.len(), lines[at].len())
+                    lines[at] = found.replaced(this.replacement) + ending
+                    counts[0] = counts[0] + 1
+                    touched = true
+                }
+                else
+                {
+                    counts[1] = counts[1] + 1
+                }
+            }
+            return touched
+        }
+
         /** Replaces without asking. Lines that changed since the search are left alone. */
         fn replaceNow() -> Nothing
         {
             var done: List<ReplacedFile> = []
-            var changedLines: Int64 = 0
-            var skipped: Int64 = 0
+            var counts: List<Int64> = [0, 0]
             for path in this.shownFiles
             {
                 try
                 {
                     const before: String = this.documents.textOf(path)
                     var lines: List<String> = before.split("\n")
-                    var touched: Bool = false
-                    for found in this.matches
-                    {
-                        if (found.path == path)
-                        {
-                            const at: Int64 = found.line - 1
-                            if (at < lines.len() && FileSearch::chomp(lines[at]) == found.text)
-                            {
-                                const ending: String = lines[at].substring(found.text.len(), lines[at].len())
-                                lines[at] = found.replaced(this.replacement) + ending
-                                changedLines = changedLines + 1
-                                touched = true
-                            }
-                            else
-                            {
-                                skipped = skipped + 1
-                            }
-                        }
-                    }
-                    if (touched)
+                    if (this.rewriteLines(path, lines, counts))
                     {
                         const after: String = Js::join(lines, "\n")
                         this.documents.writeText(path, after)
@@ -394,14 +398,14 @@ namespace tinox.ide.search
                 catch (e: String)
                 {
                     this.logger.warn("could not replace in " + path + ": " + e)
-                    skipped = skipped + 1
+                    counts[1] = counts[1] + 1
                 }
             }
             this.replaced = done
-            var text: String = "Replaced " + changedLines.toString() + " lines in " + done.len().toString() + " files"
-            if (skipped > 0)
+            var text: String = "Replaced " + counts[0].toString() + " lines in " + done.len().toString() + " files"
+            if (counts[1] > 0)
             {
-                text = text + " (" + skipped.toString() + " skipped: changed since the search)"
+                text = text + " (" + counts[1].toString() + " skipped: changed since the search)"
             }
             this.reset()
             this.store.set("search.status", text)
