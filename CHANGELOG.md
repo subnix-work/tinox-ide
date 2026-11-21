@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+Fixes the build with Tinox 2.9.8: its compiler now enforces complexity limits by default, and 24 functions of the IDE exceed
+them, so 0.1.3 did not build. `tinox.toml` sets `[analysis] level = "warn"` (the functions are reported as warnings) until they are
+split up. No functional changes. 0.1.3 is superseded.
+
 ## 0.1.3
 
 Built with Tinox 2.9.8: the manifest, the manual's example and the fixtures of the tests that build real projects name

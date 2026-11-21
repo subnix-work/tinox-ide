@@ -1,7 +1,7 @@
 [package]
 compiler = "2.9.8"
 name = "tinox-ide"
-version = "0.1.3"
+version = "0.1.4"
 description = "Native KDE Plasma IDE for the Tinox language, written in Tinox"
 entry = "src/Main.tnx"
 
@@ -21,3 +21,8 @@ rpath    = ["bridge/build/bin"]
 # same symbols, no Qt, no display, scripted by the tests.
 [native.test]
 libs = ["tinoxkde-mock"]
+
+# Known debt: 24 functions exceed the compiler's default complexity limits (see the tracking issue).
+# Reported as warnings until they are split up.
+[analysis]
+level = "warn"
