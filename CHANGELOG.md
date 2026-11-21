@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+Built with Tinox 2.9.8: the manifest, the manual's example and the fixtures of the tests that build real projects name
+compiler 2.9.8, the `tinox.core.json` dependency is 1.1.10, and the environment check and the documentation require Tinox 2.9.8.
+No functional changes.
+
 ## 0.1.2
 
 Built with Tinox 2.9.7: the manifest, the manual's example and the fixtures of the tests that build real projects name

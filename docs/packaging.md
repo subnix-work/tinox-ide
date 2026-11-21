@@ -49,7 +49,7 @@ It does not install anything into the running desktop.
 ## Arch Linux
 
 `packaging/PKGBUILD` is a VCS package (`tinox-ide-git`) built from the repository.
-Install Tinox 2.9.7 or newer (it contains upstream commit
+Install Tinox 2.9.8 or newer (it contains upstream commit
 `099e8cdcf762c7e4e04cc0bcd9a9078995c1f25b`; the 2.8.0 release predates the watcher
 and piped-process APIs). `tinox` is not in Arch's official repositories; the AUR package
 `tinox-bin` provides the release, or build it from source following upstream instructions.
