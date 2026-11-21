@@ -64,6 +64,42 @@ namespace tinox.ide.workspace
             return manifest
         }
 
+        /** Records a finished `[[dependencies]]` entry as group:artifact:version when it names an artifact. */
+        fnc flushDependency(manifest: TinoxManifest, dep: List<String>, inDependency: Bool) -> Nothing
+        {
+            if (inDependency && dep[1] != "")
+            {
+                manifest.dependencies.push(dep[0] + ":" + dep[1] + ":" + dep[2])
+            }
+        }
+
+        /** Applies one `[package]` key. */
+        fnc assignPackage(manifest: TinoxManifest, key: String, value: String) -> Nothing
+        {
+            const text: String = TinoxManifest::unquote(value)
+            if (key == "name") { manifest.name = text }
+            else if (key == "version") { manifest.version = text }
+            else if (key == "description") { manifest.description = text }
+            else if (key == "entry") { manifest.entry = text }
+            else if (key == "compiler") { manifest.compiler = text }
+        }
+
+        /** Applies one key of a dependency entry to `dep` (group, artifact, version). */
+        fnc assignDependency(dep: List<String>, key: String, value: String) -> Nothing
+        {
+            if (key == "group") { dep[0] = TinoxManifest::unquote(value) }
+            else if (key == "artifactId") { dep[1] = TinoxManifest::unquote(value) }
+            else if (key == "version") { dep[2] = TinoxManifest::unquote(value) }
+        }
+
+        /** Applies one `key = value` line of the current section. */
+        fnc assign(manifest: TinoxManifest, section: String, inDependency: Bool, dep: List<String>, key: String, value: String) -> Nothing
+        {
+            if (section == "package") { TinoxManifest::assignPackage(manifest, key, value) }
+            else if (inDependency) { TinoxManifest::assignDependency(dep, key, value) }
+            else if (section == "native" && key == "libs") { manifest.nativeLibs = TinoxManifest::strings(value) }
+        }
+
         /** Reads manifest text. `present` says whether there was a file at all. */
         fnc parse(text: String, present: Bool) -> TinoxManifest
         {
@@ -80,9 +116,7 @@ namespace tinox.ide.workspace
                 nativeLibs: []
             }
             var section: String = ""
-            var group: String = ""
-            var artifact: String = ""
-            var dependencyVersion: String = ""
+            var dep: List<String> = ["", "", ""]
             var inDependency: Bool = false
             // a while loop: `continue` in a `for` loop is broken (subnix-work/tinox#513)
             const lines: List<String> = text.split("\n")
@@ -98,19 +132,10 @@ namespace tinox.ide.workspace
                 }
                 if (line.startsWith("["))
                 {
-                    if (inDependency && artifact != "")
-                    {
-                        manifest.dependencies.push(group + ":" + artifact + ":" + dependencyVersion)
-                    }
-                    group = ""
-                    artifact = ""
-                    dependencyVersion = ""
-                    inDependency = false
+                    TinoxManifest::flushDependency(manifest, dep, inDependency)
+                    dep = ["", "", ""]
                     section = line.replace("[", "").replace("]", "").trim()
-                    if (section == "dependencies")
-                    {
-                        inDependency = true
-                    }
+                    inDependency = section == "dependencies"
                     continue
                 }
                 const equals: Int64 = line.indexOf("=")
@@ -118,55 +143,9 @@ namespace tinox.ide.workspace
                 {
                     continue
                 }
-                const key: String = line.substring(0, equals).trim()
-                const value: String = line.substring(equals + 1, line.len()).trim()
-                if (section == "package")
-                {
-                    if (key == "name")
-                    {
-                        manifest.name = TinoxManifest::unquote(value)
-                    }
-                    else if (key == "version")
-                    {
-                        manifest.version = TinoxManifest::unquote(value)
-                    }
-                    else if (key == "description")
-                    {
-                        manifest.description = TinoxManifest::unquote(value)
-                    }
-                    else if (key == "entry")
-                    {
-                        manifest.entry = TinoxManifest::unquote(value)
-                    }
-                    else if (key == "compiler")
-                    {
-                        manifest.compiler = TinoxManifest::unquote(value)
-                    }
-                }
-                else if (inDependency)
-                {
-                    if (key == "group")
-                    {
-                        group = TinoxManifest::unquote(value)
-                    }
-                    else if (key == "artifactId")
-                    {
-                        artifact = TinoxManifest::unquote(value)
-                    }
-                    else if (key == "version")
-                    {
-                        dependencyVersion = TinoxManifest::unquote(value)
-                    }
-                }
-                else if (section == "native" && key == "libs")
-                {
-                    manifest.nativeLibs = TinoxManifest::strings(value)
-                }
+                TinoxManifest::assign(manifest, section, inDependency, dep, line.substring(0, equals).trim(), line.substring(equals + 1, line.len()).trim())
             }
-            if (inDependency && artifact != "")
-            {
-                manifest.dependencies.push(group + ":" + artifact + ":" + dependencyVersion)
-            }
+            TinoxManifest::flushDependency(manifest, dep, inDependency)
             return manifest
         }
 

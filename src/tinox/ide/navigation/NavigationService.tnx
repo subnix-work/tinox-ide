@@ -224,35 +224,37 @@ namespace tinox.ide.navigation
             return versions
         }
 
-        /** Discards replies for changed buffers, closed files or replaced sessions. */
-        fn complete(request: NavigationRequest) -> Nothing
+        /** Whether a reply still matches the session and buffer it was requested for. */
+        fn fresh(request: NavigationRequest) -> Bool
         {
-            if (!this.language.connected || request.client != this.language.client || this.language.client.state != "ready") { return }
-            if (request.kind != "workspace/symbol")
-            {
-                const path: String = Location::path(request.uri)
-                if (!this.language.documents.isOpen(path) || this.language.documents.file(path).doc.version() != request.version) { return }
-            }
-            const value: JsonValue = request.future.value()
-            if (request.kind == "definition" && value.isNull()) { this.definitionSymbols(request)
-                return }
-            if (request.kind == "rename") {
-                for uri in request.versions.keys() {
-                    if (!this.language.client.documents.contains(uri) || this.language.client.documents.get(uri).version != request.versions.get(uri) || !this.language.documents.isOpen(Location::path(uri)) || this.language.documents.file(Location::path(uri)).doc.version() != request.versions.get(uri)) { throw "A buffer changed while rename was running; start again" }
-                }
-                this.prepare(value)
-                return }
-            if (request.kind == "documentSymbol")
-            {
-                if (this.language.documents.current().path != Location::path(request.uri)) { return }
-                const previous: List<Location> = this.symbols
-                this.symbols = []
-                try { this.outline.reset(this.symbolRows(value.asList(), Location::path(request.uri))) }
-                catch (error: String) { this.symbols = previous
-                    throw error }
-                this.breadcrumb(this.activeView(this.language.documents.current()).cursor())
-                return
-            }
+            if (!this.language.connected || request.client != this.language.client || this.language.client.state != "ready") { return false }
+            if (request.kind == "workspace/symbol") { return true }
+            const path: String = Location::path(request.uri)
+            return this.language.documents.isOpen(path) && this.language.documents.file(path).doc.version() == request.version
+        }
+
+        /** Whether a buffer taking part in a multi-file rename still has the version the request saw. */
+        fn renameBufferCurrent(uri: String, version: Int64) -> Bool
+        {
+            if (!this.language.client.documents.contains(uri) || this.language.client.documents.get(uri).version != version) { return false }
+            return this.language.documents.isOpen(Location::path(uri)) && this.language.documents.file(Location::path(uri)).doc.version() == version
+        }
+
+        /** Replaces the outline with a document-symbol reply; the old one stays when the reply is malformed. */
+        fn showOutline(request: NavigationRequest, value: JsonValue) -> Nothing
+        {
+            if (this.language.documents.current().path != Location::path(request.uri)) { return }
+            const previous: List<Location> = this.symbols
+            this.symbols = []
+            try { this.outline.reset(this.symbolRows(value.asList(), Location::path(request.uri))) }
+            catch (error: String) { this.symbols = previous
+                throw error }
+            this.breadcrumb(this.activeView(this.language.documents.current()).cursor())
+        }
+
+        /** The locations of a definition, reference or symbol reply that match the request. */
+        fn locationsOf(request: NavigationRequest, value: JsonValue) -> List<Location>
+        {
             var locations: List<Location> = []
             var items: List<JsonValue> = value.asList()
             if (value.isObject()) { items = [value] }
@@ -264,6 +266,31 @@ namespace tinox.ide.navigation
                 location.name = item.getField("name").getString()
                 if (request.kind != "definitionSymbols" || (location.name == request.token && (request.owner == "" || item.getField("containerName").getString() == request.owner))) { locations.push(location) }
             }
+            return locations
+        }
+
+        /** Discards replies for changed buffers, closed files or replaced sessions. */
+        fn complete(request: NavigationRequest) -> Nothing
+        {
+            if (!this.fresh(request)) { return }
+            const value: JsonValue = request.future.value()
+            if (request.kind == "definition" && value.isNull()) { this.definitionSymbols(request)
+                return }
+            if (request.kind == "rename")
+            {
+                for uri in request.versions.keys()
+                {
+                    if (!this.renameBufferCurrent(uri, request.versions.get(uri))) { throw "A buffer changed while rename was running; start again" }
+                }
+                this.prepare(value)
+                return
+            }
+            if (request.kind == "documentSymbol")
+            {
+                this.showOutline(request, value)
+                return
+            }
+            const locations: List<Location> = this.locationsOf(request, value)
             if (request.kind == "workspace/symbol")
             {
                 if (request.generation != this.generation || !this.picker.visible) { return }

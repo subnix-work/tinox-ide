@@ -508,24 +508,38 @@ namespace tinox.ide.build
             this.tests.flush()
         }
 
-        /** The step ended: next step, or the end of the task. */
-        fn stepFinished() -> Nothing
+        /** Flushes a final output line that had no trailing newline. */
+        fn flushPartials() -> Nothing
         {
             if (this.partialOut != "") { this.outLine(this.partialOut) }
             if (this.partialErr != "") { this.errLine(this.partialErr) }
             this.partialOut = ""
             this.partialErr = ""
+        }
+
+        /** True when the next step may start: it needs no executable, or the build produced one. */
+        fn nextStepReady() -> Bool
+        {
+            const next: TaskStep = this.steps[this.index + 1]
+            return (next.kind != "run" && next.kind != "debug") || this.artifact != ""
+        }
+
+        /** The step ended: next step, or the end of the task. */
+        fn stepFinished() -> Nothing
+        {
+            this.flushPartials()
             const status: Int64 = this.run.exitStatus()
             const step: TaskStep = this.steps[this.index]
             if (this.run.error() != "") { this.write("\x1b[31m" + this.run.error() + "\x1b[0m\n") }
             const failed: Bool = status != 0
-            if (!this.cancelled && !failed && this.index + 1 < this.steps.len() && ((this.steps[this.index + 1].kind != "run" && this.steps[this.index + 1].kind != "debug") || this.artifact != ""))
+            const more: Bool = !this.cancelled && !failed && this.index + 1 < this.steps.len()
+            if (more && this.nextStepReady())
             {
                 this.index = this.index + 1
                 this.begin()
                 return
             }
-            if (!this.cancelled && !failed && this.index + 1 < this.steps.len())
+            if (more)
             {
                 this.write("\x1b[31mThe build reported no executable to run\x1b[0m\n")
                 this.finish(step.kind, 1)
@@ -538,34 +552,66 @@ namespace tinox.ide.build
             this.finish(step.kind, status)
         }
 
-        /** Ends the task: state, status bar, notification. */
-        fn finish(kind: String, status: Int64) -> Nothing
+        /** Number of error-severity problems. */
+        fn errorCount() -> Int64
         {
-            const store: Store = this.window.store
             var errors: Int64 = 0
             for found in this.problems
             {
                 if (found.severity == "error") { errors = errors + 1 }
             }
+            return errors
+        }
+
+        /** Whether a finished discovery replaces the earlier results: a cancelled or silent one must not. */
+        fn discoveryListed(failed: Bool) -> Bool
+        {
+            const listed: Bool = !this.cancelled && (!failed || this.tests.seen > 0)
+            this.tests.endDiscovery(listed)
+            return listed
+        }
+
+        /** The status-bar message of a task that was cancelled or is not a plain build. */
+        fn specialMessage(kind: String, status: Int64, listed: Bool) -> String
+        {
+            if (this.cancelled) { return Tr::f("%1 stopped", [this.title]) }
+            if (kind == "list" && !listed) { return Tr::t("Test discovery failed; the earlier tests are kept") }
+            if (kind == "run") { return Tr::f("Program exited with status %1", [status.toString()]) }
+            if (kind == "debug") { return Tr::t("Debugger started") }
+            if (kind != "list") { return "" }
+            if (this.tests.scope != "all tests" && this.tests.scope != "") { return Tr::n("%1 test found in %2", "%1 tests found in %2", this.tests.countIn(this.tests.scope), [this.tests.scope]) }
+            return Tr::n("%1 test found", "%1 tests found", this.tests.cases.len(), [])
+        }
+
+        /** The status-bar message of a finished task. */
+        fn finishMessage(kind: String, status: Int64, failed: Bool, errors: Int64, listed: Bool) -> String
+        {
+            const special: String = this.specialMessage(kind, status, listed)
+            if (special != "") { return special }
+            if (kind == "test") { return this.tests.summary() }
+            if (failed) { return Tr::n("%2 failed: %1 error", "%2 failed: %1 errors", errors, [this.title]) }
+            return Tr::f("%1 succeeded", [this.title])
+        }
+
+        /** The notification event of a finished task. */
+        fnc finishEvent(kind: String, failed: Bool) -> String
+        {
+            if (kind == "test") { return failed ? "testsFailed" : "testsFinished" }
+            if (failed && kind != "run" && kind != "debug") { return "buildFailed" }
+            return "buildFinished"
+        }
+
+        /** Ends the task: state, status bar, notification. */
+        fn finish(kind: String, status: Int64) -> Nothing
+        {
+            const store: Store = this.window.store
+            const errors: Int64 = this.errorCount()
             var failed: Bool = status != 0
             if (kind == "test" && this.testsFailed) { failed = true }
             // A discovery that was cancelled, or died without reporting anything, must not replace the earlier results.
             var listed: Bool = false
-            if (kind == "list")
-            {
-                listed = !this.cancelled && (!failed || this.tests.seen > 0)
-                this.tests.endDiscovery(listed)
-            }
-            var message: String = ""
-            if (this.cancelled) { message = Tr::f("%1 stopped", [this.title]) }
-            else if (kind == "list" && !listed) { message = Tr::t("Test discovery failed; the earlier tests are kept") }
-            else if (kind == "run") { message = Tr::f("Program exited with status %1", [status.toString()]) }
-            else if (kind == "debug") { message = Tr::t("Debugger started") }
-            else if (kind == "list" && this.tests.scope != "all tests" && this.tests.scope != "") { message = Tr::n("%1 test found in %2", "%1 tests found in %2", this.tests.countIn(this.tests.scope), [this.tests.scope]) }
-            else if (kind == "list") { message = Tr::n("%1 test found", "%1 tests found", this.tests.cases.len(), []) }
-            else if (kind == "test") { message = this.tests.summary() }
-            else if (failed) { message = Tr::n("%2 failed: %1 error", "%2 failed: %1 errors", errors, [this.title]) }
-            else { message = Tr::f("%1 succeeded", [this.title]) }
+            if (kind == "list") { listed = this.discoveryListed(failed) }
+            const message: String = this.finishMessage(kind, status, failed, errors, listed)
             this.active = false
             store.setBool("build.active", false)
             store.set("build.activity", "")
@@ -576,13 +622,7 @@ namespace tinox.ide.build
             this.window.registry.refresh()
             if (this.cancelled || kind == "list") { return }
             if (failed && errors > 0 && kind != "test") { this.window.showBottomTab(this.problemsTab) }
-            var event: String = "buildFinished"
-            if (kind == "test")
-            {
-                event = "testsFinished"
-                if (failed) { event = "testsFailed" }
-            }
-            else if (failed && kind != "run" && kind != "debug") { event = "buildFailed" }
+            const event: String = BuildService::finishEvent(kind, failed)
             Bridge::post(Command::named("notify.send").str("event", event).str("title", "Tinox IDE: " + this.title).str("text", message).build())
         }
 

@@ -126,6 +126,7 @@ class WorkspaceAppTest
     }
 
     @Test("opening a folder lists the top level, fills the store, announces it, remembers it, and closing undoes it")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testOpenAndClose() -> Bool
     {
         const events: EventLoop = EventLoop::create()

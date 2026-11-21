@@ -75,6 +75,7 @@ class NavigationTest
     }
 
     @Test("rename previews every edit across files, sends one native transaction, cancels on changes and records atomic inverse")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testRenameAndOutline() -> Bool
     {
         const app = DiagnosticsHarness::start()

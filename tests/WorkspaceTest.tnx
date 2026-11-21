@@ -97,6 +97,7 @@ class WorkspaceTest
     }
 
     @Test("the manifest: package, entry, dependencies, native libraries, comments and sections")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testManifest() -> Bool
     {
         const text: String = "# a project\n[package]\ncompiler = \"2.8.0\"\nname = \"tinox-ide\"  # the name\nversion = \"0.1.0\"\ndescription = \"A # inside\"\nentry = \"src/Main.tnx\"\n\n[[dependencies]]\ngroup      = \"tinox.core\"\nartifactId = \"json\"\nversion    = \"1.1.0\"\n\n[[dependencies]]\ngroup = \"x.y\"\nartifactId = \"z\"\nversion = \"2\"\n\n[native]\nlibs = [\"tinoxkde\", \"other\"]\nlib_dirs = [\"a\"]\n\n[native.test]\nlibs = [\"mock\"]\n"
@@ -121,6 +122,7 @@ class WorkspaceTest
     }
 
     @Test("listing a directory: folders first, then by name without regard to case, ignored entries left out, rows lazy for folders")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testFileTree() -> Bool
     {
         const root: String = WorkspaceTest::makeProject()
@@ -181,6 +183,7 @@ class WorkspaceTest
     }
 
     @Test("git status: modified, added, untracked, renamed, conflicts, and folders take the strongest status of what is inside")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testGitStatus() -> Bool
     {
         const output: String = " M src/App.tnx\n?? notes.txt\nA  new/File.tnx\nR  old.txt -> renamed.txt\nUU conflict.txt\n D gone.txt\n?? \"quoted name.txt\"\nxx\n"
@@ -192,6 +195,7 @@ class WorkspaceTest
     }
 
     @Test("file operations: create, rename, move, copy, undo, and what is refused")
+    @AllowComplexity("scenario test: one flow with many assertions")
     fn testFileOps() -> Bool
     {
         const root: String = TempProject::create()

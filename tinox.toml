@@ -25,4 +25,4 @@ libs = ["tinoxkde-mock"]
 # Known debt: 24 functions exceed the compiler's default complexity limits (see the tracking issue).
 # Reported as warnings until they are split up.
 [analysis]
-level = "warn"
+level = "error"

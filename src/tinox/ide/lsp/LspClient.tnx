@@ -193,12 +193,7 @@ namespace tinox.ide.lsp
             const method: JsonValue = message.getField("method")
             if (method.isString())
             {
-                if (id.isNull())
-                {
-                    try { this.notification(method.getString(), message.getField("params")) }
-                    catch (e: String) { this.lastError = e }
-                }
-                else { this.serverRequest(id, method.getString(), message.getField("params")) }
+                this.incoming(id, method.getString(), message.getField("params"))
                 return
             }
             if (!id.isInt()) { return }
@@ -206,52 +201,72 @@ namespace tinox.ide.lsp
             if (!this.pending.contains(key)) { return }
             const future: RpcFuture = this.pending.get(key)
             this.forget(key)
-            var result: JsonValue = message.getField("result")
-            var code: Int64 = 0
-            var description: String = ""
+            this.complete(message, future)
+        }
+
+        /** Routes a server notification or request; notification failures are recorded, not thrown. */
+        fn incoming(id: JsonValue, method: String, params: JsonValue) -> Nothing
+        {
+            if (!id.isNull())
+            {
+                this.serverRequest(id, method, params)
+                return
+            }
+            try { this.notification(method, params) }
+            catch (e: String) { this.lastError = e }
+        }
+
+        /** Error code of a response; zero for a well-formed success. */
+        fnc responseCode(message: JsonValue) -> Int64
+        {
             const fields: Map<String, JsonValue> = message.asTable()
-            if (fields.contains("result") == fields.contains("error"))
-            {
-                code = -32603
-                description = "JSON-RPC response must have exactly one of result and error"
-            }
-            else if (fields.contains("error"))
-            {
-                const error: JsonValue = message.getField("error")
-                if (!error.isObject() || !error.getField("code").isInt() || !error.getField("message").isString())
-                {
-                    code = -32603
-                    description = "Invalid JSON-RPC error object"
-                }
-                else
-                {
-                    code = error.getField("code").getInt()
-                    if (code == 0) { code = -32603 }
-                    description = error.getField("message").getString()
-                }
-                result = Json::parse("null")
-            }
-            if (future.id == this.initialization.id && this.state == "initializing" && code == 0)
+            if (fields.contains("result") == fields.contains("error")) { return -32603 }
+            if (!fields.contains("error")) { return 0 }
+            const error: JsonValue = message.getField("error")
+            if (!error.isObject() || !error.getField("code").isInt() || !error.getField("message").isString()) { return -32603 }
+            const code: Int64 = error.getField("code").getInt()
+            return code == 0 ? -32603 : code
+        }
+
+        /** Error description of a response; empty for a well-formed success. */
+        fnc responseText(message: JsonValue) -> String
+        {
+            const fields: Map<String, JsonValue> = message.asTable()
+            if (fields.contains("result") == fields.contains("error")) { return "JSON-RPC response must have exactly one of result and error" }
+            if (!fields.contains("error")) { return "" }
+            const error: JsonValue = message.getField("error")
+            if (!error.isObject() || !error.getField("code").isInt() || !error.getField("message").isString()) { return "Invalid JSON-RPC error object" }
+            return error.getField("message").getString()
+        }
+
+        /** Resolves the future of a response and finishes the initialize handshake when it was the answer. */
+        fn complete(message: JsonValue, future: RpcFuture) -> Nothing
+        {
+            const fields: Map<String, JsonValue> = message.asTable()
+            var result: JsonValue = message.getField("result")
+            var code: Int64 = LspClient::responseCode(message)
+            var description: String = LspClient::responseText(message)
+            if (fields.contains("error") && !fields.contains("result")) { result = Json::parse("null") }
+            const initializing: Bool = future.id == this.initialization.id && this.state == "initializing"
+            if (initializing && code == 0)
             {
                 try { this.acceptCapabilities(result.getField("capabilities")) }
                 catch (e: String) { code = -32603
                     description = e }
             }
             future.resolve(result, code, description)
-            if (future.id == this.initialization.id && this.state == "initializing" && future.code != 0)
+            if (!initializing) { return }
+            if (future.code != 0)
             {
                 this.lost(future.message)
                 return
             }
-            if (future.id == this.initialization.id && this.state == "initializing")
+            this.notify("initialized", "{}")
+            this.transition("ready")
+            this.readyAt = this.clock
+            for uri in this.documents.keys()
             {
-                this.notify("initialized", "{}")
-                this.transition("ready")
-                this.readyAt = this.clock
-                for uri in this.documents.keys()
-                {
-                    if (this.openClose) { this.notify("textDocument/didOpen", this.documents.get(uri).opening()) }
-                }
+                if (this.openClose) { this.notify("textDocument/didOpen", this.documents.get(uri).opening()) }
             }
         }
 
@@ -430,29 +445,31 @@ namespace tinox.ide.lsp
             }
         }
 
-        /** Performs one pump iteration; pollAt isolates connection failures from the event loop. */
-        fn drive(now: Int64) -> Nothing
+        /** Drains the transport and reacts to a stopped server. */
+        fn driveTransport() -> Nothing
         {
-            this.clock = now
-            if (this.argv.len() > 0 && this.state != "backoff" && this.state != "closed")
+            if (this.argv.len() == 0 || this.state == "backoff" || this.state == "closed") { return }
+            if (this.state != "stopping")
             {
-                if (this.state != "stopping")
+                try { for message in this.transport.drain() { this.receive(message) } }
+                catch (e: String)
                 {
-                    try { for message in this.transport.drain() { this.receive(message) } }
-                    catch (e: String)
-                    {
-                        if (this.state == "closing" || this.state == "exiting") { this.lastError = e
-                            this.stop() }
-                        else { this.lost(e) }
-                    }
-                }
-                if (this.transport.isStopped() && this.state != "backoff")
-                {
-                    if (this.state == "closing" || this.state == "exiting" || this.state == "stopping") { this.stop()
-                        this.transition("closed") }
-                    else { this.lost("LSP server exited: " + this.transport.error()) }
+                    if (this.state == "closing" || this.state == "exiting") { this.lastError = e
+                        this.stop() }
+                    else { this.lost(e) }
                 }
             }
+            if (this.transport.isStopped() && this.state != "backoff")
+            {
+                if (this.state == "closing" || this.state == "exiting" || this.state == "stopping") { this.stop()
+                    this.transition("closed") }
+                else { this.lost("LSP server exited: " + this.transport.error()) }
+            }
+        }
+
+        /** Fails every request whose deadline has passed. */
+        fn expirePending(now: Int64) -> Nothing
+        {
             for key in this.pending.keys()
             {
                 const future: RpcFuture = this.pending.get(key)
@@ -463,6 +480,11 @@ namespace tinox.ide.lsp
                     if (this.state == "ready") { this.notify("$/cancelRequest", "{\"id\":" + future.id.toString() + "}") }
                 }
             }
+        }
+
+        /** Advances the lifecycle: handshake failure, retry reset, shutdown, exit and reconnect. */
+        fn advanceLifecycle(now: Int64) -> Nothing
+        {
             if (this.state == "initializing" && this.initialization.done && this.initialization.code != 0) { this.lost(this.initialization.message) }
             if (this.state == "ready" && now - this.readyAt >= 10000) { this.retries = 0 }
             if (this.state == "closing" && this.shutdownRequest.done)
@@ -474,6 +496,15 @@ namespace tinox.ide.lsp
             }
             if (this.state == "exiting" && now >= this.deadline) { this.stop() }
             if (this.state == "backoff" && this.argv.len() > 0 && now >= this.deadline && this.transport.isStopped()) { this.connect() }
+        }
+
+        /** Performs one pump iteration; pollAt isolates connection failures from the event loop. */
+        fn drive(now: Int64) -> Nothing
+        {
+            this.clock = now
+            this.driveTransport()
+            this.expirePending(now)
+            this.advanceLifecycle(now)
         }
     }
 }

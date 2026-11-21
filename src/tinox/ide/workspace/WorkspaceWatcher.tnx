@@ -102,6 +102,29 @@ namespace tinox.ide.workspace
             this.control.stopped = true
         }
 
+        /** The directories a batch of events happened in, once each; an overflow means "everything" (no paths). */
+        fnc changedDirectories(events: List<WatchEvent>) -> List<String>
+        {
+            var paths: List<String> = []
+            var seen: Map<String, Bool> = Map::new()
+            for e in events
+            {
+                if (e.kind == "overflow") { return [] }
+                const dir: String = FileSystem::parent(e.path)
+                if (!seen.contains(dir))
+                {
+                    seen.set(dir, true)
+                    paths.push(dir)
+                }
+                if (e.isDirectory && !seen.contains(e.path))
+                {
+                    seen.set(e.path, true)
+                    paths.push(e.path)
+                }
+            }
+            return paths
+        }
+
         /** The background task: waits for changes and reports the directories they happened in. */
         fnc listen(w: Watcher, control: WatchControl) -> Int64
         {
@@ -110,34 +133,7 @@ namespace tinox.ide.workspace
                 const events: List<WatchEvent> = Watcher::poll(w, 500)
                 if (events.len() > 0)
                 {
-                    var paths: List<String> = []
-                    var seen: Map<String, Bool> = Map::new()
-                    var overflow: Bool = false
-                    for e in events
-                    {
-                        if (e.kind == "overflow")
-                        {
-                            overflow = true
-                        }
-                        else
-                        {
-                            const dir: String = FileSystem::parent(e.path)
-                            if (!seen.contains(dir))
-                            {
-                                seen.set(dir, true)
-                                paths.push(dir)
-                            }
-                            if (e.isDirectory && !seen.contains(e.path))
-                            {
-                                seen.set(e.path, true)
-                                paths.push(e.path)
-                            }
-                        }
-                    }
-                    if (overflow)
-                    {
-                        paths = []
-                    }
+                    const paths: List<String> = WorkspaceWatcher::changedDirectories(events)
                     Background::report("workspace.fsChanged", Js::object([Js::field("paths", Js::strings(paths))]))
                 }
             }

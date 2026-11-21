@@ -15,6 +15,39 @@ namespace tinox.ide.workspace
             return Glob::step(pattern, 0, text, 0)
         }
 
+        /** Matches the `*` or `**` run at pattern[pi] and the rest of the pattern against text[ti..]. */
+        fnc star(pattern: String, pi: Int64, text: String, ti: Int64) -> Bool
+        {
+            var crossesSlashes: Bool = false
+            var next: Int64 = pi + 1
+            if (next < pattern.len() && pattern.substring(next, next + 1) == "*")
+            {
+                crossesSlashes = true
+                while (next < pattern.len() && pattern.substring(next, next + 1) == "*")
+                {
+                    next = next + 1
+                }
+            }
+            // try every length of the run, shortest first
+            var end: Int64 = ti
+            while (true)
+            {
+                if (Glob::step(pattern, next, text, end))
+                {
+                    return true
+                }
+                if (end >= text.len())
+                {
+                    return false
+                }
+                if (!crossesSlashes && text.substring(end, end + 1) == "/")
+                {
+                    return false
+                }
+                end = end + 1
+            }
+        }
+
         /** Matches pattern[p..] against text[t..]. */
         fnc step(pattern: String, p: Int64, text: String, t: Int64) -> Bool
         {
@@ -25,34 +58,7 @@ namespace tinox.ide.workspace
                 const c: String = pattern.substring(pi, pi + 1)
                 if (c == "*")
                 {
-                    var crossesSlashes: Bool = false
-                    var next: Int64 = pi + 1
-                    if (next < pattern.len() && pattern.substring(next, next + 1) == "*")
-                    {
-                        crossesSlashes = true
-                        while (next < pattern.len() && pattern.substring(next, next + 1) == "*")
-                        {
-                            next = next + 1
-                        }
-                    }
-                    // try every length of the run, shortest first
-                    var end: Int64 = ti
-                    while (true)
-                    {
-                        if (Glob::step(pattern, next, text, end))
-                        {
-                            return true
-                        }
-                        if (end >= text.len())
-                        {
-                            return false
-                        }
-                        if (!crossesSlashes && text.substring(end, end + 1) == "/")
-                        {
-                            return false
-                        }
-                        end = end + 1
-                    }
+                    return Glob::star(pattern, pi, text, ti)
                 }
                 if (ti >= text.len())
                 {

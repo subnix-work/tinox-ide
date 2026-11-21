@@ -129,6 +129,45 @@ namespace tinox.ide.lsp
             return 0
         }
 
+        /** Appends a stderr chunk, keeping whole chunks: cutting an arbitrary UTF-8 byte offset is invalid in Tinox. */
+        fn appendStderr(text: String) -> Nothing
+        {
+            Mutex::lock(this.mutex)
+            if (this.stderr.len() + text.len() > 65536) { this.stderr = "" }
+            if (text.len() <= 65536) { this.stderr = this.stderr + text }
+            Mutex::unlock(this.mutex)
+        }
+
+        /** Queues one decoded message for the event loop; the queue is capped at 64 MiB. */
+        fn enqueue(message: String) -> Nothing
+        {
+            Mutex::lock(this.mutex)
+            if (this.received + message.len() > 67108864)
+            {
+                Mutex::unlock(this.mutex)
+                throw "LSP read queue exceeds 64 MiB"
+            }
+            this.incoming.push(message)
+            this.received = this.received + message.len()
+            Mutex::unlock(this.mutex)
+        }
+
+        /** Reads whatever is ready on the pipes; true once the process has ended. */
+        fnc pump(transport: StdioTransport, proc: InteractiveProcess, framing: Framing) -> Bool
+        {
+            const mask: Int64 = InteractiveProcess::waitReadable(proc, 20)
+            if ((mask / 2) % 2 == 1) { transport.appendStderr(InteractiveProcess::readStderr(proc, 0)) }
+            if (mask % 2 == 1)
+            {
+                for message in framing.feed(InteractiveProcess::readOutput(proc, 0)) { transport.enqueue(message) }
+            }
+            if (mask != 4) { return false }
+            framing.finish()
+            const ended: Bool = !InteractiveProcess::isAlive(proc)
+            if (!ended) { Process::sleep(2) }
+            return ended
+        }
+
         /** Owns process lifecycle and all reads; waitReadable drains both pipes concurrently. */
         fnc serve(transport: StdioTransport, argv: List<String>, directory: String) -> Int64
         {
@@ -138,42 +177,7 @@ namespace tinox.ide.lsp
             try
             {
                 var ended: Bool = false
-                while (!transport.shouldStop() && !ended)
-                {
-                    const mask: Int64 = InteractiveProcess::waitReadable(proc, 20)
-                    if ((mask / 2) % 2 == 1)
-                    {
-                        const text: String = InteractiveProcess::readStderr(proc, 0)
-                        Mutex::lock(transport.mutex)
-                        // Keep whole chunks: cutting an arbitrary UTF-8 byte offset is invalid in Tinox.
-                        if (transport.stderr.len() + text.len() > 65536) { transport.stderr = "" }
-                        if (text.len() <= 65536) { transport.stderr = transport.stderr + text }
-                        Mutex::unlock(transport.mutex)
-                    }
-                    if (mask % 2 == 1)
-                    {
-                        const text: String = InteractiveProcess::readOutput(proc, 0)
-                        const messages: List<String> = framing.feed(text)
-                        for message in messages
-                        {
-                            Mutex::lock(transport.mutex)
-                            if (transport.received + message.len() > 67108864)
-                            {
-                                Mutex::unlock(transport.mutex)
-                                throw "LSP read queue exceeds 64 MiB"
-                            }
-                            transport.incoming.push(message)
-                            transport.received = transport.received + message.len()
-                            Mutex::unlock(transport.mutex)
-                        }
-                    }
-                    if (mask == 4)
-                    {
-                        framing.finish()
-                        ended = !InteractiveProcess::isAlive(proc)
-                        if (!ended) { Process::sleep(2) }
-                    }
-                }
+                while (!transport.shouldStop() && !ended) { ended = StdioTransport::pump(transport, proc, framing) }
             }
             catch (e: String) { transport.fail(e) }
             transport.stop()

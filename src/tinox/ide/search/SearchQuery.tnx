@@ -1,0 +1,25 @@
+module tinox.ide.search
+
+namespace tinox.ide.search
+{
+    /** What to search for and how: the part of a search that does not change while it runs. */
+    class SearchQuery
+    {
+        /** The directory searched. */
+        var root: String
+        /** Plain text, or a regular expression when `regex` is set. */
+        var pattern: String
+        /** Whether the pattern is a regular expression. */
+        var regex: Bool
+        /** Whether letter case matters. */
+        var caseSensitive: Bool
+        /** Whether to try ripgrep before the built-in search. */
+        var useRipgrep: Bool
+
+        /** A query over a directory. */
+        fnc create(root: String, pattern: String, regex: Bool, caseSensitive: Bool, useRipgrep: Bool) -> SearchQuery
+        {
+            return SearchQuery { root: root, pattern: pattern, regex: regex, caseSensitive: caseSensitive, useRipgrep: useRipgrep }
+        }
+    }
+}
