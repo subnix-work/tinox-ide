@@ -79,21 +79,21 @@
         "cp -a . /app/share/tinox-build/source/",
         "cd /app/share/tinox-build/source && CARGO_HOME=$PWD/cargo CARGO_BUILD_JOBS=4 cargo build --offline --locked --release -p tinox",
         "install -Dm755 /app/share/tinox-build/source/target/release/tinox /app/bin/tinox-build",
-        "python3 prepare-json.py json-response.json /app/share/tinox-build/home/.tinox/repository/central/tinox.core/json/1.1.0"
+        "python3 prepare-json.py json-response.json /app/share/tinox-build/home/.tinox/repository/central/tinox.core/json/1.1.10"
       ],
       "sources": [
         {
           "type": "archive",
-          "url": "https://codeload.github.com/subnix-work/tinox/tar.gz/099e8cdcf762c7e4e04cc0bcd9a9078995c1f25b",
-          "sha256": "962edb5cc65934c02d9ec56ef714f2d8709a2f0ca1308e16747d4adbd7de3214",
+          "url": "https://codeload.github.com/subnix-work/tinox/tar.gz/5b91bbe28556fdd374284909ae24ecb5bc2f0b99",
+          "sha256": "165f711c0da6ba98525983d6997a98d541e7765cb3f1e5231ef2f167bbf7d839",
           "archive-type": "tar-gzip"
         },
         "cargo-sources.json",
         {
           "type": "file",
-          "url": "https://central.tinox-lang.de/api/v1/tinox.core/json/1.1.0",
+          "url": "https://central.tinox-lang.de/api/v1/tinox.core/json/1.1.10",
           "dest-filename": "json-response.json",
-          "sha256": "3c104ec7bca18e48ebe8a7ad47600423b4c83d8409e77eafdc64466b51e27369"
+          "sha256": "e2ed0cf934e0f53807f9d2e2df84f5442894057e8d4a516f3729ad1a3f02f0c6"
         },
         {
           "type": "file",
